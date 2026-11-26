@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.test-runner :as test-runner]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.view.core :as view]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -40,7 +41,9 @@
       (expect (identical? #'state/session-known? (slot #'journal/relevant-sid-fn)))
       (expect (identical? #'journal/block-started-ms (slot #'introspection/block-clock)))
       (expect (identical? #'router/llm-text! (slot #'sampling/model)))
-      (expect (identical? #'state/tracked-session-ids (slot #'journal/relevant-sids-fn))))
+      (expect (identical? #'state/tracked-session-ids (slot #'journal/relevant-sids-fn)))
+      ;; A persisted CLI run has no HTTP server, but its Tasks still reach the journal.
+      (expect (identical? #'state/publish-task! (slot #'task/publisher))))
   (it "installs once, so a second call leaves the slots as they are"
       (wiring/install!)
       (let [waker (slot #'council/runtime-waker)]

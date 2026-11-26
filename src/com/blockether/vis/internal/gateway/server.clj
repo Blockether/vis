@@ -2495,8 +2495,7 @@
              ;; Human-input bridge: a `request-human-input!` raised inside a
              ;; session becomes a session event, so the companion app sees the
              ;; blocked run live (and the push tap above alerts the phone).
-             (gw-view/install!)
-             (task/set-publisher! state/publish-task!))
+             (gw-view/install!))
 
          server
          (try
@@ -2517,7 +2516,6 @@
                           :configurator (gateway-configurator (when mirror-loopback? port))}
                          (+ (util/now-ms) 6000))
            (catch Throwable t
-              (task/set-publisher! nil)
               (reset! instance/server-state nil)
               (reset! live-app nil)
               (throw t)))]
@@ -2660,8 +2658,8 @@
      ;; Kill every session's background resources (background `shell` children, REPLs)
      ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
      ;; process; once it exits the children reparent to init and leak.
-     (try (resources/shutdown!) (catch Throwable _ nil))
-     (task/set-publisher! nil)
+     (try (binding [resources/*stop-reason* :session-close] (resources/shutdown!))
+          (catch Throwable _ nil))
      (try (discovery/deregister-self! db) (catch Throwable _ nil))
      (reset! instance/server-state nil)
      (reset! live-app nil)

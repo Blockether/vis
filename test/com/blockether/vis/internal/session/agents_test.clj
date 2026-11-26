@@ -1968,7 +1968,33 @@
                   {:session-id leader}
                   {:content "Use the new parser." :reply_to entry-id})
                 (agents/council-inserted! {:thread_id entry-id :reply_to entry-id})
-                (expect (= "Use the new parser." (deref asked 2000 ::timeout))))))))))
+                (expect (= "Use the new parser." (deref asked 2000 ::timeout)))))))))
+  ;; child.cancel() returned while the interrupt was still on its way; a parent reply in that gap
+  ;; resumed the question, and the cancelled child went on working.
+  (it "a question ignores a reply that lands after a cancel request"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            env {:db-info db :session-id leader}
+            child (child! db leader {:status "running"})
+            id (:id (agents/register-task! env (agents/info db child) (fn [_]) nil))]
+        (with-fake-runtime
+          db
+          (atom #{leader})
+          (fn [entries]
+            (with-redefs [ps/db-council-get (fn [_ id] (get @entries id))]
+              (let [asked (future (outcome #(agents/ask {:db-info db :session-id child}
+                                                        "Which parser?"
+                                                        {:timeout_secs 20})))
+                    _ (asking-record env child)
+                    entry-id (some (fn [[id e]] (when (= "Which parser?" (:content e)) id))
+                                   @entries)]
+                (expect (task/cancel! leader id :agent))
+                ((:publish @@#'agents/runtime)
+                  {:session-id leader}
+                  {:content "Use the new parser." :reply_to entry-id})
+                (agents/council-inserted! {:thread_id entry-id :reply_to entry-id})
+                (expect (not= "Use the new parser." (deref asked 2000 ::timeout)))
+                (expect (realized? asked)))))))))
 
 ;; council.run promises that more than 16 tasks start as earlier ones finish. The gateway refused
 ;; the next spawn with budget-exceeded, which a run does not retry, so the whole run failed.

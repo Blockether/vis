@@ -1,9 +1,12 @@
 """Side-effect-free waits for issue #187's sandbox/extension boundary tests."""
 
 import asyncio
+import json
+import os
 import select
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import blockether.vis.extension as vis
 
@@ -12,6 +15,28 @@ import blockether.vis.extension as vis
 class Observation:
     count: int
     timed_out: bool = False
+
+
+def record_poll(operation, duration, started, finished, observation):
+    path = Path(__file__).resolve().parents[1] / "calls" / "watchdog.jsonl"
+    if path.parent.is_dir():
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "operation": operation,
+                        "duration": duration,
+                        "started": started,
+                        "finished": finished,
+                        "count": observation.count,
+                        "timed_out": observation.timed_out,
+                    }
+                )
+                + "\n"
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+    return observation
 
 
 class WatchdogProbe:
@@ -25,15 +50,23 @@ class WatchdogProbe:
         # One native wait, like a blocking network read: an interrupt cannot unwind
         # it before it returns. The runtime's `time.sleep` returns to Python between
         # short slices, so it would cooperate with cancellation.
+        started = time.monotonic()
         select.select([], [], [], duration)
+        finished = time.monotonic()
         self._count += 1
-        return Observation(self._count)
+        return record_poll(
+            "poll", duration, started, finished, Observation(self._count)
+        )
 
     async def poll_async(self, duration: float) -> Observation:
         """Await a silent asynchronous operation and return its observation."""
+        started = time.monotonic()
         await asyncio.sleep(duration)
+        finished = time.monotonic()
         self._count += 1
-        return Observation(self._count)
+        return record_poll(
+            "poll_async", duration, started, finished, Observation(self._count)
+        )
 
     def poll_cooperative(self, duration: float) -> Observation:
         """Wait in short intervals so cancellation can unwind Python frames."""

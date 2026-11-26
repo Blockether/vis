@@ -1141,6 +1141,16 @@
                  (expect (= 7 (get-in before [:value "exit"])))
                  (expect (= :running (:state (task/await! sid new-id {}))))))
              (finally (resources/stop-all! sid)))))
+  ;; The end of a subagent attempt stopped its shells, and each Task said a person cancelled it.
+  (it "gives a teardown stop the reason of the teardown, not a person"
+      (let [sid "shell-ext-stop-reason"
+            env {:session-id sid}]
+        (try (shell-bg* env "worker" "sleep 60")
+             (let [id (get-in (#'shell/bg-entry sid "worker") [:task :id])]
+               (binding [resources/*stop-reason* :turn] (resources/stop-all! sid))
+               (expect (= :cancelled (:state (task/await! sid id {:timeout-ms 5000}))))
+               (expect (= "turn" (some-> (:cancel-reason (task/state sid id)) name))))
+             (finally (resources/stop-all! sid)))))
   (it "prevents an exiting old pump from publishing status onto its replacement"
       (with-shell-on
         (fn []

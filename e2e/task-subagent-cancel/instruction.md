@@ -1,0 +1,5 @@
+Start one subagent. Give it this exact task: “Ask the leader the question `task-cancel-ready` through `council.ask`. Wait for the reply. Do not change files.”
+
+Use the Task from `council.run`. Await it until the child question interrupts the wait. Check that the returned object is the same Task, the Task is not done, and its record shows the child question. Cancel the child Task through that object. Await it and catch `asyncio.CancelledError`. Check that it is cancelled. If the question still needs a reply after cancellation, reply that the Task was cancelled. Do not start another child. Print the Task ID, the child session ID, the question and the final Task state. Answer `subagent-task-ok` only if all checks pass.
+
+Set `files` to `{"read_only": ["**"]}`. Print one JSON object with keys `task_id`, `session_id`, `question`, `question_entry_id`, `detached`, `cancelled`, and `error`. Get `question` and `question_entry_id` from the Task record before you cancel it. Check `detached` with an identity test on the returned Task. Set `error` to the class name of the exception you caught.

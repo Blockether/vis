@@ -2608,7 +2608,6 @@
                         [(:status response) (wire/parse-json (:body response))]))
             cancel-received (promise)]
         (with-redefs [state/session-exists? #(or (= foreign %) (and @present? (= session-id (str %))))]
-          (task/set-publisher! state/publish-task!)
           (try
             (let [{:keys [row complete!]} (task/start-manual! sid
                                            {:kind :mcp :name "server.read(private)" :public-name "server.read"}
@@ -2647,7 +2646,6 @@
                 (expect (= 404 (first (request :get "invalid" "/tasks"))))))
             (finally
               (task/sweep! sid :session-close)
-              (task/set-publisher! nil)
               (journal/forget! sid)))))))
 
 (defdescribe

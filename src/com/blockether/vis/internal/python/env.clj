@@ -510,15 +510,12 @@
    opens, so no `.py` file carries a copy."
   {"ban" (str "`subprocess`, `os.system` and `os.popen` cannot start a process here. "
               "Use the sandbox `shell` verb.")
-   "use" (str "Use `sh = await shell('npm test')`. Control the process with `sh.logs()`, "
-              "`sh.wait()`, `sh.type()` and `sh.cancel()`. Use `await sh` for the exit and output.")
+   "use" "Use `sh = await shell('npm test')` and `result = await sh`. See `doc('shell')`."
    "off" (str "Shell commands are off in this sandbox. `shell` is not bound, and you cannot "
               "use a live handle. `subprocess`, `os.system` and `os.popen` raise an error. "
               "Nothing here can start a process. Turn on 'Shell commands' in the settings dialog.")
-   "extension" (str "This setting applies only to the model. An installed Python extension keeps "
-                    "its own trusted process boundary. Its code can still call "
-                    "`vis.shell({'command': 'npm test'})`, which starts a process and returns "
-                    "the same handle.")})
+   "extension" (str "This setting applies only to the model. An installed Python extension can use "
+                    "`vis.shell(...)`. That call returns a Python Future, not a sandbox Task.")})
 
 (def ^:private shell-off-doc
   "What `apropos(\"shell\")` and `doc(\"shell\")` say while `shell` is not bound."
@@ -1146,7 +1143,12 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
    'doc
    "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` from a search, a function name, a Vis documentation slug or a skill name. Corpus names ignore case, surrounding whitespace and a trailing `.md`; on a name collision, the callable wins. Live Python member names stay exact and case-sensitive. Corpus pages come back without live lookup or imports. The result is the target itself: the docstring of a function, class or module, a whole documentation page or a whole `SKILL.md`. If the corpus does not have the target, or a module has no harvested documentation, `doc` reads the live object: `doc(\"pandas.read_csv\")` prints that member's signature and docstring and can import its module. If nothing has the name, the answer lists the handles whose name or outline contains it. `doc()` with no argument prints the curated index of starting verbs. A skill is one of these documents and nothing more: reading it is the whole of using it."
    'gather
-   "gather(*awaitables, return_exceptions=False) -> list. Run independent deferred tool calls/awaitables; results preserve input order. One list/tuple also works; keep dependent calls sequential. Host batches use a bounded pool and settle every slot before failing. If a slot fails, the others still run to the end. Then the first failing slot in input order raises: its message starts with `[index]`, plus one `also failed:` line per other failed slot. No slot keeps running after the error. Cancelling the turn or a block timeout stops a gather instead: slots that have not started never run, running slots are interrupted, and the block gets one `KeyboardInterrupt`, which `except Exception` does not catch. A failed await returns no partial list, but the other slots already ran with their side effects: do not run a whole write batch again. With `return_exceptions=True`, results and exception objects stay in their original slots; host slots run serially in this mode. For per-slot recovery, use `await gather(grep(spec_a), grep(spec_b), return_exceptions=True)`. Examine each slot before you retry safe failed work."
+   (str "gather(*awaitables, return_exceptions=False) -> list. Wait for independent awaitables. "
+        "Results stay in input order. You can give one list or tuple. Keep calls with dependencies in separate steps. "
+        "With `return_exceptions=True`, results and exceptions stay in their slots. "
+        "The default batch reports failures by slot. "
+        "If the block stops, a host Task that it did not await can still run. Check each outcome before you retry. "
+        "Do not repeat a batch that can already have changed data. See `doc('python-sandbox')` for Task control.")
    'defs
    "defs(name=None, *, pattern=None, limit=20, offset=0, details=False) -> str. Find, read and refine the helpers and variables this session defined. `defs()` prints an index; match counts appear only when a pattern or a page hides rows. Helpers come first, alphabetically, with call hint and first docstring line. Their call hints have at most 120 characters, no annotations and default types (`=<str>`), never values. Variables follow, with type and size, never values. Rows mark only exceptions: `(restored)` and `not saved` with the reason. `pattern` is a case-sensitive regular expression over names, gists and variable types; `limit` is an integer from 1 to 100; `offset` is a nonnegative integer. `defs(name)` returns a helper's exact source or a variable's row, and `defs[name]` does the same lookup; a missing name gets a bounded search suggestion. `defs(name, details=True)` returns metadata only: origin, source SHA-256 and up to 20 source-derived global or captured names with type and presence. These hints are advisory: liveness unknown; dynamic lookups and default/decorator expressions are not analyzed; the digest covers source, not state. `details` needs a name and takes no listing controls. After each block, Vis saves the session's helpers, imports and variables (best effort). A saved variable is a pickle of at most 1 MiB (4 MiB in total). Open files, handles, generators and larger values are not saved; their rows say why. Redefining a name replaces its saved copy; `del name` removes it and frees its memory. After an idle timeout, settings change or gateway restart, a fresh sandbox re-creates what remains, marks restored helpers `(restored)` and prints nothing; an error for a name that did not come back gives the reason. Read a helper before you refine it under the same stable name. Delete explicitly, after you check callers: aliases and captured defaults can still hold older functions. Never clean up by age. Imported functions and engine internals are excluded; `apropos` does not show session helpers; the full docstring is the helper's `doc(name)` page. Never promote a helper to an extension automatically (`doc(\"extending\")`)."
    'fold-session

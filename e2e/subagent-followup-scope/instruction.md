@@ -1,11 +1,11 @@
-Test how you give one subagent a new file scope for a follow-up task. Use `[child] = await council.run([...])` with exactly one task dict. Set files to {"read_only": ["**"]} and this task text, unchanged:
+Start one subagent with `[child] = await council.run([...])`. Supply one task dictionary. Set `files` to `{"read_only": ["**"]}`. Give the child this exact task:
 
 Read notes.txt in the workspace root and answer with its only line.
 
-Await `child` and check that the final record has status `completed` and answer `scope-ok-7431`. Then use `[follow] = await council.run([...])` with `"child": child` and `"files": {"write": ["audit.txt"]}`. Use this task text, unchanged:
+Await the `child` Task. Check that its `SubagentRecord` has status `completed` and answer `scope-ok-7431`. Start a follow-up with `[follow] = await council.run([...])`. Set `"child": child` and `"files": {"write": ["audit.txt"]}` in the task dictionary. Give the child this exact task:
 
 Write the file audit.txt in the workspace root with two lines: the line from notes.txt, then the value of session["agent"]["role"]. Then answer written.
 
-Await `follow`. Check that its final record has status `completed` and answer `written`. Check that the two handles have the same `id` and `session_id`, and different `task_id` values. After each await, print one line that starts with `child-attempt `, then a JSON object with `task_id` from the handle and `id`, `session_id`, `status`, and `answer` from the awaited record.
+Await the `follow` Task. Check that its `SubagentRecord` has status `completed` and answer `written`. Check that the two Tasks have the same `id` and `session_id` but different `task_id` values. After each Task ends, print `child-attempt ` followed by one JSON object on the same line. Read `task_id` from the Task and `id`, `session_id`, `status` and `answer` from its record.
 
-Do not write audit.txt yourself, start a second child, call `council.grant`, or change other files. When audit.txt exists, finish with followup-done.
+Do not write `audit.txt` yourself, start a second child, call `council.grant`, or change other files. When `audit.txt` exists, answer `followup-done`.

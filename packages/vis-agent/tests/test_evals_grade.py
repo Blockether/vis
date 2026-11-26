@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+from pathlib import Path
 
 import evals_atif as atif
 import pytest
@@ -113,6 +114,332 @@ def test_a_failed_or_unfinished_activity_is_an_error(tmp_path, state, count):
     assert result.result["err_msgs"] == [f"activity cat {state}"]
     assert result.result[count] == 1
     assert result.rewards["no_errors"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("expected", "rows", "error", "want_tools", "passes", "cancellations_match"),
+    [
+        ({"hold": 1}, [("hold", "cancelled", "t1")], None, [], True, True),
+        (None, [("hold", "cancelled", "t1")], None, [], False, None),
+        ({"hold": 1}, [("hold", "cancelled", None)], None, [], False, False),
+        ({"hold": 1}, [], None, [], False, False),
+        ({"hold": 2}, [("hold", "cancelled", "t1")] * 2, None, [], False, False),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1"), ("hold", "cancelled", "t2")],
+            None,
+            [],
+            False,
+            False,
+        ),
+        ({"hold": 1}, [("other", "cancelled", "t1")], None, [], False, False),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1"), ("other", "cancelled", "t2")],
+            None,
+            [],
+            False,
+            True,
+        ),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1"), ("hold", "failed", "t2")],
+            None,
+            [],
+            False,
+            True,
+        ),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1"), ("hold", "running", "t2")],
+            None,
+            [],
+            False,
+            True,
+        ),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1")],
+            "escaped cancellation",
+            [],
+            False,
+            True,
+        ),
+        ({"hold": 1}, [("hold", "cancelled", "t1")], None, ["hold"], False, True),
+        (
+            {"hold": 1},
+            [("hold", "cancelled", "t1"), ("hold", "succeeded", "t2")],
+            None,
+            ["hold"],
+            True,
+            True,
+        ),
+    ],
+)
+def test_expected_task_cancellation_is_not_a_blanket_error_exemption(
+    tmp_path, expected, rows, error, want_tools, passes, cancellations_match
+):
+    receipt = atif.receipt(
+        *(
+            atif.row(
+                f"r{index}",
+                operation,
+                state,
+                sequence=index,
+                resources=[{"type": "task", "id": task_id}] if task_id else [],
+            )
+            for index, (operation, state, task_id) in enumerate(rows, 1)
+        )
+    )
+    document = _run(atif.step(1, atif.block("t1/i1/f1", activity=receipt, error=error)))
+    scenario = {"want_tools": want_tools}
+    if expected is not None:
+        scenario["want_cancelled_tasks"] = expected
+    result = grade.grade_trial(scenario, tmp_path, _trial(document))
+
+    assert result.is_passed is passes
+    assert result.result["guards"].get("cancelled_tasks") is cancellations_match
+    if error:
+        assert error in result.result["err_msgs"]
+
+
+@pytest.mark.parametrize(
+    "value", [None, {}, [], {"": 1}, {"hold": True}, {"hold": 0}, {"hold": 1.0}]
+)
+def test_cancelled_task_counts_must_name_operations_and_positive_integers(value):
+    assert grade.check_problems({"want_cancelled_tasks": value})
+
+
+@pytest.mark.parametrize(
+    (
+        "session_id",
+        "status",
+        "question",
+        "ping_state",
+        "observation",
+        "cancel_reason",
+        "passes",
+    ),
+    [
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "caught",
+            "agent",
+            True,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "replied",
+            "record",
+            "agent",
+            True,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "pending",
+            "literal",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "unrelated-handler",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "wrong-handler",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "wrong-await",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "replied",
+            "notice",
+            "agent",
+            True,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "pending",
+            "caught",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "pending",
+            "wrong-entry",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "caught",
+            "turn",
+            False,
+        ),
+        (
+            "child-other",
+            "cancelled",
+            "task-cancel-ready",
+            "delivered",
+            "caught",
+            "agent",
+            False,
+        ),
+        (
+            "child-1",
+            "running",
+            "task-cancel-ready",
+            "delivered",
+            "caught",
+            "agent",
+            True,
+        ),
+        (
+            "child-1",
+            "cancelled",
+            "different question",
+            "delivered",
+            "caught",
+            "agent",
+            False,
+        ),
+    ],
+)
+def test_task_cancel_verifier_needs_the_launched_asking_child(
+    tmp_path,
+    session_id,
+    status,
+    question,
+    ping_state,
+    observation,
+    cancel_reason,
+    passes,
+):
+    verifier = (
+        Path(__file__).resolve().parents[3] / "e2e/task-subagent-cancel/tests/verify.py"
+    )
+    child = _run(session_id=session_id, status=status, answer=None)
+    row = {
+        "task_id": "t1",
+        "session_id": "child-1",
+        "question": "task-cancel-ready",
+        "detached": True,
+        "cancelled": True,
+        "error": "CancelledError",
+    }
+    if observation in {"record", "wrong-entry", "literal"}:
+        row["question_entry_id"] = 58 if observation == "wrong-entry" else 57
+    if observation in {"record", "wrong-entry"}:
+        code = """read_snapshot = task.record
+record = read_snapshot()
+try:
+    await task
+except asyncio.CancelledError as stopped:
+    print(json.dumps(dict(task_id=task.task_id, session_id=record.session_id,
+                          question=record.question, question_entry_id=record.question_entry_id,
+                          detached=detached is task, cancelled=task.cancelled(),
+                          error=type(stopped).__name__)))
+"""
+    else:
+        code = """try:
+    await task
+except asyncio.CancelledError as stopped:
+    print(json.dumps({**observations, "error": type(stopped).__name__}))
+"""
+        if observation == "literal":
+            code = f"print({json.dumps(row)!r})"
+    launch = "start = council.run\n[task] = await start(tasks)\ndetached = await task"
+    if observation == "unrelated-handler":
+        code = f'task.cancel()\ntry:\n    int("42")\nexcept ValueError:\n    pass\nprint({json.dumps(row)!r})'
+    elif observation != "literal":
+        if observation not in {"record", "wrong-entry"}:
+            code = "record = detached.record()\n" + code
+        code = code.replace(
+            "try:\n", "stop = detached.cancel\nstop()\nsubject = detached\ntry:\n", 1
+        ).replace("await task", "await subject")
+        if observation == "wrong-handler":
+            code = code.replace("asyncio.CancelledError", "ValueError")
+        elif observation == "wrong-await":
+            code = code.replace("await subject", "await unrelated")
+        else:
+            code = "from asyncio import CancelledError as Stopped\n" + code.replace(
+                "asyncio.CancelledError", "Stopped"
+            )
+    blocks = [atif.block("t1/i1/f1", launch)]
+    if observation == "notice":
+        blocks.append(
+            atif.block(
+                "t1/i1/f2",
+                "detached = await task",
+                stdout='[Vis] t1 council a1 runs in the background. a1 asks: "task-cancel-ready". Reply, then await the same Task (t1).',
+            )
+        )
+    blocks.append(atif.block("t1/i1/f3", code, stdout=json.dumps(row)))
+    document = _run(atif.step(1, *blocks))
+    document["subagent_trajectories"] = [child]
+    events = [
+        {
+            "type": f"task.{edge}",
+            "task": {"id": "t1", "kind": "subagent", "name": "t1 subagent", **fields},
+        }
+        for edge, fields in (
+            ("started", {"state": "running"}),
+            ("updated", {"state": "running", "detached": True}),
+            ("ended", {"state": "cancelled", "cancel_reason": cancel_reason}),
+        )
+    ]
+    host = {
+        "events": events,
+        "children": {"a1": "child-1"},
+        "questions": [
+            {
+                "session_id": "child-1",
+                "content": question,
+                "state": ping_state,
+                "entry_id": 57,
+            }
+        ],
+    }
+    result = grade.grade_trial(
+        {"verify": str(verifier)}, tmp_path, _trial(document, host_evidence=host)
+    )
+
+    assert result.is_passed is passes
 
 
 @pytest.mark.parametrize(

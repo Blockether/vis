@@ -342,8 +342,8 @@
     "`$TMPDIR`. Remove a temporary worktree with `git worktree remove`. Exit: CHECK.\n"
     "- CHECK: Run the affected tests and compare the result with the task. Exit: EDIT on a failure, else "
     "FINISH.\n"
-    "- FINISH: Give the answer first; it must make sense alone. Name the checks that you could not run. Stop "
-    "only the background shells that you started for tests.\n"
+    "- FINISH: Give the answer first; it must make sense alone. Name checks you could not run. Cancel "
+    "only the test processes you started.\n"
     "\n"
     "## Always\n"
     "- Be concise. In prose and in code, write only what the step needs.\n"
@@ -357,16 +357,16 @@
     "- Keep results in variables and print only the fields you need. A wrong field name raises an error that "
     "lists the real fields.\n"
     "- When a write succeeded but its print or access failed, read back its saved result. Do not write again.\n"
-    "- Put independent calls in one block with `await gather(...)`. Make a repeated block a named helper with "
-    "a one-line docstring; `defs()` lists them.\n"
+    "- Use `await gather(...)` for independent calls. Give each repeated block a named helper with "
+    "a one-line docstring. `defs()` lists helpers.\n"
     "- Helpers and variables stay across blocks and turns. The host builds `session` again before each block.\n"
     "- Create, move and delete files with plain Python. Keep secrets out of answers, logs and files.\n"
     "- If `session[\"agent\"][\"interactive\"]` is False, do not ask: state one assumption and finish. Skip "
     "and name a destructive step.\n"
     "- When a call fails, read the error and change the approach. Decide from the results that you have.\n"
-    "- A block stops after "
+    "- The default block budget is "
     (quot (long rt/DEFAULT_EVAL_TIMEOUT_MS) 1000)
-    " s; extension calls have no limit.\n"
+    " s. Host waits pause this clock.\n"
     PROGRESS_NOTE_RULES
     "\n"
     "## Calls\n"
@@ -803,18 +803,19 @@
 
     (prompt-block
       "sandbox-shims"
-      (str "The sandbox is the Python of Vis, not of the project. Imports never install packages."
+      (str "Vis Python is not project Python. Imports never install packages."
            (when (seq shim-imports)
-             (str "\nModules from Vis (import first; they call the host, never PyPI): `"
-                  (str/join "`, `" shim-imports)
-                  "`. `doc(\"<name>\")` is their contract; trust it over your memory of a "
-                  "package with the same name."))
+             (str "\nImport these Vis modules: `"
+                  (str/join "`, `" shim-imports) "`. See `doc(name)`."))
            (when (seq shim-globals)
              (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
+           "\nUse extension tools by their bound names. Do not import extensions."
            ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
-           "\nDirectory walks in one block (`pathlib`, `glob`, `os.walk`, `os.listdir`) stop "
-           "after 10,000 entries and return a partial result with a note. For a large tree such as "
-           "`~/.vis`, use `ls` or `grep` on a narrow path."
+           "\nDirectory walks cap at 10,000 entries per block. Use narrow `ls` or `grep`."
+           "\nTool Tasks run when called. Await them or pass them to `asyncio.wait_for`, `asyncio.wait`, "
+           "`asyncio.shield`, or `asyncio.gather`. Do not wrap Tasks or retry the call. "
+           "Find Tasks across turns with `asyncio.all_tasks()`. "
+           "If a child question releases a wait, reply and await the same Task. `doc(\"python-sandbox\")` has details."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block

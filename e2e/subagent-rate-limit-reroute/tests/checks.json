@@ -14,9 +14,6 @@
   "want_answer": [
     "reroute-done"
   ],
-  "want_tools": [
-    "council.run"
-  ],
   "want_json_files": {
     ".vis/calls/busy-calls.jsonl": [
       {

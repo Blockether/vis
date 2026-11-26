@@ -28,6 +28,7 @@
             [com.blockether.vis.internal.python.extensions :as python-extensions]
             [com.blockether.vis.internal.python.test-runner :as test-runner]
             [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as view]
@@ -102,6 +103,9 @@
     (sampling/install-model! #'router/llm-text!)
     (journal/set-relevant-sid-fn! #'state/session-known?)
     (journal/set-relevant-sids-fn! #'state/tracked-session-ids)
+    ;; Task events go to the session journal in every process that owns the database,
+    ;; also a persisted CLI run without the HTTP server.
+    (task/set-publisher! #'state/publish-task!)
     ;; A native image starts the tailer on its first publish instead; see `journal/publish!`.
     (when-not (System/getProperty "org.graalvm.nativeimage.imagecode") (journal/start!))
     true))

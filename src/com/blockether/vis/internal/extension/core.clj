@@ -4057,15 +4057,17 @@
       (when (util/non-blank-string? prose) prose))))
 
 (defn symbol-result-line
-  "`Raw result: …` — the declared raw-result contract of ONE entry, nil without
-   one. A sandbox verb is called from Python with nothing in front of it, so
+  "The raw-result contract or Task return note of one entry, nil without either. A sandbox verb is called from Python with nothing in front of it, so
    `doc(name)` is the only place its result keys are stated. STRUCTURE like
    `symbol-keys-line`: `env-python` ships it as `__vis_results__`, and
    `doc-corpus/entry-text` prints it under the call and keys lines. A reader
    that keeps only the start of a long page still sees the result shape."
   [entry]
-  (when-let [result (:ext.symbol/result entry)]
-    (str "Raw result: " result)))
+  (let [result (:ext.symbol/result entry)
+        task? (and (:ext.symbol/python-task? entry) (:ext.symbol/contract entry))]
+    (when (or result task?)
+      (str (when task? "This call returns a running Task. The return type is the result of awaiting it.")
+           (when result (str (when task? "\n") "Raw result: " result))))))
 
 (defn sandbox-symbol-signatures
   "Map `{sandbox-symbol -> python-signature-text}` for every engine-bound

@@ -1,3 +1,5 @@
+artifacts = [".vis/calls/watchdog.jsonl"]
+
 [metadata]
 lang = "python"
 

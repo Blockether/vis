@@ -1,0 +1,13 @@
+{
+  "want_answer": [
+    "shell-task-ok"
+  ],
+  "verify": "verify.py",
+  "want_tools": [
+    "shell"
+  ],
+  "forbid_tools": [
+    "patch",
+    "_shell-stop"
+  ]
+}

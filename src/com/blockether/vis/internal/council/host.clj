@@ -77,10 +77,10 @@
    With Subagents enabled, delegate work to owned children with `council.run` instead of treating
    project peers as subagents. See `doc(\"council\")` for the delivery and work protocols.
 
-   A ping to your idle child can give it work, but publish returns a message receipt. For a new
-   Task handle, use `await council.run([{\"child\": child, \"task\": text}])`. Set `files` in that
-   request for that attempt only; without `files` the child has its original grant. If the child has no iterations left, call `council.extend`
-   first. A cancelled child continues only during an active turn of its leader."
+   A ping can give work to your idle child. Publish returns a message receipt, not an attempt handle.
+   To start another attempt of an owned child, use `await council.run([{\"child\": child, \"task\": text}])`.
+   See `doc(\"council.run\")` for files and budget. A cancelled child continues only during an active
+   turn of its leader."
   ([env content] (publish env content {}))
   ([env content opts]
    (let [db

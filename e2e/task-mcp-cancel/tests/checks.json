@@ -1,0 +1,35 @@
+{
+  "want_answer": [
+    "mcp-task-ok"
+  ],
+  "verify": "verify.py",
+  "want_tools": [
+    "call"
+  ],
+  "forbid_tools": [
+    "patch",
+    "shell"
+  ],
+  "want_json_files": {
+    ".vis/calls/mcp.jsonl": [
+      {
+        "event": "hold"
+      },
+      {
+        "event": "started"
+      },
+      {
+        "event": "cancel",
+        "matched": true
+      },
+      {
+        "event": "summary",
+        "holds": 1,
+        "cancels": 1
+      }
+    ]
+  },
+  "want_cancelled_tasks": {
+    "call": 1
+  }
+}

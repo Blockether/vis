@@ -30,10 +30,12 @@ import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from .task_evidence import FILE as TASK_EVIDENCE_FILE
+from .task_evidence import tasks
 from .trajectory import Trajectory, load_trajectory
 
 TRACE_FILE = "trace.jsonl"
@@ -63,6 +65,7 @@ CHECK_KEYS = frozenset(
         "want_answer_program",
         "want_cache_metrics",
         "want_cache_read",
+        "want_cancelled_tasks",
         "want_context_budget",
         "want_council_attempts",
         "want_council_recovery",
@@ -387,16 +390,11 @@ def council_recovery_evidence(form_outputs, activities, expected):
     return [], {failed["id"]}, [message]
 
 
-def council_attempt_failures(form_outputs, activities, mode, work, answer):
-    """Check two Council launches against the printed terminal records."""
-    launches = [
-        call
-        for row in activities
-        if row.get("operation") == "council.run"
-        for call in row.get("children") or [row]
-    ]
-    if len(launches) != 2 or any(row.get("state") != "succeeded" for row in launches):
-        return ["Council trial requires exactly two successful launches"]
+def council_attempt_failures(form_outputs, host_evidence, mode, work, answer):
+    """Check two Council attempts against their gateway Task transitions."""
+    attempts = tasks(host_evidence, "subagent")
+    if len(attempts) != 2 or any(end.get("state") != "done" for _, end in attempts):
+        return ["Council trial requires exactly two settled attempts"]
     prefix = "child-attempt "
     try:
         records = [
@@ -420,23 +418,27 @@ def council_attempt_failures(form_outputs, activities, mode, work, answer):
                 pattern, record[key]
             ):
                 return [f"missing or invalid Council attempt {key}"]
-    for launch, record in zip(launches, records, strict=True):
-        refs = {(ref["type"], ref["id"]) for ref in launch.get("resources", ())}
-        if {(kind, ref) for kind, ref in refs if kind in {"task", "subagent"}} != {
-            ("task", record["task_id"]),
-            ("subagent", record["session_id"]),
-        }:
-            return ["Council attempt IDs do not match a single child launch"]
+    for (start, _), record in zip(attempts, records, strict=True):
+        if (
+            start["id"] != record["task_id"]
+            or host_evidence.get("children", {}).get(record["id"])
+            != record["session_id"]
+        ):
+            return ["Council attempt IDs do not match the host Task"]
     if first["task_id"] == second["task_id"]:
         return ["Council trial reused the same Task"]
-    if second.get("status") != "completed" or second.get("answer") != "written":
-        return ["second Council attempt did not complete the write"]
+    if second.get("status") != "completed":
+        return ["second Council attempt does not have status 'completed'"]
+    if second.get("answer") != "written":
+        return ["second Council attempt must answer exactly 'written'"]
     child_keys = ("id", "session_id")
     if mode == "followup":
         if any(first[key] != second[key] for key in child_keys):
             return ["follow-up Task did not use the same child"]
-        if first.get("status") != "completed" or first.get("answer") != "scope-ok-7431":
-            return ["first Council attempt did not complete the read"]
+        if first.get("status") != "completed":
+            return ["first Council attempt does not have status 'completed'"]
+        if first.get("answer") != "scope-ok-7431":
+            return ["first Council attempt must answer exactly 'scope-ok-7431'"]
         if _workspace_text(work, "audit.txt").splitlines() != [
             "scope-ok-7431",
             "subagent",
@@ -1098,6 +1100,7 @@ class TrialFiles:
     provider: str | None
     model: str | None
     reasoning_effort: str | None
+    host_evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 def _json_data(value: Any) -> Any:
@@ -1125,7 +1128,12 @@ def load_trial(agent_logs: str | os.PathLike[str]) -> TrialFiles:
             trajectory = load_trajectory(trajectory_path, strict=False)
         except ValueError as failure:
             problem = f"an invalid {TRAJECTORY_FILE}: {failure}"
+    evidence_path = logs / TASK_EVIDENCE_FILE
+    host_evidence = (
+        json.loads(evidence_path.read_text()) if evidence_path.is_file() else {}
+    )
     return TrialFiles(
+        host_evidence=host_evidence,
         trajectory=trajectory,
         trajectory_problem=problem,
         stderr=stderr,
@@ -1238,6 +1246,7 @@ class TaskEvidence:
     activities: tuple[Mapping[str, Any], ...]
     tools: tuple[str, ...]
     trajectory: Trajectory | None
+    host_evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 def verifier_failures(
@@ -1272,6 +1281,42 @@ def verifier_failures(
     return failures
 
 
+def _valid_cancelled_task_counts(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and bool(value)
+        and all(
+            isinstance(operation, str)
+            and bool(operation.strip())
+            and type(count) is int
+            and count > 0
+            for operation, count in value.items()
+        )
+    )
+
+
+def _cancelled_task_evidence(rows, expected):
+    """Match only terminal Task receipts with the exact requested counts."""
+    if not _valid_cancelled_task_counts(expected):
+        return ["invalid cancelled Task counts"], set()
+    matched_ids = set()
+    task_ids = set()
+    counts = collections.Counter()
+    for row in rows:
+        operation = row["operation"]
+        if row["state"] != "cancelled" or operation not in expected:
+            continue
+        refs = [ref["id"] for ref in row["resources"] if ref["type"] == "task"]
+        if len(refs) != 1 or refs[0] in task_ids:
+            return [f"{operation}: cancelled receipt needs a distinct Task"], set()
+        task_ids.add(refs[0])
+        counts[operation] += 1
+        matched_ids.add(row["id"])
+    if counts != expected:
+        return [f"expected cancelled Tasks {expected}, observed {dict(counts)}"], set()
+    return [], matched_ids
+
+
 def check_problems(checks: object) -> list[str]:
     """Return the problems of a ``checks.json`` object; an empty list is valid.
 
@@ -1287,6 +1332,12 @@ def check_problems(checks: object) -> list[str]:
         close = difflib.get_close_matches(key, sorted(CHECK_KEYS), n=1)
         hint = f"; did you mean {close[0]!r}?" if close else ""
         problems.append(f"unknown check key {key!r}{hint}")
+    if "want_cancelled_tasks" in checks and not _valid_cancelled_task_counts(
+        checks["want_cancelled_tasks"]
+    ):
+        problems.append(
+            "want_cancelled_tasks must map operations to positive integer counts"
+        )
     for key in ("verify", "want_answer_program"):
         value = checks.get(key)
         if value is not None and (
@@ -1403,6 +1454,12 @@ def grade_trial(
         recovery_failures, expected_failed_ids, expected_error_messages = (
             council_recovery_evidence(form_outputs, activity_rows, expected)
         )
+    cancelled_task_failures = []
+    if "want_cancelled_tasks" in sc:
+        cancelled_task_failures, cancelled_ids = _cancelled_task_evidence(
+            failed_activities, sc["want_cancelled_tasks"]
+        )
+        expected_failed_ids.update(cancelled_ids)
     for message in expected_error_messages:
         errs.remove(message)
     errs.extend(
@@ -1416,6 +1473,8 @@ def grade_trial(
 
     checks = _Checks()
     checks.use("activities")
+    if "want_cancelled_tasks" in sc:
+        checks.check("cancelled_tasks", cancelled_task_failures)
     if (
         any(row["id"] not in expected_failed_ids for row in failed_activities)
         or incomplete_activities
@@ -1426,7 +1485,9 @@ def grade_trial(
     if mode := sc.get("want_council_attempts"):
         checks.check(
             "council_attempts",
-            council_attempt_failures(form_outputs, activity_rows, mode, work, answer),
+            council_attempt_failures(
+                form_outputs, trial.host_evidence, mode, work, answer
+            ),
         )
     if sc.get("want") or sc.get("wantnot"):
         checks.use("files")
@@ -1470,6 +1531,7 @@ def grade_trial(
             activities=tuple(activity_rows),
             tools=tuple(tools),
             trajectory=run,
+            host_evidence=trial.host_evidence,
         )
         checks.check("task", verifier_failures(program, evidence_view))
     discovery = {}

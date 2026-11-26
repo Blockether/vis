@@ -13,12 +13,8 @@
   "want_answer": [
     "followup-done"
   ],
-  "want_tools": [
-    "council.run"
-  ],
   "forbid_tools": [
-    "patch",
-    "council.grant"
+    "patch"
   ],
   "want_council_attempts": "followup"
 }

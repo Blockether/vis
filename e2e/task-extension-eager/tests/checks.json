@@ -1,0 +1,32 @@
+{
+  "want_answer": [
+    "extension-task-ok"
+  ],
+  "verify": "verify.py",
+  "want_tools": [
+    "task_probe.started"
+  ],
+  "forbid_tools": [
+    "patch",
+    "shell"
+  ],
+  "want_json_files": {
+    ".vis/calls/tasks.jsonl": [
+      {
+        "event": "started",
+        "label": "eager"
+      },
+      {
+        "event": "observed",
+        "label": "eager"
+      },
+      {
+        "event": "cancelled",
+        "label": "eager"
+      }
+    ]
+  },
+  "want_cancelled_tasks": {
+    "task_probe.hold": 1
+  }
+}

@@ -8,8 +8,9 @@
     "watchdog_probe.poll",
     "watchdog_probe.poll_async"
   ],
-  "want_forms": [
-    "def wait_release_progress",
-    "await wait_release_progress()"
-  ]
+  "forbid_tools": [
+    "shell",
+    "patch"
+  ],
+  "verify": "verify.py"
 }

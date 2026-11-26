@@ -19,6 +19,7 @@ how to install packages with `pip`, and what the sandbox can access.
   [hang evidence](#diagnosing-an-unresponsive-worker).
 - **A helper or a variable from an earlier turn is gone.** Read
   [Sandbox state after a restart](#sandbox-state-after-a-restart).
+- **A tool is still running after the turn ends.** Read [Host Tasks](#host-tasks).
 - **The agent must give you a file or a report.** Read [Attachments](#attachments).
 
 To limit what the commands of the agent can reach, turn on the [process jail](jail.md).
@@ -153,23 +154,6 @@ its own host bindings. In both places, the bundled SDK wins over pip copies and 
 
 A tool returns its complete result to Python, but only printed text reaches the next model
 request. The agent keeps a large result in a variable and prints only the fields that it needs.
-A call to `shell` starts the command. The first `await` returns a `ShellTask` after the
-process starts. Await the Task to get the exit code and bounded output:
-
-```python
-sh = await shell("ls -la")
-result = await sh
-print(result.exit, sh.logs(-20).out)
-```
-
-Use `sh.wait(30)` to wait up to 30 seconds and refresh the handle. The wait does not cancel the
-process when time runs out. Use `sh.cancel()` to request cancellation and `sh.done()` to check
-if the process ended. Use `sh.type(text)` to send input to a shell started with `stdin="tty"`.
-
-The process can continue after the block or turn ends. In another block, `asyncio.all_tasks()`
-finds running host Tasks and completed host Tasks whose results you have not read. The result
-of `await sh` is a dictionary. Use `sh.logs()` for pages of output beyond the result's limit.
-
 Read a result map by key or by attribute. `r["status"]` and `r.status` return the same field, at
 each depth, so `r["transcript"]["turns"]` is `r.transcript.turns`. `session` reads the same way.
 
@@ -206,6 +190,65 @@ dictionary does.
 `read_session()` also returns more data than its printed summary. The full history, folded steps
 included, is under `transcript["turns"]`, then `iterations`, then `blocks`. Each block holds
 `code`, `stdout`, and an `error` if one occurred. `list_sessions()` finds other saved sessions.
+
+## Host Tasks
+
+A Task-enabled call starts host work when you call it. Save the Task and await it for the
+result. You can read the result again from the same Task. Other sandbox verbs can give a
+value without a Task. See `doc(name)` for each call.
+
+Host Tasks belong to the session. They can continue after a block or turn ends. Ordinary
+Python coroutines stay in their block. Use `asyncio.all_tasks()` in any block, even after a
+fold. It lists running host Tasks, host Tasks with unread results, and current Python Tasks.
+
+Use `done()` to check a Task without reading the result. Use `result()` or `exception()` only
+after the Task ends.
+
+A Task notice shows an ID such as `t3`, not a Python variable. To find a Task you did not save,
+look for the ID at the start of its default name:
+
+```python
+[t] = [t for t in asyncio.all_tasks() if t.get_name().split(" ", 1)[0] == "t3"]
+result = await t
+```
+
+If you rename a Task, keep its handle or look for the new name.
+
+Use `task.cancel()` to request cancellation. Then await the Task for its result or
+`asyncio.CancelledError`. You can also request cancellation from **Background**.
+
+**Stop** for the active turn interrupts the block and requests cancellation for Tasks it awaits for results.
+It does not cancel Tasks in the background or Tasks it only observes. `/reload`, session
+closure, and worker loss request cancellation for the session's Tasks. Stopping a live view
+can give a normal result instead of cancelling its Task.
+
+`await asyncio.wait(tasks, timeout=seconds)` gives `(done, pending)` without cancelling the
+Tasks. A child question can end the wait early. A direct await of a detachable Task can give you the Task itself
+instead of its result. Answer the open request, then await the same Task. The Task and its
+live views can continue while you answer.
+
+`await asyncio.wait_for(task, seconds)` requests cancellation if the wait expires. It raises
+`TimeoutError` if the Task ends from that cancellation. If the Task returns a result instead,
+you get that result. If a question releases the wait, you can get the Task back instead. Use
+`wait` to set a time limit without requesting cancellation.
+
+`asyncio.shield(task)` protects the Task from cancellation of the wait, not from direct
+cancellation. `asyncio.create_task(task)` returns the same Task. You can also use host Tasks
+with `asyncio.gather`, `asyncio.as_completed`, and `asyncio.TaskGroup`.
+
+### Shell results
+
+The first `await` gives you the `ShellTask` after the process starts. Await that Task for the
+exit code and bounded output:
+
+```python
+sh = await shell("ls -la")
+result = await sh
+print(result.exit, result.out)
+```
+
+The result is a dictionary. To read more output, use `sh.logs()`. See `doc("shell")` for the
+process controls.
 
 ## What the sandbox may do
 

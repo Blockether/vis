@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.session.agents :as agents]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.session.titling :as titling]
+            [com.blockether.vis.internal.task :as task]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (wiring/install!)
@@ -242,8 +243,17 @@
       (let [{:keys [db sid entry]}
             (managed-fixture)
 
+            owner
+            (:author_session_id entry)
+
+            resource
+            [:subagent sid]
+
             submit
             (atom (fn [_]
+                    (let [attempt (task/resource-task owner resource)]
+                      (expect (= [:subagent :running] ((juxt :kind :state) attempt)))
+                      (expect (= sid (:child-session-id (task/guest-task owner (:id attempt))))))
                     {:turn {}}))]
 
         (agents/finish! db sid "completed")
@@ -258,7 +268,8 @@
                        (:resumed_turns (agents/info db sid))))
             (expect (some? (:resumed_at (agents/info db sid))))
             (agents/finish! db sid "completed")
-            (let [before (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at])]
+            (let [before (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at])
+                  prior-id (:id (task/resource-task owner resource))]
               (reset! submit (fn [_]
                                {:error :busy :message "No start"}))
               (expect (= :busy
@@ -267,7 +278,112 @@
                               (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
               (expect (= before
                          (select-keys (agents/info db sid) [:status :resumed_turns :resumed_at]))
-                      "A failed start leaves the child as it was")))))))
+                      "A failed start leaves the child as it was")
+              (let [attempt (task/resource-task owner resource)]
+                (expect (= [prior-id :done] ((juxt :id :state) attempt)))
+                (task/discard! owner prior-id))))))))
+
+(defdescribe cancelled-child-reply-test
+  (it "stores a reply without starting another turn for a cancelled child"
+      (let [{:keys [db sid entry]} (managed-fixture)
+            leader (:author_session_id entry)
+            gid (:group_id entry)
+            fleet (atom {leader {:activation-id "leader" :group-id gid :state "running"}
+                         sid {:activation-id "child" :group-id gid :state "running"}})
+            submitted (atom [])]
+        (with-redefs [toggles/enabled? (constantly true)
+                      state/council-wake-eligible? (constantly true)
+                      state/submit-turn! (fn [_ opts] (swap! submitted conj opts) {:turn {}})]
+          (with-redefs-fn {#'agents/leader-active? #(= leader %)}
+            (fn []
+              (let [question (council/publish! db #(deref fleet)
+                                               {:session-id sid :activation-id "child" :source "sdk"}
+                                               {:content "Can I continue?" :ping [leader] :reply_required true})]
+                (agents/finish! db sid "cancelled")
+                (swap! fleet dissoc sid)
+                (let [reply (council/publish! db #(deref fleet)
+                                               {:session-id leader :activation-id "leader" :source "sdk"}
+                                               {:content "No." :reply_to (:entry_id question)})]
+                  (expect (= (:entry_id question) (:reply_to (ps/db-council-get db (:entry_id reply)))))
+                  (expect (empty? @submitted))
+                  (expect (= "cancelled" (:status (agents/info db sid))))))))))))
+
+(defn- with-child-question
+  [check]
+  (let [{:keys [db sid entry]} (managed-fixture)
+        owner (:author_session_id entry)
+        gid (:group_id entry)
+        leader {:activation-id "leader" :group-id gid :state "running"}]
+    (with-redefs [toggles/enabled? (constantly true)
+                  state/council-wake-eligible? (constantly true)]
+      (let [question (council/publish! db (constantly {owner leader
+                                                      sid {:activation-id "child" :group-id gid :state "running"}})
+                                       {:session-id sid :activation-id "child" :source "sdk"}
+                                       {:content "Can I continue?" :ping [owner] :reply_required true})
+            reply! (fn [opts]
+                     (council/publish! db (constantly {owner leader})
+                                       {:session-id owner :activation-id "leader" :source "sdk"}
+                                       (assoc opts :content "Continue." :reply_to (:entry_id question))))]
+        (try (check db sid owner (:entry_id question) reply!)
+             (finally
+               (doseq [{:keys [id]} (task/tasks owner)] (task/discard! owner id))))))))
+
+(defdescribe completed-child-reply-test
+  (it "starts a new task with the file grant when a reply reaches a completed child"
+      (with-child-question
+        (fn [db sid owner question-id reply!]
+          (let [files {:write ["e.txt"]}
+                submitted (atom [])
+                runtime @#'agents/runtime
+                saved @runtime]
+            (agents/finish! db sid "completed")
+            (with-redefs [state/submit-turn! (fn [id _]
+                                              (swap! submitted conj [id (:files (agents/info db id))])
+                                              {:turn {}})]
+              (try
+                (swap! runtime assoc
+                       :live? (constantly false)
+                       :grant (fn [_ opts] (ps/db-agent-update! db sid {:files (:files opts)})))
+                (let [reply (agents/publish-with-files! {:db-info db :session-id owner}
+                                                       {:files files :reply_to question-id}
+                                                       reply!)]
+                  (expect (some? (:reply_to reply)))
+                  (expect (= [[sid files]] @submitted))
+                  (expect (= "queued" (:status (agents/info db sid))))
+                  (expect (= :running (:state (task/resource-task owner [:subagent sid])))))
+                (finally (reset! runtime saved)))))))))
+
+(defdescribe merged-child-wake-test
+  (it "does not leave a new task when the notification joins an active turn"
+      (let [{:keys [db sid entry]} (managed-fixture)
+            owner (:author_session_id entry)]
+        (agents/finish! db sid "completed")
+        (with-redefs [toggles/enabled? (constantly true)
+                      state/council-wake-eligible? (constantly true)
+                      state/submit-turn! (constantly {:council-active? true})]
+          (try
+            (expect (:council-active? (state/council-wake! db sid entry)))
+            (expect (= ["completed" []] [(:status (agents/info db sid)) (task/tasks owner)]))
+            (finally (doseq [{:keys [id]} (task/tasks owner)] (task/discard! owner id))))))))
+
+(defdescribe child-cancel-request-reply-test
+  (it "does not wake the child while its Task cancel callback is still pending"
+      (with-child-question
+        (fn [db sid owner _ reply!]
+          (let [release (promise)
+                {:keys [row]} (task/start-manual! owner {:kind :subagent :name "Child" :resource [:subagent sid]}
+                                (fn [_] (deref release 5000 nil)))
+                submitted (atom [])]
+            (ps/db-agent-update! db sid {:status "running"})
+            (with-redefs [state/submit-turn! (fn [id _] (swap! submitted conj id) {:turn {}})]
+              (try
+                (expect (task/cancel! owner (:id row) :agent))
+                (expect (= ["running" :agent] [(:status (agents/info db sid))
+                                               (:cancel-reason (task/state owner (:id row)))]))
+                (let [reply (reply! {})]
+                  (expect (some? (:reply_to reply)))
+                  (expect (empty? @submitted)))
+                (finally (deliver release true)))))))))
 
 ;; council.resume is gone: council.publish refuses a follow-up ping that cannot start, before the
 ;; entry exists, so the parent sees the cause at once.

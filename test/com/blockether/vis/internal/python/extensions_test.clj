@@ -11654,7 +11654,7 @@ vis.register_extension(vis.Extension(
             (let [answer (block "print((await t).is_stopped_by_human)")]
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (str/includes? (str (:stdout answer)) "True"))
-              (expect (str/includes? (str (:stdout answer)) "ended: await t1")))))))
+              (expect (str/includes? (str (:stdout answer)) "find Task t1 in asyncio.all_tasks()")))))))
   (it "returns pending from asyncio.wait and lets a detached tool request human input"
       (with-task-watch
         (fn [{:keys [sid ctx block]}]

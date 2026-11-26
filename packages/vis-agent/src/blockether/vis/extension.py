@@ -2804,7 +2804,8 @@ class Symbol:
             a public Python identifier.
         tag: Default operation classification, one of the `method` tags.
         is_hidden: Hide the symbol from discovery without removing the callable.
-        detachable: Let the host release a caller that waits for this tool.
+        detachable: Permit the host to release a sandbox wait without stopping
+            this tool. The default is True.
         activity: Human-facing presentation for a function. Declare one on every
             exported callable. For an object, leave this unset and put an Activity
             on every exported `method` instead.
@@ -4205,7 +4206,7 @@ def call_env() -> dict[str, str | None]:
 
 
 def is_detached() -> bool:
-    """Return True if the current tool runs as a detached Task."""
+    """Return True if the host released a sandbox wait for this tool."""
     return bool(_host.is_detached())
 
 
@@ -4993,7 +4994,11 @@ def _sdk_shell_call(name, args, options):
 
 
 def shell(*args, **options):
-    """Start a command and return its Future. Use `result()` to read the exit.
+    """Start a command and return a ShellFuture.
+
+    Use `result(timeout=...)` to wait for its ShellResult. `cancel()` requests
+    cancellation. `logs()` reads process output, and `type()` sends input.
+    The sandbox's `shell` uses a Task instead.
 
     Give the command as text with keyword options, or give one options map:
     `shell("ls", cwd="src")` is `shell({"command": "ls", "cwd": "src"})`.

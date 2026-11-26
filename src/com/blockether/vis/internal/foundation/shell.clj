@@ -1331,8 +1331,13 @@
   "Resource callbacks retain only identity and a path, not process/output state."
   [session id task-id exit-atom file]
   {:stop-fn (fn []
-              (when (task/cancel! session task-id :person)
-                (stop-bg-generation! session id exit-atom)))
+              (when (task/cancel! session task-id resources/*stop-reason*)
+                (let [entry (bg-entry session id)
+                      ^Thread pump (when (identical? exit-atom (:exit entry)) (:pump entry))]
+                  (stop-bg-generation! session id exit-atom)
+                  ;; A stop returns after the pump records the exit, outside the lifecycle lock.
+                  (when (and pump (not (identical? pump (Thread/currentThread))))
+                    (try (.join pump 3000) (catch InterruptedException _ nil))))))
    :alive-fn (fn []
                (identical? exit-atom (:exit (bg-entry session id))))
    :logs-fn (fn []
@@ -2594,12 +2599,7 @@
             more)))
 
 (defn shell
-  "`sh = await shell(\"npm test\")` — spawn ONE bash line under a pty and return
-   the HANDLE now. Every run is a background run; waiting is `sh.wait(secs)`, the
-   only wait there is. The handle reads (`page = sh.logs(0, lines=100)`); the page
-   slices directly as its `out` text (`page[-4000:]`), continues with `next(page)` or
-   lazily with `page.pages()`, types (`sh.type(text)`) and kills (`sh.cancel()`). Its log
-   so nothing is ever lost to a deadline or to a call that already returned."
+  "Start or attach to a managed shell. See the `shell` symbol for the sandbox contract."
   {:arglists '([command] [command opts])}
   [env & args]
   (let [opts (shell-call-opts ["command"] args)]
@@ -2786,55 +2786,48 @@
     {:activity (presenter/for-tool :shell)
      :symbol 'shell
      ;; A process starts from PYTHON, which can retain the returned handle. Every
-     ;; later operation (`wait`, `logs`, `type`, `stop`) is a method on that handle.
+     ;; later operation (`wait`, `logs`, `type`, `cancel`) is a method on that handle.
      ;; `apropos('shell')` / `doc('shell')` are how the capability is found.
      :name "shell"
      :result
      (str
-       "A HANDLE with one result shape for every shell answer: `{stage, id, cwd, command, status, "
-       "exit, out, duration_ms, timed_out, offset, next_offset, is_eof, started_at, finished_at, "
-       "log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`, plus the methods below. Every field "
-       "answers by key and by the same name as an attribute, so `sh[\"out\"]` is `sh.out`. `dict(sh)` "
-       "and `json.dumps(sh)` carry the whole map. Printing shows the status, exit, timing and "
-       "bounded log text, with explicit timeout and continuation notices.\n\n"
-       "A log page slices directly as its `out` text (`page[-4000:]`). It continues with "
-       "`next(page)` or `page.pages()`, and ordinary dict iteration still yields keys. A fresh run "
-       "has `exit=None`, and a nonzero exit is data.\n\n"
-       "`out` is the one stream of the pty. Stdout and stderr are the same channel there, so `out` "
-       "holds what the command wrote to either, in order. There is one name and no `stderr` key. "
-       "`out` is always a string. An empty string means that this stage returned no output, not that "
-       "the process log is empty. Use `sh.logs()` to read the log, also after `sh.cancel()`.\n\n"
-       "`out` normalizes terminal colours and controls automatically, so parse this text view. "
-       "`log_path` keeps the raw terminal stream, including ANSI sequences.")
+       "The first await gives a `ShellTask`. Await it for a `ShellResult` map: "
+       "`{stage, id, cwd, command, status, exit, out, duration_ms, timed_out, offset, next_offset, "
+       "is_eof, started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`. "
+       "Read a field by key or attribute. Serialize the result map, not the Task. A fresh run has "
+       "`exit=None`. A nonzero exit is data.\n\n"
+       "`out` is bounded text that combines stdout and stderr in terminal order. There is no `stderr` key. "
+       "An empty string means this result returned no output, not that the log is empty. Vis normalizes "
+       "terminal colors and controls in `out`. `log_path` names the raw terminal log.")
      :description
      (str
-       "`shell(command, {\"id\": …, \"cwd\": …})` starts ONE `bash -lc` `command` under a real pty and "
-       "returns a ShellTask at once. Every run is a background run. Chain steps with `&&`, and run "
-       "independent work as separate calls. Every answer already carries the status "
-       "(`status`/`exit`, the clock, `log_path` and live cpu/rss), so you never need to ask again.\n\n"
-       "Drive the process through the handle. `await sh` gives the exit and output. `sh.wait(secs)` updates the handle, and `timed_out` "
-       "means that the wait expired, not the process. `sh.logs(-50)` gives the last 50 LINES. `page "
-       "= sh.logs(0, lines=10)` gives a ten-line window: `next(page)` continues, `page.pages()` "
-       "walks ready pages lazily with a default bound of ten, and `lines=-10` walks upward. Use "
-       "`sh.type(text)` for input and `sh.cancel()` to stop, never a rerun. `wait` and `type` "
-       "write their answer into the same handle and return it, so `sh` stays current after "
-       "`sh.wait(30)`. A log page is a separate object. Calling `shell` again with a live `id` "
-       "returns that shell. Use `await shell(op=\"attach\", id=alias)` to recover a live shell "
-       "by alias without starting a command. The alias must belong to the same trust origin.\n\n"
-       "The stdin of a command is empty, so a program that reads it gets end of input at once. Give "
-       "`{\"stdin\": \"tty\"}` for a program that reads `sh.type(text)` or a person's answer on its "
-       "stdin. When a program waits for input on its terminal, `sh.wait` returns early with "
-       "`waiting_for_input` true (exact on Linux only). A wait with no output and almost no CPU adds a "
-       "`note`.\n\n"
-       "Never trim output inside the command. `| head`, `| tail`, `| grep`, `2>/dev/null` and `> "
-       "file` throw away bytes that the handle keeps whole. A pipeline also reports the exit of its "
-       "LAST stage, so a failed build looks green. Run the command plain. Then clip a log page "
-       "directly (`sh.logs()[-4000:]`) or filter its `out` in Python.\n\n"
-       "`env` sets the variables of THIS run over those of the project. A value is a literal for a "
-       "switch, or a source map for a secret: `{\"keychain\"|\"env\"|\"dotenv\": …}` or `{\"command\": "
-       "[\"executable\", \"arg\", …]}`. The command is an argv list, never a shell string. Use a source "
-       "map for a secret, because a literal stays in the transcript. Use null to unset a variable. "
-       "Example: `print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
+       "Use `sh = await shell(command, cwd=dir)` to start one `bash -lc` command under a terminal. "
+       "The call starts a Task that gives the running process handle. `result = await sh` waits for the exit. "
+       "`sh.wait(seconds)` waits synchronously, refreshes `sh`, and returns that same handle without "
+       "cancelling the process. Read `sh.status` after the call. Do not await its return unless you want "
+       "to wait for the process to end. `timed_out` describes the bounded wait. "
+       "Give a nonnegative whole number of seconds. The wait uses at least 1 second and at most "
+       max-timeout-secs " seconds as its limit. If you omit seconds, the limit is "
+       default-timeout-secs " seconds. `sh.cancel()` requests cancellation. "
+       "Use `await shell(op=\"attach\", id=alias)` to recover a live handle from the same trust origin "
+       "without starting a command. Starting with the same live alias also returns that shell.\n\n"
+       "`sh.logs()` reads the tail, even after cancellation. `sh.logs(-50)` gives the last 50 lines. "
+       "`sh.logs(0, lines=10)` reads ten lines from the start. `next(page)` continues from its cursor, "
+       "and `lines=-10` reads ten lines above an offset. `page.pages(max_pages=…)` includes the current "
+       "page, defaults to ten pages, and stops at the current end of the log. `page[-4000:]` slices "
+       "the text. `is_eof` marks the end of this snapshot. Read the log again for new output. Do not rerun "
+       "the command.\n\n"
+       "Standard input gives end of input by default. Use `stdin=\"tty\"` to let the program read "
+       "`sh.type(text)` or input from a person. `sh.type(text)` refreshes and returns `sh`. "
+       "A wait can return early with `waiting_for_input=True` when a program reads from its terminal. "
+       "This flag is exact only on Linux. A wait with little CPU use and no output can add a `note`.\n\n"
+       "Keep command output. Read or filter the log in Python instead of using `| head`, `| tail`, "
+       "`| grep`, `2>/dev/null`, or `> file` to trim it. A pipeline reports the exit of its last command.\n\n"
+       "`env` sets variables for this run over the project variables. Use a literal for a switch. "
+       "For a secret, use a source map with a `keychain`, `env`, `dotenv`, or `command` key. "
+       "A `command` source is an argv list, not a shell string. A literal stays in the transcript. "
+       "Use `None` to unset a variable.\n\n"
+       "```python\nsh = await shell(\"npm test\", env={\"NODE_ENV\": \"test\"})\nresult = await sh\n```")
      :params [{:name "id" :note "the live shell alias"} {:name "cwd"}
               {:name "op" :note "attach to a live alias without starting a command"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}
@@ -2859,15 +2852,7 @@
        "`page.pages()` walks ready pages lazily. Ordinary dict iteration still yields keys. `is_eof` "
        "marks the end of the current snapshot.")
      :description
-     (str
-       "Transport for `sh.logs(offset=…, lines=…)`. Call the handle that the shell result already "
-       "is, not this. It reads the log of a background shell and returns at once.\n\n"
-       "Without an offset, it reads the tail. `offset=0` starts at the beginning. A negative offset "
-       "gives the last n LINES (`sh.logs(-50)`). "
-       "`lines=10` gives the last ten lines. A page from offset zero walks forward with "
-       "`next(page)`, and `lines=-10` walks above its current offset. `page.pages(max_pages=…)` "
-       "includes the current page, has a default bound of ten and never waits for future output at "
-       "the current EOF.")
+     "Transport for `sh.logs(offset=…, lines=…)`. Use that ShellTask method to read the current log without waiting for more output. See `doc(\"shell\")` for paging."
      :params [{:name "id" :required? true :note "the shell handle's own id"}
               {:name "offset" :note "byte cursor, and negative counts LINES"}
               {:name "limit" :note "byte cap for one read"}
@@ -2918,21 +2903,14 @@
          shell-logs-symbol shell-type-symbol shell-snapshot-symbol]))
 
 (defn prompt
-  "How to call `shell` and drive its handle, only while the shell layer is on.
-   `doc(\"shell\")` holds the full contract."
+  "Point to the shell contract while the shell layer is on."
   [env]
   (when (shell-enabled? env)
-    (str
-      "## Shell\n"
-      "- Use `shell` only to run programs, such as the project interpreter for its packages. Do "
-      "file and data work in Python.\n"
-      "- `sh = await shell(cmd, cwd=dir)` starts one `bash -lc` command and returns its handle at "
-      "once, while the program runs.\n"
-      "- `r = await sh` waits for the exit and gives a ShellResult. A nonzero exit is data.\n"
-      "- `sh.wait(300)` waits up to 300 s and updates the handle. It does not cancel the process. "
-      "`sh.logs(-50)` gives the last 50 lines. `sh.type(text)` sends input to a command that "
-      "started with `stdin=\"tty\"`. `sh.cancel()` stops the process.\n"
-      "- Example: `sh = await shell(\"npm test\"); print((await sh).out)`. `doc(\"shell\")` gives the rest.")))
+    (str "## Shell\n"
+         "Use `shell` to run programs. Use Python for file and data work. "
+         "`sh = await shell(cmd)` gives the running handle, not the result. "
+         "`sh.wait(2)` returns the same handle after a bounded wait in whole seconds. Read `sh.status`. "
+         "Do not await `sh.wait(2)`. `await sh` waits for the exit. See `doc(\"shell\")`.")))
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live

@@ -27,6 +27,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -43,6 +44,8 @@ from ..engine._install import ensure_installed
 from .environment import HostEnvironment
 from .grade import RUN_FILE, STDERR_FILE, TRACE_FILE, TRAJECTORY_FILE
 from .harbor import split_turns
+from .task_evidence import FILE as TASK_EVIDENCE_FILE
+from .task_evidence import capture
 from .trajectory import load_trajectory as load_vis_trajectory
 from .trajectory import merge_trajectories
 
@@ -395,10 +398,24 @@ class VisAgent(BaseAgent):
             if len(turns) > 1:
                 self._join_turns()
             (self.logs_dir / RUN_FILE).write_text(json.dumps(record, indent=2) + "\n")
-            shutil.rmtree(runtime, ignore_errors=True)
+            try:
+                self._capture_task_evidence(runtime)
+            finally:
+                shutil.rmtree(runtime, ignore_errors=True)
             self.populate_context_post_run(context)
         if failure := provider_failure(self.logs_dir / TRACE_FILE):
             raise ProviderUnavailableError(failure)
+
+    def _capture_task_evidence(self, runtime: Path) -> None:
+        session_id = _session_id(self.logs_dir / TRAJECTORY_FILE)
+        if session_id is None:
+            return
+        home = Path(self._setting("VIS_HOME") or "~/.vis").expanduser()
+        try:
+            evidence = capture(session_id, home, runtime / "vis.mdb" / "vis.db")
+            (self.logs_dir / TASK_EVIDENCE_FILE).write_text(json.dumps(evidence) + "\n")
+        except (OSError, sqlite3.Error) as failure:
+            self.logger.warning("Cannot collect Task evidence: %s", failure)
 
     def _write_append_system(self, workspace: Path) -> None:
         target = workspace / ".vis" / "APPEND_SYSTEM.md"

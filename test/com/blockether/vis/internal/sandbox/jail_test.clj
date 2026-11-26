@@ -193,6 +193,27 @@
                       (doseq [file (reverse (file-seq root))]
                         (io/delete-file file true))))))))
 
+(defdescribe exact-file-grant-allows-creation
+  (it "creates the granted file but no other file in the workspace"
+      (when (and (sandbox-applicable?) (pattern-enforcing-host?))
+        (let [root (doto (io/file (System/getProperty "user.home") (str ".visjail-grant-" (random-uuid)))
+                     (.mkdirs))
+              path (.getCanonicalPath root)
+              granted (io/file root "audit.txt")
+              neighbour (io/file root "other.txt")
+              parent {:base-dir path :home (System/getProperty "user.home") :jail-enabled true
+                      :process-jail {:roots-fn (constantly [path])}}
+              jail (:process-jail (security-policy/restrict parent {:write ["audit.txt"]}))]
+          (try
+            (let [result (run-process ["/bin/sh" "-c" "printf audit > audit.txt"] root jail)]
+              (expect (= 0 (:exit result)) (pr-str result))
+              (expect (= "audit" (slurp granted))))
+            (let [result (run-process ["/bin/sh" "-c" "printf no > other.txt"] root jail)]
+              (expect (not (zero? (:exit result))))
+              (expect (not (.exists neighbour))))
+            (finally (doseq [file (reverse (file-seq root))]
+                       (io/delete-file file true))))))))
+
 ;; #474: a jailed shell runs `vis-agent`, which binds its Python worker control socket.
 (defdescribe
   confined-child-binds-sockets-in-its-runtime-dir

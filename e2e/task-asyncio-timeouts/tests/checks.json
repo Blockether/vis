@@ -1,0 +1,50 @@
+{
+  "want_answer": [
+    "asyncio-timeouts-ok"
+  ],
+  "verify": "verify.py",
+  "want_tools": [
+    "task_probe.hold",
+    "task_probe.started",
+    "task_probe.release"
+  ],
+  "forbid_tools": [
+    "patch",
+    "shell"
+  ],
+  "want_json_files": {
+    ".vis/calls/tasks.jsonl": [
+      {
+        "event": "started",
+        "label": "plain"
+      },
+      {
+        "event": "observed",
+        "label": "plain"
+      },
+      {
+        "event": "cancelled",
+        "label": "plain"
+      },
+      {
+        "event": "started",
+        "label": "shielded"
+      },
+      {
+        "event": "observed",
+        "label": "shielded"
+      },
+      {
+        "event": "released",
+        "label": "shielded"
+      },
+      {
+        "event": "completed",
+        "label": "shielded"
+      }
+    ]
+  },
+  "want_cancelled_tasks": {
+    "task_probe.hold": 1
+  }
+}

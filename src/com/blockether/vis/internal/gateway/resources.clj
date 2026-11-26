@@ -319,6 +319,10 @@
                       {:result :claimed :record record}
                       (recur)))))))
 
+(def ^:dynamic *stop-reason*
+  "The Task cancel reason that a `:stop-fn` gives: a person, unless a teardown binds its own."
+  :person)
+
 (defn stop!
   "Atomically claim a resource and run its `:stop-fn`.
    The footer stops resources here. For a shell, the callback sends the same

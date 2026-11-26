@@ -1475,6 +1475,37 @@ class CouncilAttemptsTest(unittest.TestCase):
             )
         )
 
+    def test_correct_files_do_not_hide_a_wrong_exact_child_answer(self):
+        first = self.attempt(1, answer="scope-ok-7431")
+        follow = {**first, "task_id": "t2", "answer": "written plus prose"}
+        self.assertEqual(
+            ["second Council attempt must answer exactly 'written'"],
+            self.failures(first, follow, mode="followup"),
+        )
+        self.assertEqual(
+            ["first Council attempt must answer exactly 'scope-ok-7431'"],
+            self.failures(
+                {**first, "answer": "scope-ok-7431 plus prose"},
+                {**follow, "answer": "written"},
+                mode="followup",
+            ),
+        )
+        busy = self.attempt(
+            1,
+            provider="busy",
+            model="busy-1",
+            status="failed",
+            error={"code": "rate_limited"},
+            alternatives=[{"provider": "fallback", "model": "ready"}],
+        )
+        replacement = self.attempt(
+            2, provider="fallback", model="ready", answer="written plus prose"
+        )
+        self.assertEqual(
+            ["second Council attempt must answer exactly 'written'"],
+            self.failures(busy, replacement, mode="reroute"),
+        )
+
     def test_reroute_requires_an_offered_route_and_a_completed_record(self):
         first = self.attempt(
             1,
@@ -1504,19 +1535,24 @@ class CouncilAttemptsTest(unittest.TestCase):
         }
 
     def failures(self, *records, mode, extra_launch=False, receipt_records=None):
-        rows = [
+        events = [
             {
-                "operation": "council.run",
-                "state": "succeeded",
-                "resources": [
-                    {"type": "task", "id": row["task_id"]},
-                    {"type": "subagent", "id": row["session_id"]},
-                ],
+                "type": f"task.{edge}",
+                "task": {
+                    "id": row["task_id"],
+                    "kind": "subagent",
+                    "state": state,
+                    "name": f"{row['task_id']} subagent",
+                },
             }
             for row in receipt_records or records
+            for edge, state in [("started", "running"), ("ended", "done")]
         ]
         if extra_launch:
-            rows.append(rows[0])
+            events.extend(
+                {**event, "task": {**event["task"], "id": "t99"}}
+                for event in events[:2]
+            )
         outputs = [
             {"stdout": "\n".join("child-attempt " + json.dumps(r) for r in records)}
         ]
@@ -1524,7 +1560,14 @@ class CouncilAttemptsTest(unittest.TestCase):
             Path(work, "audit.txt").write_text("scope-ok-7431\nsubagent\n")
             Path(work, "reroute.txt").write_text("reroute-ok\nsubagent\nfallback\n")
             return grade.council_attempt_failures(
-                outputs, rows, mode, work, "reroute-done fallback/ready"
+                outputs,
+                {
+                    "events": events,
+                    "children": {r["id"]: r["session_id"] for r in records},
+                },
+                mode,
+                work,
+                "reroute-done fallback/ready",
             )
 
 

@@ -256,9 +256,10 @@ def __vis_install_mcp__():
         "or one dict. The answer is {server, tool, content, is_error}, and the text "
         'of a content block is at content[i]["text"]. A tool with an output schema '
         "also gives `structured_content`."
-        "\n\nA call starts a Task. Await the Task to get the result. "
-        "To request a stop, call `task.cancel()`. Do not repeat a call that "
-        "changes data if it might have run."
+        "\n\n`task = <python_name>.<tool>(**arguments)` starts the call. "
+        "`await task` gives its result. `task.cancel()` requests cancellation of that call. "
+        "The server can already have acted. If the outcome is unknown, check its state "
+        "before you retry. Vis does not resend `tools/call`."
         "\n\n`apropos(pattern)` finds the tools, the prompts and the skills of each server by "
         "name and by description. `doc(<python_name>.<tool>)` prints the description "
         "and the input schema of one tool, and `doc(<python_name>)` prints the tools "

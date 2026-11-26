@@ -2731,13 +2731,9 @@
 (def ^:private mcp-prompt
   "The one thing the ctx inventory cannot say: what to TYPE. Short on purpose: the
    request carries it each time, and `apropos` and `doc` have the rest."
-  (str "Each MCP server is a name of the sandbox: the `python_name` of its row in"
-       " `session[\"env\"][\"mcp\"][\"servers\"]`. Call a tool with"
-       " `task = <python_name>.<tool>(**arguments)`. The call starts a Task. Await it to get the result."
-       " To request a stop, call `task.cancel()`. Do not repeat a call that changes data if it might have run."
-       " The result text is `content[i][\"text\"]`."
-       " `apropos(pattern)` finds the tools, the prompts and the skills, and `doc(<python_name>.<tool>)`"
-       " prints the input schema of one tool."))
+  (str "Use the MCP server's `python_name` from `session[\"env\"][\"mcp\"][\"servers\"]`. "
+       "Use `apropos` to find its tools and `doc(\"mcp\")` for the call. "
+       "Do not repeat a call that can already have changed data."))
 
 (def vis-extension
   (extension/extension

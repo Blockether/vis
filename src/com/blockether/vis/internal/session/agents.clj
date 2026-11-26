@@ -803,6 +803,20 @@
   ;; A blocked child never started. It ends a wait like a finished child.
   #{"completed" "failed" "cancelled" "budget_limited" "blocked"})
 
+(defn attempt-ended?
+  "True if the current attempt of `agent` ended."
+  [agent]
+  (contains? terminal-statuses (:status agent)))
+
+(defn attempt-cancelled?
+  "True if the child is cancelled or its current Task has a cancel request."
+  [agent]
+  (when agent
+    (let [attempt (task/resource-task (:parent_id agent) [:subagent (str (:session_id agent))])]
+      (or (= "cancelled" (:status agent))
+          (= :cancelled (:state attempt))
+          (some? (:cancel-reason attempt))))))
+
 ;; Open child questions by child session id: {:question text :entry_id id}, plus
 ;; `:budget {:iterations n :reason text}` for a budget request or `:files {:files grant :reason
 ;; text}` for a file request. They stay in memory: the asking child blocks in this process, so a
@@ -1131,7 +1145,7 @@
 (defn settle-task!
   "Save the terminal record before another attempt can change this child's stored state."
   [env row]
-  (when (terminal-statuses (:status row))
+  (when (attempt-ended? row)
     (let [record (task-record env row)]
       (task/complete-resource!
         (:parent_id row) [:subagent (str (:session_id row))]
@@ -1330,29 +1344,31 @@
   ((runtime-fn :run) env tasks))
 
 (defn run
-  "Start a task for each input and return its handle. Write `[child] = await council.run([...])`.
+  "Use `children = await council.run(tasks)` to get the SubagentTasks in input order. An attempt can
+   wait for capacity or a dependency. Only a leader can start subagents. Children share the checkout
+   but do not see your tool calls or output.
+
    A task is a string or a dict with `task` and optional `title`, `role`, `model`, `provider`,
-   `iteration_budget`, `files`, `after` and `child`. The iteration budget defaults to 120. Only a leader
-   can start subagents. Children share the checkout but do not see your tool calls or output.
+   `iteration_budget`, `files`, `after` and `child`. A title has at most 60 characters. The iteration
+   budget defaults to 120. Set `model` and `provider` together.
 
-   `await child` gives its final record. If a Council question releases the await, it returns
-   the handle instead. Answer the question and await the same handle again. `child.record()`
-   gives the current snapshot. `child.wait(seconds)` gives a snapshot without cancelling on
-   timeout. Use `child.cancel()` to request cancellation of this attempt. Awaiting a cancelled
-   attempt raises `asyncio.CancelledError`.
+   Use `await child` for the final record. If the wait returns `child` with a question open, answer
+   the request before you await it again. If a question is already open, the await can return at once.
+   `child.record()` reads the current record. `child.wait(seconds)` waits for a snapshot without
+   cancelling. `child.cancel()` requests cancellation of this attempt only.
+   Awaiting a cancelled attempt raises `asyncio.CancelledError`.
 
-   `child.id` is the child ID (a1, a2, ...), `child.session_id` is the child session ID, and
-   `child.task_id` identifies the attempt. In `after`, use a handle or a child ID or session ID.
-   Each dependency must be an existing child or an earlier task in the batch. A failed
-   dependency blocks the task. The active limit delays admission, not the return of its handle.
+   `child.id` is the child ID (a1, a2, ...). `child.session_id` is the child session ID.
+   `child.task_id` identifies this attempt. In `after`, use a handle, a child ID, or a session ID.
+   Each dependency must be an existing child or an earlier task in the batch. A failed dependency
+   blocks the task.
 
-   Set model and provider together. Use `files` to set the file grant: `write`, `read_only` and
-   `deny` are lists of paths or globs. The same child can take a new task with
-   `await council.run([{\"child\": child, \"task\": \"Fix X\", \"files\": {...}}])`; the new attempt has
-   a separate handle. Its `files` apply to that attempt only; without `files` it uses the child's
-   original grant. An await that starts while the child has an open question returns at once.
-   A budget-limited child needs
-   `council.extend` before a follow-up."
+   In `files`, `write`, `read_only` and `deny` are lists of paths or globs. To give the same child
+   more work, use `await council.run([{\"child\": child, \"task\": \"Fix X\", \"files\": {...}}])`.
+   With `child`, give only `task`, `child`, and optional `files`.
+   The new attempt has a separate handle. Its `files` apply to that attempt only. Without `files`,
+   the child uses its original grant. A budget-limited attempt has ended. Use `await council.extend(...)`
+   before you start a new attempt."
   [env tasks]
   (let [started (start-tasks env tasks)]
     (extension/success
@@ -1412,11 +1428,12 @@
                  (let [gens (signal-gens ks)
                        reply-id (some :reply_entry_id (:replies (ps/db-council-get db entry-id)))]
 
+                   ;; A cancel request wins over a reply that lands before the interrupt.
                    ;; The call returns the reply, so Council input must not deliver it again.
-                   (cond reply-id (do (ps/db-council-delivered! db sid [reply-id])
+                   (cond (attempt-cancelled? (info db sid)) nil
+                         reply-id (do (ps/db-council-delivered! db sid [reply-id])
                                       (:content (ps/db-council-get db reply-id)))
-                         (or (= "cancelled" (:status (info db sid)))
-                             (not (or (live? parent) (awaits-person? parent)))
+                         (or (not (or (live? parent) (awaits-person? parent)))
                              (>= (util/now-ms) deadline))
                          nil
                          :else (do (park! ks gens signal-tick-ms deadline) (recur))))))
@@ -1699,7 +1716,8 @@
 
 (defn grant-files
   "Add file rules to the grant of a subagent. Use it to answer a file request (status asking with
-   files_request). For a follow-up task with other files, pass files to council.publish instead.
+   `files_request`). To start a follow-up attempt with a different grant, pass `files` to `council.run`.
+   See `doc(\"council.run\")`.
 
    files holds write, read_only and deny rules, like a task dict. Give at least one rule. deny wins
    over read_only, and read_only wins over write.
@@ -2060,8 +2078,7 @@
 (def ^:private lead-guide
   "The leader rules for subagents: an independent verifier and its checks."
   "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then start a follow-up for it to check the final files.
-- Use `child.id` or `child.session_id` to refer to the child. Use `child.task_id` to identify the attempt.
-- To order tasks, set `after=[child]` or give child IDs. If a dependency fails, start a follow-up to fix it before you retry the blocked work.
+- If a dependency fails, start a follow-up to fix it before you retry the blocked work.
 - When a verifier fails, start a follow-up for its implementer with the failures. When the fix is ready, start a follow-up for the verifier.
 - Before your final answer, run every failing case that a child reported.
 - Do not send new edits to an implementer while a verifier or auditor of its work runs. Collect all findings, send them in one round, then start or give a follow-up to the verifiers on the final files.
@@ -2069,7 +2086,7 @@
 
 (def ^:private lead-child-guide
   "The subagent rules for reports and independent checks."
-  "- As a subagent, do only your task. Before your final answer, call council.result(text) with one line of at most 200 characters; as a verifier, add outcome=\"passed\" or \"failed\". Give the complete result and its evidence in your final answer. The parent reads that answer from the Task. For a decision, call council.ask(question). For more budget or files, call council.ask_budget(iterations, reason) or council.ask_files({\"write\": [path]}, reason). You cannot start subagents.
+  "- As a subagent, do only your task. Before your final answer, use `await council.result(text)` with one line of at most 200 characters. As a verifier, add `outcome=\"passed\"` or `outcome=\"failed\"`. Give the complete result and its evidence in your final answer. The parent reads that answer from the Task. For a decision, use `await council.ask(question)`. For more budget or files, use `await council.ask_budget(iterations, reason)` or `await council.ask_files({\"write\": [path]}, reason)`. You cannot start subagents.
 - As a verifier, check the request, not your parent's summary. Write checks only in your scratch directory.")
 
 (defn prompt
@@ -2079,15 +2096,12 @@
       "## Subagents (Council)
 - Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
 - Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
-- Start children with `children = await council.run([...])`, usually two to four in total. Each task names its goal, known facts, files, done condition, role and a short title of at most 60 characters. files={\"write\": [...]} enforces the split; `doc(\"council.run\")` gives the rules.
+- Start children with `children = await council.run(tasks)`, usually two to four. Give each task its goal, known facts, files, done condition, role, and a short title. See `doc(\"council.run\")`.
 "
       role-guide
       "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
-- Await a child for its final record. To wait for one of several children, use `await asyncio.wait(children, return_when=asyncio.FIRST_COMPLETED)`. Only the tasks in `done` finished. Use `child.record()` for a snapshot.
-- A Council question can release an await without ending the Task. If `await child` returns the handle, read the question and reply once with `await council.publish(text, reply_to=question_entry_id)`. Then await the same child again. For `budget_request`, use `council.extend` or `council.deny`. For `files_request`, use `council.grant` or `council.deny`.
-- Read `error` in a failed record. For `rate_limited`, start the work on a route from `alternatives`. For `budget_limited`, read the handoff, call `council.extend`, and start a follow-up.
-- While children run, do your own work. Do not do their work again. When a child ends, check its files and tests at once.
-- For a follow-up, use `[next_child] = await council.run([{\"child\": child, \"task\": task}])`. Its `files` apply to that attempt only; without `files` the child has its original grant. Await `next_child` for the new answer. An await returns at once while the child has an open question. Use `child.cancel()` to request cancellation of only that attempt.
+- While children run, do your own work. Use `await child` for one result or `await asyncio.wait(children, return_when=asyncio.FIRST_COMPLETED)` for several. A question can end the wait before any child finishes. When a child ends, check its files and tests at once.
+- Read `error` in a failed record. For `rate_limited`, start the work on a route from `alternatives`. For `budget_limited`, read the handoff before you start a follow-up.
 "
       lead-guide
       lead-child-guide)))

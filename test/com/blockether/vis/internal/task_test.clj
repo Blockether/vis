@@ -51,6 +51,40 @@
           (expect (= [id] (mapv :id (task/take-ended-notices! sid))))
           (expect (empty? (task/take-ended-notices! sid)))
           (finally (deliver finish true) (task/sweep! sid :session-close)))))
+  (it "waits for the end of a Task after a cancel request instead of detaching it again"
+      (let [sid (random-uuid)
+            gate (promise)
+            {:keys [row complete!]} (task/start-manual! sid
+                                                        {:kind :subagent :name "child"
+                                                         :detach-reason (constantly {:question "Ready?"})}
+                                                        (fn [_] @gate))
+            id (:id row)]
+        (try
+          (expect (= {:state :detached} (task/await! sid id {:block "one" :token 1})))
+          (expect (true? (task/cancel! sid id :agent)))
+          (expect (= {:state :running} (task/await! sid id {:block "two" :token 2 :timeout-ms 20})))
+          (deliver gate true)
+          (complete! (constantly {:state :cancelled}))
+          (expect (= :cancelled (:state (task/await! sid id {:block "one" :token 1}))))
+          (expect (= :cancelled (:state (task/await! sid id {:block "two" :token 2}))))
+          (finally (deliver gate true) (task/sweep! sid :session-close)))))
+  (it "keeps a wait on a Task with a cancel request when another child asks"
+      (let [sid (random-uuid)
+            gate (promise)
+            {:keys [row complete!]} (task/start-manual! sid
+                                                        {:kind :subagent :name "child"
+                                                         :detach-reason (constantly nil)}
+                                                        (fn [_] @gate))
+            id (:id row)]
+        (try
+          (expect (= {:state :running} (task/await! sid id {:block "one" :token 1})))
+          (expect (true? (task/cancel! sid id :agent)))
+          (expect (empty? (task/detach-awaits! sid {:question "Other child asks"})))
+          (expect (nil? (task/take-detach-notices! sid "one")))
+          (deliver gate true)
+          (complete! (constantly {:state :cancelled}))
+          (expect (= :cancelled (:state (task/await! sid id {:block "one" :token 1}))))
+          (finally (deliver gate true) (task/sweep! sid :session-close)))))
   (it "does not detach a tool that disables detachment, but releases its view on sweep"
       (let [sid (random-uuid)
             finish (promise)
@@ -79,7 +113,9 @@
                       (when (= kind "task.ended") (deliver ended true))
                       (when (= kind "task.started") (throw (ex-info "sink failed" {}))))
             ;; Resolve first so the test fails with a missing publisher before the fix.
-            install! (ns-resolve 'com.blockether.vis.internal.task 'set-publisher!)]
+            install! (ns-resolve 'com.blockether.vis.internal.task 'set-publisher!)
+            ;; The publisher is process-wide; gateway wiring installed it once.
+            previous @@#'task/publisher]
         (expect (some? install!))
         (when install!
           (install! (fn [session kind row]
@@ -103,7 +139,7 @@
                 (expect (= [[] ["view"] ["view"] []] (mapv :view-ids rows)))
                 (expect (= [:running :running :running :failed] (mapv :state rows)))
                 (expect (not (.contains (pr-str rows) "secret")))))
-            (finally (task/sweep! sid :session-close) (install! nil)))))))
+            (finally (task/sweep! sid :session-close) (install! previous)))))))
 
 (defdescribe task-sweep-race-test
   (it "does not run queued work swept before its worker starts"

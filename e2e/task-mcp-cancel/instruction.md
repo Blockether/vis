@@ -1,0 +1,3 @@
+Use only the local `harbor_probe` MCP server. Start its `hold` tool as a Task. Use the server's `started` tool to check that the first call reached the server. Read the JSON text in the tool results. Check that the first Task is not done. Cancel it, await it and catch `asyncio.CancelledError`. Call the server's `summary` tool. Report the number of hold requests and the number of cancellations for the hold. Do not start another hold, use the shell or change files. Answer `mcp-task-ok` only if both counts are one.
+
+Print one JSON object with keys `cancelled`, `holds`, and `cancels`. Get `cancelled` from the Task and read the counts from the MCP result.

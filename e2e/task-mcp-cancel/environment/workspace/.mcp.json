@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "harbor_probe": {
+      "type": "stdio",
+      "command": "${VIS_HARBOR_PYTHON}",
+      "args": [
+        "${VIS_HARBOR_WORKSPACE}/.vis/mcp/probe.py",
+        "${VIS_HARBOR_WORKSPACE}/.vis/calls/mcp.jsonl"
+      ]
+    }
+  }
+}

@@ -4313,7 +4313,7 @@
   ;; A subagent's background shells and REPLs end with its turn. Nothing else stops them, and a
   ;; leftover can hold a shared lock for hours. Before the result: the leader sees them gone.
   (when (agents/info (lp/db-info) sid)
-    (try (resources/stop-all! sid)
+    (try (binding [resources/*stop-reason* :turn] (resources/stop-all! sid))
          (catch Throwable t
            (tel/log! {:level :warn
                       :id ::agent-resources-stop-failed
@@ -6947,6 +6947,28 @@
     (when @first? (schedule-held-wakes! sid hold-ms))
     {:held? true}))
 
+(declare register-agent-attempt!)
+
+(defn- prepare-council-wake!
+  [db sid {:keys [author_session_id]}]
+  (let [child (agents/info db sid)
+        ended? (agents/attempt-ended? child)
+        owner (:parent_id child)
+        env {:db-info db :router (or (:router (live-env owner)) (loop-router/get-router)) :session-id owner}]
+    (when (and (not= (str owner) (str author_session_id)) (= "cancelled" (:status child)))
+      (agents/fail! :invalid-recipient "Start another task for this subagent with council.run"))
+    (when ended?
+      (agents/settle-task! env child))
+    (let [restore! (or (agents/queue-turn! db sid)
+                       (agents/fail! :invalid-recipient "Subagent cannot take a follow-up turn"))
+          handle (try
+                   (when (and ended? (= (str owner) (str author_session_id)))
+                     (register-agent-attempt! env child nil))
+                   (catch Throwable t (restore!) (throw t)))]
+      (fn []
+        (when handle (task/discard! owner (:id handle)))
+        (restore!)))))
+
 (defn council-wake!
   "Start `sid`'s notification turn for Council `entry`; throws when it may no
    longer be woken or the turn cannot start. The same turn takes the later entries
@@ -6959,44 +6981,42 @@
                   (= (:group_id entry) (council/default-group db sid))
                   (agents/wake-allowed? db (:author_session_id entry) sid))
      (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
-   (if-let [hold-ms (rate-limit-hold-ms db sid)]
-     (hold-wake! db sid entry hold-ms)
-     ;; A ping from its parent to a finished subagent is its follow-up task.
-     (let [restore! (or (locking agent-lock
-                           (when-let [child (agents/info db sid)]
-                             (agents/settle-task! {:db-info db :router (loop-router/get-router)} child))
-                           (agents/queue-turn! db sid))
-                        (throw (ex-info "Subagent cannot take a follow-up turn"
-                                        {:error :invalid-recipient})))
-           entries (cons entry others)
-           result
-           (try
-             (submit-turn!
-               sid
-               {:request
-                (or
-                  (agents/task-request db sid entry)
-                  (str
-                    "Council notification" (when (seq others) "s")
-                    " #" (str/join ", #" (map :entry_id entries))
-                    ". Read the attributed Council input; if missing or truncated, use council.get("
-                    (if (seq others) "id" (:entry_id entry))
-                    ")." (when (:reply_required entry)
-                           (str
-                             " Reply before ending this turn with await council.publish(content, "
-                             "reply_to="
-                             (:entry_id entry)
-                             ")."))))
-                :display-request (str/join "\n\n" (map :content entries))
-                :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-                :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
-             (catch Throwable t (restore!) (throw t)))]
+   (locking agent-lock
+     (when (and (:reply_to entry) (agents/attempt-cancelled? (agents/info db sid)))
+       (agents/fail! :invalid-recipient "A reply does not restart a cancelled subagent"))
+     (if-let [hold-ms (rate-limit-hold-ms db sid)]
+       (hold-wake! db sid entry hold-ms)
+       (let [restore! (prepare-council-wake! db sid entry)
+             entries (cons entry others)
+             result
+             (try
+               (submit-turn!
+                 sid
+                 {:request
+                  (or
+                    (agents/task-request db sid entry)
+                    (str
+                      "Council notification" (when (seq others) "s")
+                      " #" (str/join ", #" (map :entry_id entries))
+                      ". Read the attributed Council input; if missing or truncated, use council.get("
+                      (if (seq others) "id" (:entry_id entry))
+                      ")." (when (:reply_required entry)
+                             (str
+                               " Reply before ending this turn with await council.publish(content, "
+                               "reply_to="
+                               (:entry_id entry)
+                               ")."))))
+                  :display-request (str/join "\n\n" (map :content entries))
+                  :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
+                  :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
+               (catch Throwable t (restore!) (throw t)))]
 
-       (when (:error result)
-         (restore!)
-         (throw (ex-info (:message result "Council target cannot be started")
-                         {:error (:error result)})))
-       result))))
+         (when (or (:council-active? result) (:error result))
+           (restore!))
+         (when (:error result)
+           (throw (ex-info (:message result "Council target cannot be started")
+                           {:error (:error result)})))
+         result)))))
 
 (defn- wake-held!
   "Give the held Council `entries` of `sid` to the wake path, oldest first. One turn
@@ -10620,7 +10640,8 @@
    `running-turn-count`)."
   [sid]
   (when-not (session-busy? sid)
-    (try (resources/stop-all! sid) (catch Throwable _ nil))
+    (try (binding [resources/*stop-reason* :session-close] (resources/stop-all! sid))
+         (catch Throwable _ nil))
     (try (lp/close! sid) (catch Throwable _ nil)))
   nil)
 

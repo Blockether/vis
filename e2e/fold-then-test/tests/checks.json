@@ -18,5 +18,9 @@
   "want_fold_first": [
     "shell(",
     "RELEASE.md"
-  ]
+  ],
+  "want_tools": [
+    "shell"
+  ],
+  "verify": "verify.py"
 }

@@ -383,7 +383,9 @@
                            (swap! sessions update-in (conj path :waiters) dissoc token))
                        (when (and (= :running (get-in entry [:row :state]))
                                   (not (contains? (:waiters entry) token)))
-                         (if-let [reason (when (and (:detachable? entry) (:detach-reason entry))
+                         ;; A requested cancel ends the Task: wait for that end, not for a question.
+                         (if-let [reason (when (and (:detachable? entry) (:detach-reason entry)
+                                                    (zero? (long (:cancelling entry 0))))
                                            ((:detach-reason entry)))]
                            (do (swap! sessions update (first path)
                                       (fn [owner]
@@ -395,16 +397,19 @@
                                (publish-row! session "task.updated" (get-in @sessions path)))
                            (swap! sessions assoc-in (conj path :waiters token)
                                   {:block block :observation? observation? :release (when hold (hold))})))))
-                   (when-not (get-in @sessions (into path [:waiters token :detached?]))
-                     (:signal entry))))]
+                   (when-not (and (get-in @sessions (into path [:waiters token :detached?]))
+                                  (zero? (long (:cancelling (get-in @sessions path) 0))))
+                     (:signal (get-in @sessions path)))))]
     (if leave?
       {:state :released}
       (do (when (and signal (pos? (long (or timeout-ms 0))))
             (deref signal (long timeout-ms) nil))
           (locking sessions
             (when-let [entry (get-in @sessions path)]
-              (or (when (get-in entry [:waiters token :detached?]) {:state :detached})
-                  (:outcome entry)
+              (or (:outcome entry)
+                  (when (and (get-in entry [:waiters token :detached?])
+                             (zero? (long (:cancelling entry 0))))
+                    {:state :detached})
                   {:state :running})))))))
 
 (defn acknowledge! [session id]
@@ -432,8 +437,10 @@
   (let [sid (str session)]
     (locking sessions
       (when-let [entries (get-in @sessions [sid :entries])]
-        (let [detaching (filter (fn [[_ {:keys [row waiters detachable?]}]]
+        ;; A Task with a cancel request keeps its waits until it ends.
+        (let [detaching (filter (fn [[_ {:keys [row waiters detachable? cancelling]}]]
                                   (and detachable? (= :running (:state row))
+                                       (zero? (long (or cancelling 0)))
                                        (some (complement :detached?) (vals waiters))))
                                 entries)]
           (swap! sessions update sid

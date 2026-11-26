@@ -306,13 +306,13 @@
 (defn- envelope-with-task-notices
   [envelope]
   (let [ended (for [{:keys [id name]} (:task-ended-notices envelope)]
-                (str "[Vis] " name " ended: await " id))
+                (str "[Vis] " name " ended. If the result is unread, find Task " id " in asyncio.all_tasks()."))
         detached (for [{:keys [task reason]} (:task-detach-notices envelope)
                        :let [{:keys [id name]} task
                              child (or (:id reason) (:title reason) (:session-id reason))]]
                    (str "[Vis] " name " runs in the background. " child " asks: "
                         (pr-str (util/redact-secret-text (:question reason)))
-                        ". Await " id " later."))]
+                        ". Reply, then await the same Task (" id ")."))]
     (cond-> (dissoc envelope :task-ended-notices :task-detach-notices)
       (or (seq ended) (seq detached))
       (update :stdout #(str/join "\n" (concat ended (when-not (str/blank? %) [%]) detached))))))

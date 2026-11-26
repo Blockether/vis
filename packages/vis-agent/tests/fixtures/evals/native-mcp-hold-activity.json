@@ -1,0 +1,32 @@
+{
+  "error_summary": "MCP Task cancelled.",
+  "id": "native-mcp-hold",
+  "summary": "MCP Task cancelled.",
+  "signal": "mutation",
+  "sequence": 1,
+  "operation": "call",
+  "presentation": {
+    "headline": "Call MCP tool",
+    "summary": "harbor-probe",
+    "content": []
+  },
+  "presenter": "generic",
+  "duration_ms": 26,
+  "state": "cancelled",
+  "evidence": [
+    {
+      "kind": "arguments",
+      "text": "[\"harbor-probe\" \"hold\" {}]"
+    },
+    {
+      "kind": "error",
+      "text": "MCP Task cancelled."
+    }
+  ],
+  "resources": [
+    {
+      "type": "task",
+      "id": "t1"
+    }
+  ]
+}
