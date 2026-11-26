@@ -37,6 +37,11 @@
 
 (def server-status mcp-model/server-status)
 
+(defn masked-url
+  "`url` with each query value hidden: a key such as `?access=` is a credential."
+  [url]
+  (str/replace (str url) #"([?&][^=&#]+=)[^&#]+" "$1****"))
+
 (defn server-details
   "Read-only detail lines for one row."
   [row]
@@ -47,7 +52,7 @@
          (when-let [c (get row "cwd")]
            (str "cwd        " c))
          (when-let [u (get row "url")]
-           (str "url        " u)) (str "state      " (server-status row))
+           (str "url        " (masked-url u))) (str "state      " (server-status row))
          (str "enabled    " (flag row "enabled")) (str "connected  " (flag row "is_connected"))
          (str "killed     " (flag row "is_killed")) (str "tools      " (or (get row "tools") 0))
          (str "managed    "

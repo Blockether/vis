@@ -1118,6 +1118,18 @@
       (do (mcp-oauth/save-client-secret! name secret) (update spec "auth" dissoc "client_secret"))
       spec)))
 
+(defn- connect-in-session!
+  "Connect `name` now in the session of settings `target`, so its row shows the
+   tools at once; a disabled server is closed. A failure only marks the row
+   unhealthy. Project and group servers connect when a session uses them."
+  [db target name]
+  (when (= "session" (:scope target))
+    (let [sid (:target-id target)]
+      (binding [extension/*current-environment* {:session-id sid :db-info db}]
+        (if (scoped/resource-enabled? extension/*current-environment* :mcp name)
+          (ensure-connected! sid name)
+          (disconnect! sid name))))))
+
 (defn save-scoped-server!
   "Write a scoped definition with its own credentials. A save that omits `env`,
    `headers` or `auth` keeps the ones this target stores (`with-preserved-secrets`)."
@@ -1138,6 +1150,7 @@
       (drop-scoped-aliases! db target name)
       (scoped/set-definition! db target ["mcp" "servers"] name spec)
       (release-auth-everywhere! name)
+      (connect-in-session! db target name)
       (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
 
 (defn delete-scoped-server!
@@ -1166,6 +1179,7 @@
           (scoped/register-resource! :mcp (server-name name))]
 
       (scoped/set-setting! db target id "value" enabled)
+      (connect-in-session! db target name)
       (first (filter #(= name (get % "name")) (get (scoped-servers db target) "servers"))))))
 
 (defn kill-gateway-server!

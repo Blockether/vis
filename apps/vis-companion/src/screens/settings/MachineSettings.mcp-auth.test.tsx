@@ -96,3 +96,38 @@ it('removes a stored token when the other headers are replaced', async () => {
     ),
   );
 });
+
+// Regression: a working server with its key in the URL said "Not signed in",
+// and the screen showed the key.
+it('says a key-in-URL server needs no sign-in and hides the key', async () => {
+  const url = 'https://mcp.example.com/?access=kb-url-key';
+  const client = gateway({ ...SERVER, url, needs_auth: false, is_connected: true, status: 'connected', tools: 4 } as McpServer);
+  renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} target={PROJECT} />);
+  await waitFor(() => expect(client.mcpServers).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByText('work'));
+  const details = await screen.findByRole('region', { name: 'work details' });
+  expect(details).toHaveTextContent('Not needed');
+  expect(document.body).not.toHaveTextContent('kb-url-key');
+  expect(document.body.innerHTML).not.toContain('kb-url-key');
+});
+
+// Regression: on a phone, closing the add form after a save left the page below
+// the list, so the new server was out of view.
+it('scrolls the saved server into view, open', async () => {
+  const added: McpServer = { ...SERVER, name: 'api', url: 'https://api.example.com/mcp', is_connected: true, status: 'connected', tools: 3 };
+  const client = gateway(SERVER);
+  client.mcpServers.mockResolvedValueOnce([SERVER]).mockResolvedValue([SERVER, added]);
+  const scroll = vi.spyOn(Element.prototype, 'scrollIntoView');
+  renderOpenBands(<McpServersPanel client={client as unknown as GatewayClient} target={PROJECT} />);
+  await waitFor(() => expect(client.mcpServers).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: 'Add an MCP server' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Streamable HTTP' }));
+  fireEvent.change(screen.getByLabelText('Server name'), { target: { value: 'api' } });
+  fireEvent.change(screen.getByLabelText('Streamable HTTP endpoint'), { target: { value: added.url } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save here' }));
+  expect(await screen.findByRole('region', { name: 'api details' })).toHaveTextContent('3');
+  await waitFor(() =>
+    expect(scroll.mock.contexts).toContainEqual(document.querySelector('[data-mcp-server="api"]')),
+  );
+  scroll.mockRestore();
+});

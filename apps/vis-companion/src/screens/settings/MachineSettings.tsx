@@ -968,6 +968,18 @@ export function McpServersPanel({
   // Rows standing open to show the whole spec: the arguments and working
   // directory the one-line meta cannot carry.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  // The row a save just wrote. Closing the add form shortens the page, so a phone
+  // was left below the list; the row scrolls into view, open, after the reload.
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!revealed || !servers?.some((server) => server.name === revealed)) return;
+    listRef.current
+      ?.querySelector(`[data-mcp-server="${CSS.escape(revealed)}"]`)
+      // Centered: a top-aligned row hides under the sticky settings search.
+      ?.scrollIntoView({ block: 'center' });
+    setRevealed(null);
+  }, [revealed, servers]);
   // The one destructive question open at a time, asked in the row itself.
   const [confirming, setConfirming] = useState<{
     name: string;
@@ -1199,6 +1211,8 @@ export function McpServersPanel({
       if (probe.needs_auth) setChallenged((current) => new Set(current).add(serverName));
       closeForm();
       await load();
+      setExpanded((current) => new Set(current).add(serverName));
+      setRevealed(serverName);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1475,7 +1489,7 @@ export function McpServersPanel({
         )
       }
     >
-      <div className="divide-y divide-dialog-edge">
+      <div ref={listRef} className="divide-y divide-dialog-edge">
         {error && (
           <div className="p-3">
             <Banner kind="err">{error}</Banner>
@@ -1595,7 +1609,7 @@ export function McpServersPanel({
           }
 
           return (
-            <div key={server.name} className="min-w-0">
+            <div key={server.name} className="min-w-0" data-mcp-server={server.name}>
               <SwipeActions
                 label={server.name}
                 actions={actions}
@@ -1661,9 +1675,9 @@ export function McpServersPanel({
                       <Text
                         variant="meta"
                         className="block truncate"
-                        title={server.transport === 'stdio' ? server.command : server.url}
+                        title={server.transport === 'stdio' ? server.command : maskedQuery(server.url ?? '')}
                       >
-                        {server.transport === 'stdio' ? homeifyPath(server.command) : server.url}
+                        {server.transport === 'stdio' ? homeifyPath(server.command) : maskedQuery(server.url ?? '')}
                       </Text>
                     </span>
                     <span
@@ -1771,6 +1785,11 @@ function mcpServerState(
   };
 }
 
+/** `url` with each query value hidden: a key such as `?access=` is a credential. */
+function maskedQuery(url: string): string {
+  return url.replace(/([?&][^=&#]+=)[^&#]+/g, '$1••••');
+}
+
 /** The whole non-secret spec of one server, under its own row. */
 function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
   const rows: [string, string][] = [];
@@ -1779,7 +1798,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
     if (server.args?.length) rows.push(['Arguments', server.args.join(' ')]);
     if (server.cwd) rows.push(['Directory', server.cwd]);
   } else {
-    rows.push(['Endpoint', server.url ?? '']);
+    rows.push(['Endpoint', maskedQuery(server.url ?? '')]);
     rows.push([
       'Sign-in',
       hasStaticAuth(server)
@@ -1788,7 +1807,7 @@ function McpServerDetails({ id, server }: { id: string; server: McpServer }) {
           ? 'Signed in'
           : needsOAuth(server)
             ? 'OAuth sign-in required'
-            : 'Not signed in',
+            : 'Not needed',
     ]);
     if (server.header_names?.length) rows.push(['Headers', server.header_names.join(', ')]);
   }

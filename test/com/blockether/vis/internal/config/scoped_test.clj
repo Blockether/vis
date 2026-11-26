@@ -427,6 +427,30 @@
                       (constantly [])]
 
           (expect (= {"tools" []} (mcp/app-request db sid "local" "tools/list" {}))))
+        ;; Regression: a session server saved in Settings showed 0 tools until a
+        ;; turn used it, so a working URL looked broken. Disable closes it.
+        (with-redefs [client/connect
+                      (fn [& _]
+                        {:server-capabilities {}})
+
+                      client/list-tools
+                      (constantly [{"name" "exec"}])
+
+                      client/alive?
+                      (constantly true)
+
+                      client/close
+                      (constantly nil)]
+
+          (let [row (mcp/save-scoped-server! db
+                                             target
+                                             "url"
+                                             {"transport" "streamable_http"
+                                              "url" "https://u.example.com/?access=x"})]
+            (expect (= ["connected" 1] [(get row "status") (get row "tools")])))
+          (expect (= "disconnected"
+                     (get (mcp/set-scoped-server-enabled! db target "url" false) "status")))
+          (mcp/delete-scoped-server! db target "url"))
         (mcp/set-scoped-server-enabled! db target "local" false)
         (expect (false? (scoped/resource-enabled? env :mcp "local")))
         (expect (scoped/resource-enabled? {:db-info db :session-id other} :mcp "local"))

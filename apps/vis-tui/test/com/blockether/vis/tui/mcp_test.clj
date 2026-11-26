@@ -509,3 +509,11 @@
               (mcp/save-server! nil nil nil row))
             (expect (some? @save))
             (expect (= expected (get @save "headers"))))))))
+
+;; Regression: the detail lines showed the `?access=` key of a server in plain text.
+(defdescribe
+  server-details-hide-url-keys
+  (it "hides each query value of the URL"
+      (let [lines (mcp/server-details {"name" "m" "transport" "streamable_http" "url" "https://m.example/?access=kb-url-key&x=1"})]
+        (expect (some #(= "url        https://m.example/?access=****&x=****" %) lines))
+        (expect (not-any? #(str/includes? % "kb-url-key") lines)))))
