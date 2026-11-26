@@ -6,6 +6,11 @@
 @import '@fontsource-variable/jetbrains-mono';
 @import '@fontsource-variable/jetbrains-mono/wght-italic.css';
 @import 'tailwindcss';
+/* The app does not use the `container` class. Tailwind finds the word in comments and
+   makes the class, with media queries at 80rem and 96rem. In Blink, each change of a
+   media query result in this style sheet loads the fonts again and lays out all text:
+   about 35 ms each time a resize goes across 1280px or 1536px. */
+@source not inline('container');
 /* Every theme and the session-group hues, rendered from `theme.clj` by
    `clojure -X:companion-themes`. The gateway serves no colours; this file IS the
    app's colour catalog. */
