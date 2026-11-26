@@ -269,13 +269,17 @@ print(json.dumps(dict(exit=result.get("exit"), out=result.get("out"))))
     attach = None
     if case == "attach":
         # `shell(op="attach")` returns the same handle; the grader counted it as a launch.
-        code = code.replace("send = ", 'await shell(op="attach", id="python3")\nsend = ', 1)
+        code = code.replace(
+            "send = ", 'await shell(op="attach", id="python3")\nsend = ', 1
+        )
         attach = atif.receipt(
             atif.row(
                 "attach",
                 "shell",
                 presenter="shell",
-                evidence=[{"kind": "arguments", "text": '[{"id" "python3", "op" "attach"}]'}],
+                evidence=[
+                    {"kind": "arguments", "text": '[{"id" "python3", "op" "attach"}]'}
+                ],
             )
         )
     fold = atif.block(
