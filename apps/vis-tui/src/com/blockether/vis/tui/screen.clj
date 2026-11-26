@@ -4133,6 +4133,9 @@
   "Transcript rows that the agent team frame leaves free above it."
   6)
 
+(defn- background-height ^long [db cols]
+  (if (and (>= (long cols) 24) (state/background-task-dock db)) 2 0))
+
 (defn- composer-geometry
   "One geometry contract for the prompt, attachment rail, and echo boundary."
   [db cols rows]
@@ -4174,10 +4177,11 @@
                                    (long (header/header-rows db))
                                    1
                                    (long min-transcript-rows)
+                                   (background-height db cols)
                                    (long (queue-tray/height (queue-input db true) cols))))
 
         dock-h
-        (+ (long team-h) (long (queue-tray/height (queue-input db (pos? (long team-h))) cols)))
+        (+ (background-height db cols) (long team-h) (long (queue-tray/height (queue-input db (pos? (long team-h))) cols)))
 
         dock-top
         (- echo-row dock-h)]
@@ -4374,6 +4378,47 @@
   [db cols key]
   (or (not (project-sidebar-locked? db cols)) (and (:help-open? db) (projects/help-key? db key))))
 
+(defn- paint-background-dock!
+  [g db top cols]
+  (let [{:keys [sid row index count focused? cancelling? view-id]} (state/background-task-dock db)
+        y (inc (long top))
+        cancel-col (- (long cols) 13)
+        view-col (- cancel-col 7)
+        end-col (if view-id view-col cancel-col)
+        register! (fn [kind x width] (.register interactions/hit-map
+                                                {:bounds {:row y :col x :width width}
+                                                 :kind kind :session-id sid :task-id (get row "id")
+                                                 :view-id view-id}))]
+    (p/set-colors! g t/code-block-fg t/terminal-bg)
+    (p/fill-rect! g 0 top cols 2)
+    (p/put-str! g 1 top (p/ellipsize (str "Background " (inc (long index)) "/" count
+                                         (if focused? " · ↑/↓ select · Enter cancel · Esc" " · F6"))
+                                     (dec (long cols))))
+    (p/put-str! g 1 y (p/ellipsize (str (if focused? "› " "  ") (get row "name")) (dec end-col)))
+    (when (> count 1) (register! :background-task-next 1 (dec end-col)))
+    (when view-id
+      (p/put-str! g view-col y "[View]")
+      (register! :background-task-view view-col 6))
+    (p/put-str! g cancel-col y (if cancelling? "Cancelling…" "[Cancel]"))
+    (when-not cancelling? (register! :background-task-cancel cancel-col 8))))
+
+(defn- background-task-key!
+  [db key]
+  (when-let [{:keys [sid row focused? view-id]} (and (instance? KeyStroke key) (state/background-task-dock db))]
+    (let [^KeyStroke ks key
+          k (.getKeyType ks)]
+      (cond
+        (= k KeyType/F6) (do (state/dispatch [:focus-background-tasks (not focused?)]) true)
+        (not focused?) false
+        (= k KeyType/Escape) (do (state/dispatch [:focus-background-tasks false]) true)
+        (= k KeyType/ArrowUp) (do (state/dispatch [:focus-background-tasks true -1]) true)
+        (= k KeyType/ArrowDown) (do (state/dispatch [:focus-background-tasks true 1]) true)
+        (= k KeyType/Enter) (do (state/dispatch [:cancel-background-task sid (get row "id")]) true)
+        (and view-id (= k KeyType/Character) (= \v (.getCharacter ks)))
+        (do (state/dispatch [:focus-background-tasks false])
+            (state/dispatch [:live-view-reopen view-id]) true)
+        :else false))))
+
 (defn- paint-agent-dock!
   "Paint the agent team frame of the session at `dock-top`, then the queue frame under it.
    `dock-h` is the height of both from `composer-geometry`, or nil for no limit."
@@ -4382,10 +4427,14 @@
         turn-id (running-turn-id db)
         leader (running-leader db)
         ;; The team frame takes what the tray, touching it, leaves of `dock-h`.
-        max-lines (when dock-h (- (long dock-h) (long (queue-tray/height (queue-input db true) cols))))
+        bg-h (background-height db cols)
+        max-lines (when dock-h (- (long dock-h) bg-h (long (queue-tray/height (queue-input db true) cols))))
         team-h (agent-team/dock-height sid turn-id cols leader max-lines)]
     (agent-team/draw-dock! g sid turn-id dock-top cols leader max-lines)
-    (queue-tray/draw! g (queue-input db (pos? (long team-h))) (+ (long dock-top) (long team-h)) cols)))
+    (let [queue-top (+ (long dock-top) (long team-h))]
+      (queue-tray/draw! g (queue-input db (pos? (long team-h))) queue-top cols)
+      (when (pos? bg-h)
+        (paint-background-dock! g db (+ queue-top (long (queue-tray/height (queue-input db (pos? (long team-h))) cols))) cols)))))
 
 (defn- session-band-anchor
   "`state/band-anchor` with the painter that puts the agent dock directly above a band."
@@ -7232,6 +7281,9 @@
                   :team-sync
                   (agent-team/team-updated! (or (:session-id chunk) session-id) chunk)
 
+                  :task-sync
+                  (state/dispatch [:sync-background-tasks session-id chunk])
+
                   :stream-lost
                   (agent-team/stream-lost! session-id)
 
@@ -7278,7 +7330,8 @@
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
                   :gateway-ready
-                  (do (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
+                  (do (state/dispatch [:sync-background-tasks session-id chunk])
+                      (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
                       ;; A reconnect can hide a model change; read the pref again.
                       (vis/refresh-session-model! session-id)
                       ;; Read pending forms even when the replay misses an open or a close.
@@ -10135,6 +10188,17 @@
           :fork-at-turn
           (fork-session! (:session-id hit) (:turn-id hit) "Forked session at turn")
 
+          :background-task-next
+          (when (= (:session-id hit) (current-session-id))
+            (state/dispatch [:focus-background-tasks true 1]))
+
+          :background-task-view
+          (when (= (:session-id hit) (current-session-id))
+            (state/dispatch [:live-view-reopen (:view-id hit)]))
+
+          :background-task-cancel
+          (state/dispatch [:cancel-background-task (:session-id hit) (:task-id hit)])
+
           ;; Queue controls: one row's `→`, or the header's
           ;; `→ Send now` (see state/:queue-send-now).
           :queue-send-now
@@ -11545,6 +11609,8 @@
              (not (overlay-locked? db))
              (not @paste-buffer))
         (do (live-controls! screen db) ::recur)
+        (and (not (overlay-locked? db)) (not @paste-buffer)
+             (pos? (background-height db cols)) (background-task-key! db key)) ::recur
         (nil? key)
         (do (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)
             (release-wheel-momentum! live-scroll-momentum last-live-wheel-at-ms :live-view)

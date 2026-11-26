@@ -23,6 +23,7 @@
             [com.blockether.vis.internal.config.runtime-settings :as rt]
             [com.blockether.vis.internal.persistance.codec :as codec]
             [com.blockether.vis-python-runtime :as runtime]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.task :as task]
             [taoensso.telemere :as tel]))
 
@@ -100,6 +101,8 @@
 
       (when (seq data) (pr-str data)))))
 
+(def ^:dynamic ^:private *interruptible-task?* false)
+
 (defn- answer
   "Run `f` on `args` and answer the reply map the guest reads."
   [tool f args]
@@ -107,7 +110,8 @@
        (catch NullPointerException e {"error" (host-null-fault tool e)})
        (catch Throwable t
          (cond-> {"error" (or (ex-message t) (str t))}
-           (:vis/task-cancelled (ex-data t))
+           (or (:vis/task-cancelled (ex-data t))
+               (and *interruptible-task?* (cancellation/preserve-interrupt! t)))
            (assoc "cancelled" true)
 
            (failure-data t)
@@ -211,9 +215,22 @@
   [session entries]
   (swap! task-tools update session
          (fn [held]
-           (reduce (fn [m {:keys [name task? detachable?]}]
-                     (if task? (assoc m name {:detachable? (not= false detachable?)}) (dissoc m name)))
+           (reduce (fn [m {:keys [name task? task-kind detachable?]}]
+                     (if (or task? task-kind)
+                        (assoc m name {:kind (or task-kind :tool)
+                                       :detachable? (not= false detachable?)})
+                        (dissoc m name)))
                    held entries))))
+
+(defn- task-name [kind binding-name args display]
+  (if (= :mcp kind)
+    (let [[server tool] args
+          part #(str/replace (subs % 0 (min 80 (count %))) #"[^\p{L}\p{N}_]" "_")]
+      (if (string? server)
+        (cond-> (part server)
+          (and (string? tool) (not (str/blank? tool))) (str "." (part tool)))
+        "MCP call"))
+    (str binding-name (or display "(...)"))))
 
 (defn- task-outcome [reply]
   (cond (get reply "cancelled") {:state :cancelled}
@@ -239,13 +256,22 @@
       (if-let [tool-spec (and f (get-in @task-tools [session arg]))]
         (let [args (call-args (guest-records (get request "tool_args"))
                               (guest-records (get request "kwargs")))
-              row (task/start! sid (assoc tool-spec :kind :tool
-                                           :name (str arg (get request "call_display" "(...)"))
+              mcp? (= :mcp (:kind tool-spec))
+              name (task-name (:kind tool-spec) arg args (get request "call_display"))
+              row (task/start! sid (assoc tool-spec :name name
+                                           :public-name (when mcp? name)
                                            :origin *task-origin* :hold-activity *hold-task-activity*
-                                            :cancel-on-request? (= "shell" arg))
+                                           :cancel-on-request? (= "shell" arg))
                                #(binding [rt/*blocking-wall-park* nil
                                           rt/*blocking-wall-hold* nil]
-                                  (task-outcome (answer arg f args))))]
+                                  (if mcp?
+                                    (let [worker (Thread/currentThread)]
+                                      (task/install-interrupt! (fn [_] (.interrupt worker)))
+                                      (if (.isInterrupted worker)
+                                        {:state :cancelled}
+                                        (binding [*interruptible-task?* true]
+                                          (task-outcome (answer arg f args)))))
+                                    (task-outcome (answer arg f args)))))]
           {"id" (:id row) "name" (:name row)})
         (throw (ex-info (str "no Task tool named `" arg "` in this session") {})))
 

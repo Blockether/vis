@@ -428,6 +428,7 @@
     (optional-field? x :ext.symbol/raw? boolean?)
     (optional-field? x :ext.symbol/hidden? boolean?)
     (optional-field? x :ext.symbol/binding symbol?)
+    (optional-field? x :ext.symbol/task-kind #{:mcp})
     (optional-field? x
                      :ext.symbol/handles
                      #(and (map? %) (every? (fn [k] (fn? (get % k))) [:names :argv :call])))
@@ -847,6 +848,9 @@
 
           (:binding opts)
           (assoc :ext.symbol/binding (:binding opts))
+
+          (:task-kind opts)
+          (assoc :ext.symbol/task-kind (:task-kind opts))
 
           (:handles opts)
           (assoc :ext.symbol/handles (:handles opts))

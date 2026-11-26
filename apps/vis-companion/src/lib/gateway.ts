@@ -13,6 +13,7 @@ import {
   activityStreamDecoder,
   type ActivityProjection,
 } from './activity';
+import taskSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/task.json';
 import gatewaySchema from '../../../../packages/vis-contract/resources/vis-contract/schema/gateway.json';
 import type {
   LiveVoiceCapabilities,
@@ -1502,6 +1503,27 @@ export function sessionTeamFromWire(raw: unknown): SessionTeam | null {
   const { active, total } = raw as Record<string, unknown>;
   const count = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0;
   return count(active) && count(total) ? { active: active as number, total: total as number } : null;
+}
+
+export interface BackgroundTask {
+  id: string;
+  session_id: string;
+  name: string;
+  kind: string;
+  state: string;
+  cancel_reason?: string;
+  view_ids: readonly string[];
+}
+
+export function taskFromWire(raw: unknown): BackgroundTask | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { id, session_id, name, kind, state, cancel_reason, view_ids } = raw as Record<string, unknown>;
+  if (typeof id !== 'string' || !id || typeof session_id !== 'string' || !session_id || typeof name !== 'string'
+    || typeof kind !== 'string' || !taskSchema.$defs.kind.enum.includes(kind)
+    || typeof state !== 'string' || !taskSchema.$defs.state.enum.includes(state)
+    || (cancel_reason !== undefined && (typeof cancel_reason !== 'string' || !taskSchema.properties.cancel_reason.enum.includes(cancel_reason)))
+    || !Array.isArray(view_ids) || !view_ids.every((id): id is string => typeof id === 'string')) return null;
+  return { id, session_id, name, kind, state, cancel_reason, view_ids };
 }
 
 /** The agent rows of `subscription.ready` or `session.team_updated`, or null when they are not usable. */
@@ -6257,6 +6279,13 @@ export class GatewayClient {
     return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/cancel-current`, {
       idempotency_key: this.submissionKeys.get(sid),
     });
+  }
+
+  async cancelTask(sid: string, id: string): Promise<boolean> {
+    const result = await this.request<{ requested: boolean }>(
+      'POST', `/v1/sessions/${encodeURIComponent(sid)}/tasks/${encodeURIComponent(id)}/cancel`,
+    );
+    return result.requested;
   }
 
   // ── Queue (shared server-side backlog, same as the TUI) ─────────

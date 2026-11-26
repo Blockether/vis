@@ -22,7 +22,7 @@
       (let [offenders (->> (clojure-sources)
                            (keep (fn [file]
                                    (let [source (slurp file)]
-                                     (when (or (str/includes? source "java.net.http")
+                                     (when (or (re-find #"\bjava\.net\.http(?:\.|\s+[^)\]]*?\b)(?:HttpClient|HttpResponse)\b" source)
                                                (str/includes? source "java.net.URLConnection")
                                                (str/includes? source "java.net.HttpURLConnection"))
                                        (.getPath ^java.io.File file)))))

@@ -1070,17 +1070,38 @@
                                         (throw (ex-info "HTTP 400 on tools/call"
                                                         {:type :mcp/http-error :status 400}))))}
                 (fn [call!]
-                  [(call! {:session-id "s1"} "alpha" "write_file" {}) @calls]))))
+                  (let [first-answer (call! {:session-id "s1"} "alpha" "write_file" {})
+                         first-calls @calls
+                         next-answer (call! {:session-id "s1"} "alpha" "write_file" {})]
+                     [first-answer first-calls next-answer @calls])))))
 
 (defdescribe mcp-era-change-test
-             (it "connects again and repeats the call when the server changed its era"
-                 (let [[answer calls] (era-calls 2)]
-                   (expect (= "ok" (get-in (:result answer) ["content" 0 "text"])))
-                   (expect (= [false true] calls))))
+             (it "does not repeat a mutation after an era change, but a later call uses the new era"
+                 (let [[answer calls next-answer all-calls] (era-calls 2)]
+                   (expect (str/includes? (str answer) "The tool might have run"))
+                   (expect (= [false] calls))
+                   (expect (= "ok" (get-in (:result next-answer) ["content" 0 "text"])))
+                   (expect (= [false true] all-calls))))
              (it "reports the refusal, with no second call, when the era is the same"
                  (let [[answer calls] (era-calls 9)]
                    (expect (str/includes? (str answer) "HTTP 400 on tools/call"))
                    (expect (= [false] calls)))))
+
+(defdescribe mcp-method-name-collision-test
+  (it "does not retry a tool with the exact name of a read method after a stateless refusal"
+      (let [attempts (atom 0)]
+        (with-alpha
+          {#'client/connect (fn [_ _]
+                             {:transport :streamable-http :modern? true :tools (atom nil)
+                              :server-capabilities {"resources" {}}})
+           #'client/list-tools (constantly [{"name" "resources/read"}])
+           #'client/list-all (constantly [])
+           #'client/call-tool (fn [_ _ & _]
+                               (swap! attempts inc)
+                               (throw (ex-info "wrong era" {:type :mcp/rpc-error :code -32600 :status 400})))}
+          (fn [call!]
+            (expect (str/includes? (str (call! {} "alpha" "resources/read" {})) "The tool might have run"))
+            (expect (= 1 @attempts)))))))
 
 (defdescribe
   mcp-method-call-test
@@ -1422,7 +1443,11 @@
                (ep/run-python-block
                  ctx
                  (str
-                   "r = await alpha.resolve_library_id(query='x')\n"
+                   "import asyncio\n"
+                   "work = alpha.resolve_library_id(query='x')\n"
+                   "assert isinstance(work, asyncio.Task), type(work)\n"
+                   "assert work.get_name().endswith(' alpha.resolve_library_id'), work.get_name()\n"
+                   "r = await work\n"
                    "print(r['tool'], r['content'][0]['text'], r['structured_content']['library'])\n"
                    "print(doc(alpha.resolve_library_id).splitlines()[0])\n"
                    "print('Review it with care.' in doc(alpha.prompts.code_review))\n"
@@ -1431,15 +1456,15 @@
                    "print((await alpha.prompts['code-review']())['messages'][0]['role'])\n"
                    ;; No name of the sandbox is `mcp` or `mcp_call`.
                    "print('mcp' in globals(), 'mcp_call' in globals())\n" "import inspect\n"
-                   "print(inspect.signature(alpha.resolve_library_id))\n"
-                   "print(inspect.signature(alpha.prompts.greet))\n"))]
+                   "print(inspect.signature(alpha.resolve_library_id).replace(return_annotation=inspect.Signature.empty))\n"
+                   "print(inspect.signature(alpha.prompts.greet).replace(return_annotation=inspect.Signature.empty))\n"))]
               (expect (nil? (:error result)))
               (expect (= (str "resolve-library-id ok /x/y\n"
                               "# alpha.resolve_library_id\n" "True\n"
                               "['alpha.resolve_library_id']\n" "True\n"
                               "user\n" "False False\n"
-                              "(*, query: str, limit: int = ..., **arguments) -> dict\n"
-                              "(*, who: str) -> dict\n")
+                              "(*, query: str, limit: int = ..., **arguments)\n"
+                              "(*, who: str)\n")
                          (:stdout result)))))))))
   ;; Request: `inspect.signature` gave no type for `["string", "null"]`, `anyOf` and
   ;; `$ref`, and only `str` and `list` for an enum and for an array of strings.
@@ -1486,8 +1511,38 @@
                             "estimate: int | float | None" "free" "labels: list[str]" "limit: int"
                             "owner: dict[str, str]" "patch: list[dict]" "priority: int | float"
                             "sla: Literal['all', 'business'] | None"
-                            "state: Literal['open', 'done']" "dict True"]
+                            "state: Literal['open', 'done']" "HostTask True"]
                            (str/split-lines (:stdout result)))))))))))
+  (it "interrupts only the running MCP Task"
+      (let [started (promise)
+            interrupted (promise)]
+        (with-catalog
+          (atom [])
+          (fn [_]
+            (with-redefs [client/call-tool (fn [_ _ args & _]
+                                            (when (= "slow" (get args "query"))
+                                              (deliver started true)
+                                              (try (Thread/sleep 10000)
+                                                   (catch InterruptedException e
+                                                     (deliver interrupted true)
+                                                     (throw e))))
+                                            {"content" [{"text" "ok"}]})]
+              (tpc/with-own
+                [ctx {}]
+                (bind-verb! ctx)
+                (ep/bind-ctx! ctx (servers-ctx "alpha"))
+                (expect (nil? (:error (ep/run-python-block ctx "slow = alpha.resolve_library_id(query='slow')"))))
+                (expect (true? (deref started 3000 false)))
+                (let [result (ep/run-python-block
+                               ctx
+                               (str "import asyncio\n"
+                                    "assert slow.cancel()\n"
+                                    "assert (await alpha.resolve_library_id(query='quick'))['content'][0]['text'] == 'ok'\n"
+                                    "try:\n    await slow\n"
+                                    "except asyncio.CancelledError:\n    print('cancelled')\n"))]
+                  (expect (= "cancelled\n" (:stdout result)))
+                  (expect (nil? (:error result)))
+                  (expect (true? (deref interrupted 1000 false))))))))))
   (it "leaves a name to Python and to a value of the session, and gives a freed name to the server"
       (with-catalog
         (atom [])

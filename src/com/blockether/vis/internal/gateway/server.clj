@@ -34,6 +34,7 @@
     [com.blockether.vis.internal.gateway.push :as push]
     [com.blockether.vis.internal.gateway.sounds :as sounds]
     [com.blockether.vis.internal.gateway.state :as state]
+    [com.blockether.vis.internal.task :as task]
     [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
     [com.blockether.vis.internal.gateway.server.council :as council-api]
@@ -55,6 +56,7 @@
     [com.blockether.vis.internal.gateway.server.settings :as settings-api]
     [com.blockether.vis.internal.gateway.server.speech :as speech-api]
     [com.blockether.vis.internal.gateway.server.voice :as voice-api]
+    [com.blockether.vis.internal.gateway.server.tasks :as tasks-api]
     [com.blockether.vis.internal.gateway.server.transcripts :as transcripts-api]
     [com.blockether.vis.internal.gateway.server.turns :as turns-api]
     [com.blockether.vis.internal.gateway.server.views :as views-api]
@@ -896,7 +898,10 @@
    attached to. Like every other frame it rides `sse/sse-frame`, i.e. it is an
    ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
   [^OutputStream out sid cursor replay session]
-  (let [tid
+  (let [{:keys [tasks tasks-seq]}
+        (task/at-publication-cursor sid #(state/current-seq sid))
+
+        tid
         (state/current-turn-id sid)
 
         latest-iteration
@@ -910,6 +915,8 @@
                                                     :server-time-ms (util/now-ms)
                                                     :goal (get session "goal")
                                                     :agent-name (get session "agent_name")
+                                                    :tasks tasks
+                                                    :tasks-seq tasks-seq
                                                     :agents (state/agent-rows sid)
                                                     :team-clocks (state/team-clocks sid)
                                                     :latest-iteration (when (pos? latest-iteration)
@@ -1859,7 +1866,7 @@
   [server-handlers council-api/handlers automations-api/handlers evals-api/handlers
    decisions-api/handlers devices-api/handlers fs-api/handlers mcp-api/handlers
    projects-api/handlers providers-api/handlers proxy-api/handlers sessions-api/handlers
-   settings-api/handlers speech-api/handlers voice-api/handlers transcripts-api/handlers
+   settings-api/handlers speech-api/handlers voice-api/handlers tasks-api/handlers transcripts-api/handlers
    turns-api/handlers views-api/handlers web/handlers])
 
 (defn- route-precedence
@@ -2488,7 +2495,8 @@
              ;; Human-input bridge: a `request-human-input!` raised inside a
              ;; session becomes a session event, so the companion app sees the
              ;; blocked run live (and the push tap above alerts the phone).
-             (gw-view/install!))
+             (gw-view/install!)
+             (task/set-publisher! state/publish-task!))
 
          server
          (try
@@ -2508,7 +2516,11 @@
                           :send-server-version? false
                           :configurator (gateway-configurator (when mirror-loopback? port))}
                          (+ (util/now-ms) 6000))
-           (catch Throwable t (reset! instance/server-state nil) (reset! live-app nil) (throw t)))]
+           (catch Throwable t
+              (task/set-publisher! nil)
+              (reset! instance/server-state nil)
+              (reset! live-app nil)
+              (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
@@ -2649,6 +2661,7 @@
      ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
      ;; process; once it exits the children reparent to init and leak.
      (try (resources/shutdown!) (catch Throwable _ nil))
+     (task/set-publisher! nil)
      (try (discovery/deregister-self! db) (catch Throwable _ nil))
      (reset! instance/server-state nil)
      (reset! live-app nil)

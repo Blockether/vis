@@ -161,13 +161,17 @@ class SubagentTask(Future[SubagentRecord]):
             "gateway",
             "task_status",
             self._session._call(
-                "GET", "/tasks/:task-id", path={"task-id": self.task_id}
+                "GET",
+                "/tasks/:task-id",
+                path={"task-id": self.task_id},
+                query={"include_record": "true"},
             ),
         )
         task = status["task"]
-        record = status["record"]
+        record = status.get("record")
         if (
-            task["kind"] != "subagent"
+            record is None
+            or task["kind"] != "subagent"
             or task["id"] != self.task_id
             or task["session_id"] != self._session.id
             or record["session_id"] != self.session_id
@@ -195,7 +199,7 @@ class SubagentTask(Future[SubagentRecord]):
             self._session._call(
                 "POST", "/tasks/:task-id/cancel", path={"task-id": self.task_id}
             ),
-        )["accepted"]
+        )["requested"]
         if accepted:
             self._wake.set()
         return accepted

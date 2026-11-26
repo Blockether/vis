@@ -1821,7 +1821,7 @@
                                               (fn [_] (expect false "No interrupt")) nil))]
             (agents/finish! db child status)
             (agents/settle-task! env (agents/info db child))
-            (expect (= {:accepted false} (gateway/task-operation! leader id true)))
+            (expect (false? (task/cancel! leader id :person)))
             (expect (= status (get-in (task/status leader id) [:record :status]))))))))
 
 (defdescribe child-id-arguments-take-task-ids-test

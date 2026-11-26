@@ -1,10 +1,29 @@
 (ns com.blockether.vis.internal.task
   "Session-owned work. The registry owns state; work and interrupt functions run outside its lock."
-  (:require [com.blockether.vis.internal.session.cancellation :as cancellation]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.session.cancellation :as cancellation]
             [taoensso.telemere :as tel])
   (:import [java.util UUID]))
 
 (defonce ^:private sessions (atom {}))
+
+;; Append jobs under the registry lock, but run them on a separate worker.
+(defonce ^:private outbox (agent nil))
+(defonce ^:private publisher (atom nil))
+
+(defn set-publisher!
+  "Set the gateway callback `(publish session event-type row)`, or nil to remove it."
+  [publish]
+  (locking sessions (reset! publisher publish))
+  nil)
+
+(defn- enqueue! [f]
+  (send-off outbox
+            (fn [_]
+              (try (f)
+                   (catch Throwable _
+                     (tel/log! {:level :warn :id ::publication-failed})))
+              nil)))
 
 (def ^:dynamic *task*
   "The `[session id]` of the Task that owns this host call."
@@ -30,6 +49,42 @@
        (sort-by :number)
        (mapv public-row)))
 
+(defn- wire-row [entry]
+  (when (and entry (not (:acknowledged? entry)))
+    (let [{:keys [id kind] :as row} (:row entry)]
+      (cond-> (assoc row :name (str id " " (or (:public-name entry) (name kind))))
+        (:cancel-reason row) (update :cancel-reason #(str/replace (name %) "-" "_"))
+        (:error row) (assoc :error "Task failed")))))
+
+(defn wire-state [session id]
+  (wire-row (get-in @sessions (key-for session id))))
+
+(defn wire-tasks [session]
+  (into [] (keep wire-row) (sort-by :number (vals (get-in @sessions [(str session) :entries])))))
+
+(defn at-publication-cursor
+  "Capture Task rows after prior publications and before later ones. `cursor` reads the event seq."
+  [session cursor]
+  (let [snapshot (promise)]
+    (locking sessions
+      (let [rows (wire-tasks session)]
+        (enqueue! #(try (deliver snapshot {:tasks rows :tasks-seq (cursor)})
+                        (catch Throwable e (deliver snapshot e))))))
+    (let [result @snapshot]
+      (if (instance? Throwable result) (throw result) result))))
+
+(defn- publish-row! [session event entry]
+  (when-let [publish @publisher]
+    (when-let [row (wire-row entry)]
+      (enqueue! #(publish (str session) event row)))))
+
+(defn- update-entry!
+  "Commit one entry update under the registry lock and queue its public snapshot."
+  [path event f]
+  (let [entry (get-in (swap! sessions update-in path f) path)]
+    (publish-row! (first path) event entry)
+    entry))
+
 (defn live? [session]
   (boolean (some #(= :running (:state %)) (tasks session))))
 
@@ -45,10 +100,10 @@
     (locking sessions
       (let [{:keys [row closing?]} (get-in @sessions path)]
         (when (and (= :running (:state row)) (not closing?))
-          (swap! sessions update-in path
-                 #(-> %
-                      (assoc-in [:views view-id] close!)
-                      (update-in [:row :view-ids] conj view-id)))
+          (update-entry! path "task.updated"
+                         #(-> %
+                              (assoc-in [:views view-id] close!)
+                              (update-in [:row :view-ids] (fn [ids] (if (some #{view-id} ids) ids (conj ids view-id))))))
           true)))))
 
 (defn forget-view!
@@ -57,9 +112,9 @@
   (let [path (key-for session id)]
     (locking sessions
       (when (get-in @sessions (conj path :views view-id))
-        (swap! sessions update-in path
-               #(-> %
-                    (update :views dissoc view-id)
+        (update-entry! path "task.updated"
+                       #(-> %
+                            (update :views dissoc view-id)
                     (update-in [:row :view-ids] (fn [ids] (filterv (partial not= view-id) ids)))))
         nil))))
 
@@ -104,9 +159,9 @@
             (let [{:keys [signal waiters]} (get-in @sessions path)]
               (doseq [{:keys [release]} (vals waiters)] (when release (release)))
               (deliver signal true))
-            (swap! sessions update-in path
-                   #(-> %
-                        (assoc :outcome (cond-> outcome
+            (update-entry! path "task.ended"
+                           #(-> %
+                                (assoc :outcome (cond-> outcome
                                            (:cancelling %) (assoc :cancelling (:cancelling %))
                                            (and (= :cancelled state) (:cancel-message %))
                                            (assoc :message (:cancel-message %))))
@@ -119,7 +174,7 @@
 (declare cancel!)
 
 (defn- register!
-  [session {:keys [kind name origin detachable? guest-data guest?]
+  [session {:keys [kind name origin detachable? guest-data guest? public-name]
             :or {kind :tool detachable? true guest? true}} extra]
   (let [sid (str session)
         ticket (Object.)
@@ -144,12 +199,16 @@
         (swap! sessions update sid assoc :sequence n
                :entries (assoc (get-in @sessions [sid :entries]) id
                                (merge {:row row :number n :signal (promise) :detachable? detachable?
-                                       :ticket ticket :guest? guest? :guest-data guest-data}
+                                       :ticket ticket :guest? guest? :guest-data guest-data
+                                       :public-name (when (and (string? public-name) (not (str/blank? public-name)))
+                                                      (str/replace (subs public-name 0 (min 160 (count public-name)))
+                                                                   #"[^\p{L}\p{N}_.-]" "_"))}
                                       extra)))
         (when (and parent-path (:manual? extra) (get-in @sessions (conj parent-path :cancel-on-request?)))
           (swap! sessions update-in (conj parent-path :handoff-rollbacks) (fnil conj [])
                  #(when (cancel! sid id :agent)
                     (when-not (:external-settlement? extra) ((:interrupt extra) :cancel)))))
+        (publish-row! sid "task.started" (get-in @sessions (key-for sid id)))
         [row ticket]))))
 
 (defn guest-task
@@ -187,8 +246,14 @@
 (defn discard!
   "Remove a reservation that failed before admission."
   [session id]
-  (locking sessions
-    (swap! sessions update-in [(str session) :entries] dissoc id))
+  (let [path (key-for session id)]
+    (locking sessions
+      (when-let [entry (get-in @sessions path)]
+        (swap! sessions update-in (pop path) dissoc id)
+        (when (= :running (get-in entry [:row :state]))
+          (publish-row! session "task.ended"
+                        (update entry :row assoc :state :cancelled :ended-at (System/currentTimeMillis)
+                                :view-ids []))))))
   nil)
 
 (defn admission
@@ -266,12 +331,13 @@
          request (locking sessions
                    (when-let [{:keys [row interrupt manual? cancel-on-request? closing? interrupt-complete]}
                               (get-in @sessions path)]
-                     (when (and (= :running (:state row))
-                                (or (not manual?) (not (or closing? interrupt-complete)))
-                                 (or (not cancel-on-request?) (not (or closing? (:cancel-reason row)))))
+                     (when (and (= :running (:state row)) (not closing?)
+                                (or (not manual?) (not interrupt-complete))
+                                 (or (not cancel-on-request?) (nil? (:cancel-reason row)))
+                                 (not (and (= reason :person) (= :person (:cancel-reason row)))))
                        (let [complete (when manual? (promise))]
-                         (swap! sessions update-in path
-                                #(cond-> (-> %
+                         (update-entry! path "task.updated"
+                                        #(cond-> (-> %
                                              (assoc :interrupt-kind kind :cancel-message message)
                                              (update :cancelling (fnil inc 0))
                                              (assoc-in [:row :cancel-reason] reason))
@@ -299,8 +365,10 @@
 (defn rename! [session id name]
   (let [path (key-for session id)]
     (locking sessions
-      (when (get-in @sessions path)
+      (when-let [entry (get-in @sessions path)]
         (swap! sessions assoc-in (conj path :row :name) name)
+        (when (= :running (get-in entry [:row :state]))
+          (publish-row! session "task.updated" (get-in @sessions path)))
         nil))))
 
 (defn await!
@@ -317,13 +385,14 @@
                                   (not (contains? (:waiters entry) token)))
                          (if-let [reason (when (and (:detachable? entry) (:detach-reason entry))
                                            ((:detach-reason entry)))]
-                           (swap! sessions update (first path)
-                                  (fn [owner]
+                           (do (swap! sessions update (first path)
+                                      (fn [owner]
                                     (-> owner
                                         (update-in [:detach-notices block] (fnil conj [])
                                                    {:task (:row entry) :reason reason})
                                         (assoc-in [:entries id :row :detached] true)
                                         (assoc-in [:entries id :waiters token] {:block block :detached? true}))))
+                               (publish-row! session "task.updated" (get-in @sessions path)))
                            (swap! sessions assoc-in (conj path :waiters token)
                                   {:block block :observation? observation? :release (when hold (hold))})))))
                    (when-not (get-in @sessions (into path [:waiters token :detached?]))
@@ -371,7 +440,9 @@
                  (fn [session]
                    (reduce #(mark-detached %1 %2 reason)
                            session (sort-by (comp :number val) detaching))))
-          (doseq [[_ {:keys [signal]}] detaching] (deliver signal true))
+          (doseq [[id {:keys [signal]}] detaching]
+            (publish-row! sid "task.updated" (get-in @sessions (key-for sid id)))
+            (deliver signal true))
           (mapv (comp :row val) detaching))))))
 
 (defn take-detach-notices!
@@ -425,11 +496,15 @@
   [session reason]
   (let [sid (str session)
         entries (locking sessions
-                  (let [entries (vals (get-in @sessions [sid :entries]))]
+                  (let [entries (sort-by :number (vals (get-in @sessions [sid :entries])))]
                     (if (= reason :session-close)
                       (swap! sessions dissoc sid)
                       (when (contains? @sessions sid)
                         (swap! sessions update sid dissoc :entries :detach-notices)))
+                    (doseq [entry entries :when (= :running (get-in entry [:row :state]))]
+                      (publish-row! sid "task.ended"
+                                    (update entry :row assoc :state :cancelled :ended-at (System/currentTimeMillis)
+                                            :cancel-reason reason :view-ids [])))
                     entries))]
     (doseq [{:keys [interrupt signal waiters views row release-activity]} entries]
       (doseq [{:keys [release]} (vals waiters)] (when release (release)))

@@ -1649,6 +1649,7 @@ export const STORY_COMPOSER_SUBSCRIPTIONS = {
   hasEndedTurn: () => false,
   resync: composerStoryNoop,
   subscribeSession: () => composerStoryNoop,
+  tasks: () => undefined,
   subscribeConnection: () => composerStoryNoop,
 } as unknown as SessionSubscriptionHub;
 

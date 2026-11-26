@@ -107,10 +107,12 @@
             watch (event/invocation ctx nil)
             ordinary (event/invocation ctx nil)]
         (try
-          (block/record! activity owner (event/start-event ctx watch details))
+          (block/record! activity owner (event/start-event ctx watch (assoc-in details [:activity :show-start] true)))
           (block/record! activity (event/start-event ctx ordinary details))
           (let [r (:activity (block/settle! activity {}))]
-            (expect (= {:running 1 :succeeded 0 :failed 0 :cancelled 1} (:counts r))))
+            (expect (= [{:type "task" :id "t1"}] (get-in r [:rows 0 :resources])))
+             (expect (empty? (get-in r [:rows 1 :resources])))
+             (expect (= {:running 1 :succeeded 0 :failed 0 :cancelled 1} (:counts r))))
           (block/record! activity owner (event/terminal-event ctx watch
                                                              (assoc details :outcome :succeeded
                                                                     :started-at-ms 0)))

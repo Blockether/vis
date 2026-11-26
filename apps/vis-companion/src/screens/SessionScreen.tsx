@@ -80,6 +80,7 @@ import { HumanInputPrompt } from '../components/HumanInputPrompt';
 import { JumpToLatestButton } from '../components/JumpToLatestButton';
 import { TranscriptOutline } from '../components/TranscriptOutline';
 import { PasteEditor } from '../components/PasteEditor';
+import { BackgroundTasks } from '../components/BackgroundTasks';
 import { QueuedTurnsTray } from '../components/QueuedTurnsTray';
 import { useLiveViews } from '../components/LiveView';
 import { LivePanel, ResizablePanel } from '../components/LivePanel';
@@ -5265,6 +5266,7 @@ export function SessionScreen({
   // A tablet or a desk docks the panel beside the transcript. A phone opens it as a sheet.
   const docksPanel = useMediaMatch('(min-width: 48rem)');
   const [panelChoice, setPanelChoice] = useState<boolean | null>(null);
+  const [backgroundPanel, setBackgroundPanel] = useState<{ id: string; press: number }>();
   // The session apps of the header menu. The list follows settings, so a saved app
   // setting moves an opened app or takes it out.
   const [isAppsRead, setAppsRead] = useState(false);
@@ -6249,6 +6251,8 @@ export function SessionScreen({
           {isPanelOpen && !docksPanel && (
             <div className="absolute inset-0 z-30 flex flex-col bg-panel pt-[env(safe-area-inset-top)]">
               <LivePanel
+                key={backgroundPanel?.press}
+                initialViewId={backgroundPanel?.id}
                 views={panelViews}
                 client={client}
                 sid={sid}
@@ -6454,6 +6458,21 @@ export function SessionScreen({
               leader={runningLeader}
             />
 
+            {subscriptions && (
+              <BackgroundTasks key={JSON.stringify([client.base, sid])} client={client} subscriptions={subscriptions} sid={sid}
+                views={sessionLiveViews}
+                onOpenView={(view) => {
+                  if (livePlacement(view) === 'panel') {
+                    if (pickedApp?.slot === 'sidebar') setPickedAppId(null);
+                    setBackgroundPanel((held) => ({ id: view.id, press: (held?.press ?? 0) + 1 }));
+                    setPanelChoice(true);
+                  } else {
+                    const target = surfaceRef.current?.querySelector<HTMLElement>(`[data-live-view-id="${CSS.escape(view.id)}"]`);
+                    target?.scrollIntoView({ block: 'nearest' });
+                    target?.focus({ preventScroll: true });
+                  }
+                }} />
+            )}
             {/* A subagent session takes no input: its leader gives it work. */}
             {!isSubagent && (
               <>
@@ -6861,6 +6880,8 @@ export function SessionScreen({
           {isPanelOpen && docksPanel && (
             <ResizablePanel>
               <LivePanel
+                key={backgroundPanel?.press}
+                initialViewId={backgroundPanel?.id}
                 views={panelViews}
                 client={client}
                 sid={sid}

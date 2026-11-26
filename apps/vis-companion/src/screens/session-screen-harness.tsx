@@ -106,6 +106,7 @@ export function renderSessionScreen({
     has: () => true,
   });
   const subscriptions: Fake = {
+    tasks: () => undefined,
     hasEndedTurn: () => false,
     resync: () => {},
     subscribeSession: () => () => {},

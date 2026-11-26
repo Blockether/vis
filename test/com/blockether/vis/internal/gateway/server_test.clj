@@ -68,6 +68,7 @@
     [com.blockether.vis.internal.loop :as lp]
     [com.blockether.vis.internal.loop.environment :as loop-env]
     [com.blockether.vis.internal.loop.router :as loop-router]
+    [com.blockether.vis.internal.task :as task]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.view.core :as live-view]
     [com.blockether.vis.internal.view.sink :as live-sink]
@@ -2593,6 +2594,61 @@
                  (call "iteration_limit=8&iteration_limit=4")))
       (doseq [value ["abc" "0" "-1" "" "9223372036854775808"]]
         (expect (= 400 (first (call (str "iteration_limit=" value)))))))))
+
+(defdescribe session-task-routes-test
+  (it "scopes Tasks to their session, publishes cancellation and keeps the terminal replay"
+      (let [sid (random-uuid)
+            foreign (random-uuid)
+            session-id (str sid)
+            present? (atom true)
+            router (rr/ring-handler ((rv 'router) nil []))
+            request (fn [method session suffix]
+                      (let [response (router {:request-method method
+                                              :uri (str "/v1/sessions/" session suffix)})]
+                        [(:status response) (wire/parse-json (:body response))]))
+            cancel-received (promise)]
+        (with-redefs [state/session-exists? #(or (= foreign %) (and @present? (= session-id (str %))))]
+          (task/set-publisher! state/publish-task!)
+          (try
+            (let [{:keys [row complete!]} (task/start-manual! sid
+                                           {:kind :mcp :name "server.read(private)" :public-name "server.read"}
+                                           #(deliver cancel-received %))
+                  path (str "/tasks/" (:id row))
+                  [list-status list-answer] (request :get sid "/tasks")
+                  [detail-status detail] (request :get sid path)
+                  [foreign-status foreign-error] (request :get foreign path)
+                  [cancel-status cancel] (request :post sid (str path "/cancel"))]
+              (expect (= [200 200 404 200] [list-status detail-status foreign-status cancel-status]))
+              (expect (= [(get detail "task")] (get list-answer "tasks")))
+              (expect (= "t1 server.read" (get-in detail ["task" "name"])))
+              (expect (= "task-not-found" (get-in foreign-error ["error" "type"])))
+              (expect (= {"requested" true} cancel))
+              (expect (= :cancel (deref cancel-received 5000 nil)))
+              (expect (= "person" (get-in (second (request :get sid path)) ["task" "cancel_reason"])))
+              (complete! (constantly {:state :cancelled}))
+              (expect (= [200 {"requested" false}] (request :post sid (str path "/cancel"))))
+              (task/acknowledge! sid (:id row))
+              (let [{:keys [tasks tasks-seq]} (task/at-publication-cursor sid #(state/current-seq sid))
+                    frames (state/events-since sid 0)]
+                (expect (empty? tasks))
+                (expect (= tasks-seq (get (last frames) "seq")))
+                (expect (= ["task.started" "task.updated" "task.ended"] (mapv #(get % "type") frames)))
+                (expect (= "cancelled" (get-in (last frames) ["task" "state"])))
+                (expect (= [200 {"events" frames}] (request :get sid "/events-since"))))
+              (expect (= 404 (first (request :get sid path))))
+              (let [{:keys [complete!]} (task/start-manual! sid {:name "late"} (constantly nil))]
+                (task/at-publication-cursor sid #(state/current-seq sid))
+                (reset! present? false)
+                ((ns-resolve 'com.blockether.vis.internal.gateway.state 'drop-session!) sid)
+                (complete! (constantly {:state :done}))
+                (task/at-publication-cursor sid #(state/current-seq sid))
+                (expect (zero? (state/current-seq sid)))
+                (expect (= 404 (first (request :get sid "/tasks"))))
+                (expect (= 404 (first (request :get "invalid" "/tasks"))))))
+            (finally
+              (task/sweep! sid :session-close)
+              (task/set-publisher! nil)
+              (journal/forget! sid)))))))
 
 (defdescribe
   multi-sse-reports-sessions-deleted-while-disconnected

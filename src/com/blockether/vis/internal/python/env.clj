@@ -776,7 +776,7 @@
       (add-protected-names! session protected)
       (when (seq tools) (python-host/install-tools! session tools (partial py-install-tool!)))
       (python-host/mark-task-tools! session entries)
-      (update-json! session "__vis_task_tools__" (into {} (map (juxt :name (comp boolean :task?))) entries))
+      (update-json! session "__vis_task_tools__" (into {} (map (juxt :name #(boolean (or (:task-kind %) (:task? %))))) entries))
       (doseq [{:keys [name val]}
               entries
 

@@ -1,0 +1,41 @@
+(ns com.blockether.vis.internal.gateway.server.tasks
+  "List, read and request cancellation of session Tasks."
+  (:require [com.blockether.vis.internal.gateway.server.http :as http]
+            [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.task :as task]))
+
+(defn- task-404 []
+  (http/error-response 404 :task-not-found "unknown Task"))
+
+(defn- task-handler
+  [operation]
+  (fn [request]
+    (let [{:keys [sid task-id]}
+          (:path-params request)
+
+          session
+          (http/path-sid request)]
+
+      (if-not (and session (state/session-exists? session))
+        (http/session-404 sid)
+        (if (= :list operation)
+          (http/json-response {:tasks (task/wire-tasks session)})
+          (if-let [row (task/wire-state session task-id)]
+            (case operation
+              :read
+              (if (and (= :subagent (:kind row))
+                       (= "true" (http/query-str request "include_record")))
+                (if-let [record (:record (task/status session task-id))]
+                  (http/json-response {:task row :record record})
+                  (task-404))
+                (http/json-response {:task row}))
+
+              :cancel
+              (http/json-response {:requested (task/cancel! session task-id :person)}))
+            (task-404)))))))
+
+(def handlers
+  "Handlers for the session Task routes."
+  {[:get "/v1/sessions/:sid/tasks"] (task-handler :list)
+   [:get "/v1/sessions/:sid/tasks/:task-id"] (task-handler :read)
+   [:post "/v1/sessions/:sid/tasks/:task-id/cancel"] (task-handler :cancel)})

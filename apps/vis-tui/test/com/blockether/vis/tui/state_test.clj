@@ -5450,6 +5450,27 @@
   [turn-id]
   {:phase :gateway-ready :gateway-turn-id turn-id :is-state-known true})
 
+(defdescribe background-task-state-test
+  (it "keeps only the active session's running tasks and cancels the selected row"
+      (let [handlers @@#'state/event-registry
+            sync (:fn (:sync-background-tasks handlers))
+            focus (:fn (:focus-background-tasks handlers))
+            cancel (:fn (:cancel-background-task handlers))
+            row {"id" "t1" "session_id" "s1" "name" "Watch files" "state" "running" "detached" false}
+            other (assoc row "id" "t2")
+            ready (sync {:session {:id "s1"}}
+                        [:sync-background-tasks "s1" {:tasks [row other] :task-seq 10}])
+            selected (focus ready [:focus-background-tasks true 1])
+            request (cancel selected [:cancel-background-task "s1" "t2"])
+            ended (sync (:db request)
+                        [:sync-background-tasks "s1" {:seq 12 :event-type "task.ended"
+                                                        :task (assoc other "state" "cancelled")}])]
+        (expect (= [[:gateway-cancel-background-task "s1" "t2" "Watch files"]] (:fx request)))
+        (expect (:cancelling? (state/background-task-dock (:db request))))
+        (expect (= ended (sync ended [:sync-background-tasks "s1" {:seq 11 :task other}])))
+        (expect (= row (:row (state/background-task-dock ended))))
+        (expect (nil? (state/background-task-dock (assoc ended :session {:id "s2"})))))))
+
 (defdescribe sync-gateway-ready-test
              ;; The socket dropped, the daemon finished the turn anyway, and its
              ;; `turn.completed` died with the stream. On resubscribe the server states what

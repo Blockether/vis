@@ -905,7 +905,11 @@ each request on its own, without a session. Any other server gets a session. A l
 does not answer within one second also gets the older start request.
 
 If a server changes its generation while Vis runs, for example after an upgrade, Vis connects again
-and sends the refused request one more time.
+and sends a refused read one more time. Vis never sends a tool call again. The call may have
+changed data, so Vis gives the error to the caller.
+
+A running tool call appears as a [Task](sessions.md#find-and-cancel-a-task). If you cancel an
+outstanding call, Vis sends one `notifications/cancelled` message with the request ID.
 
 Vis keeps one stream open to each Streamable HTTP server. The server sends changes, such as a new
 tool list, and its questions on it. To turn the stream off, set `listen: false`.

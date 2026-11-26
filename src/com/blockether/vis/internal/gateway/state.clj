@@ -9163,15 +9163,11 @@
       operation
       opts)))
 
-(defn task-operation!
-  "Read or cancel a Task owned by this session."
-  [sid id cancel?]
-  (when-not (task/state sid id)
-    (agents/fail! :task-not-found "No Task has that id in this session"))
-  (if cancel?
-    {:accepted (task/cancel! sid id :agent)}
-    (or (task/status sid id)
-        (agents/fail! :task-not-found "No Task has that id in this session"))))
+(defn publish-task!
+  "Append a Task event only while its session still exists."
+  [sid event row]
+  (append-event! sid event {:task row}
+                 {:store? true :when-current? #(session-exists? sid)}))
 
 (defn fork-session!
   "Fork `sid` into a NEW INDEPENDENT session holding a deep copy of every turn

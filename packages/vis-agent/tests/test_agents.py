@@ -160,13 +160,13 @@ def test_child_controls_answer_records_without_settling_the_task():
                 {"id": "a1", "session_id": "child", "task_id": "t2"},
                 {"id": "a2", "session_id": "second", "task_id": "t3"},
             ]
-        if path.endswith("/tasks/t1"):
+        if path.endswith("/tasks/t1?include_record=true"):
             if not answered.is_set():
                 return 200, task_status("t1", "running", asking)
             return 200, task_status("t1", "done", completed)
-        if path.endswith("/tasks/t2"):
+        if path.endswith("/tasks/t2?include_record=true"):
             return 200, task_status("t2", "done", {**completed, "answer": "Follow-up"})
-        if path.endswith("/tasks/t3"):
+        if path.endswith("/tasks/t3?include_record=true"):
             return 200, task_status(
                 "t3", "done", {"session_id": "second", "status": "blocked"}
             )
@@ -244,7 +244,7 @@ def test_cancel_observes_host_settlement_and_sends_one_mutation(accepted):
             return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
         if path.endswith("/cancel"):
             cancelled.set()
-            return 200, {"accepted": accepted}
+            return 200, {"requested": accepted}
         state = ("cancelled" if accepted else "done") if settled.is_set() else "running"
         return 200, task_status(
             "t1",
@@ -299,7 +299,7 @@ def test_extension_task_polls_on_the_background_host_door():
         elif route.endswith("/tasks/t1/cancel"):
             assert frame["method"] == "POST"
             cancelled.set()
-            value = {"accepted": True}
+            value = {"requested": True}
         else:
             assert route.endswith("/tasks/t1") and frame["method"] == "GET"
             assert caller != threading.get_ident()
@@ -352,7 +352,7 @@ def test_task_observer_shares_framed_stdio_with_the_caller(tmp_path):
             elif route.endswith("/tasks/t1/cancel"):
                 assert frame["method"] == "POST"
                 state = "cancelled"
-                data = {{"accepted": True}}
+                data = {{"requested": True}}
             else:
                 assert route.endswith("/tasks/t1") and frame["method"] == "GET"
                 data = {status!r}[state]

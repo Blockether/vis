@@ -2571,6 +2571,8 @@ export function LiveViewPanel({
           isCard ? 'border border-dialog-edge bg-panel' : ''
         }`}
         data-execution-run={embedded || undefined}
+        data-live-view-id={view.id}
+        tabIndex={-1}
         role={isSettled ? undefined : 'status'}
         aria-live={isSettled ? undefined : 'polite'}
       >

@@ -5,3 +5,6 @@
 (def ^:private connect-timeout-ms 15000)
 
 (defonce client (delay (http/client {:connect-timeout connect-timeout-ms})))
+
+(defonce mutation-client
+  (delay (http/client {:connect-timeout connect-timeout-ms :follow-redirects :never})))

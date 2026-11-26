@@ -1496,6 +1496,10 @@
       "session.goal_updated"
       {:phase :goal-sync :session-id (event-get event :session-id) :goal (event-get event :goal)}
 
+      ("task.started" "task.updated" "task.ended")
+      {:phase :task-sync :event-type type
+       :seq (event-get event :seq) :task (event-get event :task)}
+
       ;; `agents` holds the whole changed team rows, `changes` the row changes, `team_clocks`
       ;; the changed team clocks and `removed` the deleted children (gateway.json `team_update`).
       "session.team_updated"
@@ -1554,7 +1558,9 @@
       "subscription.ready"
       (cond-> {:phase :gateway-ready
                :gateway-turn-id (event-get event :current-turn-id)
-               :is-state-known (some? (event-get event :is-live))}
+               :is-state-known (some? (event-get event :is-live))
+                :tasks (event-get event :tasks)
+                :task-seq (or (event-get event :tasks-seq) (event-get event :cursor))}
         (some? (event-get event :agent-name))
         (assoc :agent-name (event-get event :agent-name))
 

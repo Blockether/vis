@@ -69,6 +69,42 @@
           (expect (nil? (task/state sid id)))
           (finally (deliver finish true) (task/sweep! sid :session-close))))))
 
+(defdescribe task-events-test
+  (it "publishes committed public snapshots in order and stops at settlement"
+      (let [sid (random-uuid)
+            events (atom [])
+            ended (promise)
+            failure (fn [kind row]
+                      (swap! events conj [kind row])
+                      (when (= kind "task.ended") (deliver ended true))
+                      (when (= kind "task.started") (throw (ex-info "sink failed" {}))))
+            ;; Resolve first so the test fails with a missing publisher before the fix.
+            install! (ns-resolve 'com.blockether.vis.internal.task 'set-publisher!)]
+        (expect (some? install!))
+        (when install!
+          (install! (fn [session kind row]
+                      (when (= (str sid) session) (failure kind row))))
+          (try
+            (let [{:keys [row complete!]} (task/start-manual! sid
+                                           {:kind :shell :name "shell(secret script)"}
+                                           (constantly nil))
+                  id (:id row)]
+              (task/track-view! [(str sid) id] "view" (constantly nil))
+              (task/await! sid id {:block "one" :token 1})
+              (task/detach-awaits! sid {:question "Ready?"})
+              (complete! (constantly {:state :failed :error "secret exception"}))
+              (task/rename! sid id "late rename")
+              (task/sweep! sid :session-close)
+              (expect (true? (deref ended 5000 false)))
+              (expect (= ["task.started" "task.updated" "task.updated" "task.ended"] (mapv first @events)))
+              (let [rows (mapv second @events)]
+                (expect (every? #(document/valid? "task" (wire/->wire %)) rows))
+                (expect (= [false false true true] (mapv :detached rows)))
+                (expect (= [[] ["view"] ["view"] []] (mapv :view-ids rows)))
+                (expect (= [:running :running :running :failed] (mapv :state rows)))
+                (expect (not (.contains (pr-str rows) "secret")))))
+            (finally (task/sweep! sid :session-close) (install! nil)))))))
+
 (defdescribe task-sweep-race-test
   (it "does not run queued work swept before its worker starts"
       (let [sid (random-uuid)

@@ -28,6 +28,8 @@ To see the most common shortcuts while you work, press **Ctrl+X h**.
   app.** Read [In the desktop or phone app](#in-the-desktop-or-phone-app).
 - **You want to know what a cancel or a quit does to your queued messages.** Read
   [Control a running session](sessions.md#control-a-running-session).
+- **You want to stop one Task with the keyboard.** Read
+  [Use Background in the terminal](#use-background-in-the-terminal).
 
 ## Send a message or start a new line
 
@@ -329,6 +331,21 @@ connect or select a different microphone, start the terminal app again.
 
 [Control a running session](sessions.md#control-a-running-session) explains which of these effects
 a key has, and what it does to your queued messages.
+
+## Use Background in the terminal
+
+These keys apply when **Background** is visible. The terminal must have at least 24 columns.
+
+| Keys | What they do |
+|---|---|
+| F6 | Move focus to **Background**, or leave it |
+| Up or Down | Select the previous or next Task while **Background** has focus |
+| `v` | Open the selected Task's live view, if it has one and **Background** has focus |
+| Enter | Request cancellation of the selected Task while **Background** has focus |
+| Esc | Leave **Background** without cancelling the turn |
+
+For the mouse controls and the desktop or phone app, read
+[Find and cancel a Task](sessions.md#find-and-cancel-a-task).
 
 ## Move through a session
 

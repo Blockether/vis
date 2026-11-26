@@ -357,6 +357,13 @@ class Response:
             raise ProtocolError("invalid JSON response") from None
 
 
+_TASK_EVENT_PAYLOADS = {
+    event["const"]: event["x-vis-payload"]
+    for event in definition("gateway", "session_event_type")["oneOf"]
+    if event.get("x-vis-payload") == "task_event_payload"
+}
+
+
 @dataclass(frozen=True, slots=True)
 class Event:
     """Typed envelope that `Events` yields. Payload fields depend on `type`.
@@ -401,6 +408,15 @@ class Event:
             _field(value, "turn_id", str)
         if event_type == "subscription.ready":
             _field(value, "cursor", int)
+            if "tasks" in value or "tasks_seq" in value:
+                try:
+                    validate("gateway", "task_list", {"tasks": value.get("tasks")})
+                    if _field(value, "tasks_seq", int) < 0 or any(
+                        row["session_id"] != session_id for row in value["tasks"]
+                    ):
+                        raise ValueError("invalid Task snapshot")
+                except ValueError:
+                    raise ProtocolError("invalid Task snapshot") from None
         else:
             _field(value, "seq", int)
         activity = None
@@ -411,6 +427,14 @@ class Event:
                 activity = ActivityProjection.from_wire(value.get("activity"))
             except ValueError:
                 raise ProtocolError("invalid Activity event") from None
+        payload = _TASK_EVENT_PAYLOADS.get(event_type)
+        if payload is not None:
+            try:
+                validate("gateway", payload, {"task": value.get("task")})
+                if value["task"]["session_id"] != session_id:
+                    raise ValueError("foreign Task")
+            except ValueError:
+                raise ProtocolError("invalid Task event") from None
         envelope = {"type", "session_id", "seq", "cursor", "turn_id"}
         if activity is not None:
             envelope.add("activity")

@@ -284,6 +284,7 @@
                  {:sym target
                   :val f
                   :task? (:ext.symbol/python-task? entry)
+                  :task-kind (:ext.symbol/task-kind entry)
                    :detachable? (:ext.symbol/detachable? entry)
                   :doc (extension/symbol-doc-text entry)
                   :signature (extension/symbol-signature entry)

@@ -61,6 +61,7 @@
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
@@ -466,6 +467,7 @@
           (when accepted (clear-connect-failure! k spec))
           accepted)
         (catch Throwable t
+          (when (cancellation/preserve-interrupt! t) (throw t))
           (if (oauth-required? t)
             ;; Not a failure to repair, a sign-in to wait for. A JFR profile of
             ;; a live gateway caught one unauthorized server being re-asked every
@@ -1755,19 +1757,34 @@
   "The value of `(f conn)`. A server can change its era or lose its session after
    the connect: then it refuses the request itself (`mcp/stale-era?`), and the
    request did not run. The pool connects again, which finds the era again, and
-   `f` runs ONE more time, but only on a connection of the other era or of a new
-   session. Any other failure is that of the first try."
+   a read runs one more time on a connection of the other era or of a new
+   session. A tool call is not sent again."
   [session-id server conn f]
   (try (f conn)
        (catch clojure.lang.ExceptionInfo failure
          (when-not (mcp/stale-era? conn failure) (throw failure))
          (disconnect! session-id server)
+         (when (::no-repeat (ex-data failure)) (throw failure))
          (let [fresh (ensure-connected! session-id server)]
            (if (and fresh
                     (or (not= (boolean (:modern? conn)) (boolean (:modern? fresh)))
                         (and (not (:modern? conn)) (= 404 (:status (ex-data failure))))))
              (f fresh)
              (throw failure))))))
+
+(defn- call-once
+  "Send a tool call. A stale connection is no proof that the tool did not run."
+  [conn tool args timeout opts]
+  (try (mcp/call-tool conn tool args timeout opts)
+       (catch Throwable e
+         (let [type (:type (ex-data e))]
+           (if (or (cancellation/cancellation? e)
+                   (and (not (mcp/stale-era? conn e))
+                         (contains? #{:mcp/rpc-error :mcp/oauth-required :mcp/task-cancelled} type)))
+             (throw e)
+             (throw (ex-info (str (or (ex-message e) "MCP call failed")
+                                  ". The tool might have run. Do not repeat the call.")
+                             (assoc (ex-data e) ::no-repeat true) e)))))))
 
 (def ^:private mcp-methods
   "The MCP requests that `mcp_call` sends when its `tool` names one, each with the
@@ -1821,7 +1838,7 @@
    fails never fails the call: the tool already ran."
   [env server conn tool args result]
   (when-let [uri (apps/resource-uri tool)]
-    (when mpl-capture/*attachment-sink*
+    (when (and mpl-capture/*attachment-sink* (not (.isInterrupted (Thread/currentThread))))
       (try (let [read
                  (mcp/request conn
                               "resources/read"
@@ -1839,6 +1856,8 @@
                                                       :call-id (str (random-uuid))}))
                             StandardCharsets/UTF_8)
 
+                 _ (when (.isInterrupted (Thread/currentThread)) (throw (InterruptedException.)))
+
                  recorded
                  (mpl-capture/record-attachment!
                    {:kind "file"
@@ -1851,8 +1870,10 @@
 
              {"resource_uri" uri "attachment_id" (:id recorded)})
            (catch Throwable t
-             (tel/log! {:level :warn :id ::app-open-failed :data {:server server :uri uri} :error t})
-             {"resource_uri" uri "error" (ex-message t)})))))
+             ;; The tool reply already won. An interrupt can only stop the view.
+             (when-not (cancellation/preserve-interrupt! t)
+               (tel/log! {:level :warn :id ::app-open-failed :data {:server server :uri uri} :error t})
+               {"resource_uri" uri "error" (ex-message t)}))))))
 
 (defn app-request
   "Send the MCP request `method` with `params` of a hosted view to its own server
@@ -1879,7 +1900,7 @@
             "tools/call" (let [tool (get params "name")]
                            (when-let [why (apps/refuse-app-call (mcp/list-tools conn) tool)]
                              (throw (ex-info why {:type :mcp-app/forbidden :status 403})))
-                           (mcp/call-tool conn
+                           (call-once conn
                                           tool
                                           (let [a (get params "arguments")] (if (map? a) a {}))
                                           timeout
@@ -1899,7 +1920,8 @@
   ([env server] (mcp-call-impl env server nil nil))
   ([env server tool] (mcp-call-impl env server tool nil))
   ([env requested tool args]
-   (let [server (or (canonical-name requested) requested)]
+   (let [server (or (canonical-name requested) requested)
+         mcp-task? (and task/*task* (= :mcp (:kind (apply task/state task/*task*))))]
      (try
        (if-let [conn (when (scoped/resource-enabled? env :mcp server)
                        (ensure-connected! (:session-id env) server))]
@@ -1949,7 +1971,8 @@
                                    mine
                                    ".<tool>)` prints the input schema of one.")))
                  :else (let [args (if (map? args) args {})
-                             r (mcp/call-tool conn
+                             app-tool (first (filter #(= tool (get % "name")) (mcp/list-tools conn)))
+                             r (call-once conn
                                               tool
                                               args
                                               (or (:timeout-ms conn) mcp/default-timeout-ms)
@@ -1959,8 +1982,7 @@
                              app (open-app! env
                                             server
                                             conn
-                                            (first (filter #(= tool (get % "name"))
-                                                     (mcp/list-tools conn)))
+                                            app-tool
                                             args
                                             r)]
 
@@ -1982,8 +2004,13 @@
                                ;; costs no extra round trip.
                                (and is-error row)
                                (assoc "input_schema" (get row "input_schema")))))))))
-         (unavailable-err env server))
-       (catch Throwable t (call-failed-err env server tool t))))))
+         (if (and mcp-task? (.isInterrupted (Thread/currentThread)))
+           (throw (InterruptedException.))
+           (unavailable-err env server)))
+       (catch Throwable t
+         (if (and mcp-task? (cancellation/preserve-interrupt! t))
+           (throw (ex-info "MCP Task cancelled." {:vis/task-cancelled true} t))
+           (call-failed-err env server tool t)))))))
 
 ;; Public vars retain developer examples and fallback docs. Native symbols
 ;; below own compact model-facing semantics and exact schemas. The wire name
@@ -2442,6 +2469,7 @@
       :symbol 'call
       ;; A block calls a server by its name. The handles of the shim call this.
       :binding '__vis_mcp_call__
+      :task-kind :mcp
       :handles {:names handle-names :argv handle-call :call hook-call}
       :hidden? true
       :name "mcp__call"
@@ -2517,7 +2545,9 @@
    request carries it each time, and `apropos` and `doc` have the rest."
   (str "Each MCP server is a name of the sandbox: the `python_name` of its row in"
        " `session[\"env\"][\"mcp\"][\"servers\"]`. Call a tool with"
-       " `await <python_name>.<tool>(**arguments)`; the result text is `content[i][\"text\"]`."
+       " `task = <python_name>.<tool>(**arguments)`. The call starts a Task. Await it to get the result."
+       " To request a stop, call `task.cancel()`. Do not repeat a call that changes data if it might have run."
+       " The result text is `content[i][\"text\"]`."
        " `apropos(pattern)` finds the tools, the prompts and the skills, and `doc(<python_name>.<tool>)`"
        " prints the input schema of one tool."))
 

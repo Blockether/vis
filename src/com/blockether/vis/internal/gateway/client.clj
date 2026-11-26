@@ -2091,6 +2091,23 @@
 
 (defn drain-idle! [sid] (send-json! "POST" (str "/v1/sessions/" (enc sid) "/drain-queue")))
 
+(defn- task-request! [method path]
+  (let [{:keys [status body]} (request! method path)
+        answer (parse-json-body body)]
+    (when-not (<= 200 (long status) 299)
+      (throw (ex-info (or (get-in answer ["error" "message"]) "Task request failed")
+                      {:http-status status :path path})))
+    answer))
+
+(defn session-tasks [sid]
+  (get (task-request! :get (str "/v1/sessions/" (enc sid) "/tasks")) "tasks"))
+
+(defn session-task [sid id]
+  (get (task-request! :get (str "/v1/sessions/" (enc sid) "/tasks/" (enc id))) "task"))
+
+(defn cancel-task! [sid id]
+  (get (task-request! :post (str "/v1/sessions/" (enc sid) "/tasks/" (enc id) "/cancel")) "requested"))
+
 ;; --- Input Views (a run in the DAEMON blocked on the operator) ---
 ;;
 ;; `internal.view.core` parks the extension thread that raised the request and

@@ -180,7 +180,12 @@
           (when (and admitted? (not (team-call? tool-event)))
             (let [id (:invocation-id tool-event)
                   edge (:phase tool-event)
-                  _ (when (and owned? (= :start edge)) (swap! tasks update task-id conj id))
+                  tool-event (if (and owned? (= :start edge) (nil? (:parent-invocation-id tool-event)))
+                                (update tool-event :resources
+                                        #(vec (take event/max-resources
+                                                    (cons {:type :task :id (second task-id)} %))))
+                                tool-event)
+                   _ (when (and owned? (= :start edge)) (swap! tasks update task-id conj id))
                   snapshot (if store
                              (try (reset! state ((:apply! store) tool-event))
                                   (catch Throwable failure

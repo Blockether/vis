@@ -13,6 +13,8 @@ sessions.
   [Send the queued message now](#send-a-queued-message-now).
 - **Vis is going in the wrong direction and you want to stop it.**
   [Cancel the turn](#cancel-a-turn).
+- **You want to stop one operation without stopping the turn.**
+  [Find and cancel a Task](#find-and-cancel-a-task).
 - **You want to leave the session.** [Quit](#quit) lists what **Ctrl+C** does in each state.
 - **The session must work in another directory.**
   [Change the directory of the session](#change-the-directory-of-a-session).
@@ -244,6 +246,20 @@ each app keep their own choice.
 
 In the desktop or phone app, a large turn first shows only its newest steps. The app
 loads the older steps when you scroll near them. If the load fails, the app shows the error and a **Try again** button.
+
+### Find and cancel a Task
+
+A Task is one operation, such as a shell command or a tool call. **Background** shows the running
+Tasks for the open session. Cancel a Task to request a stop of that operation, not the whole turn.
+
+- In the terminal, find **Background** above the message box. Click the Task name to select the
+  next Task, or use the [Background keys](keyboard-shortcuts.md#use-background-in-the-terminal).
+  Select **View** if the Task has a live view. Select **Cancel** to request a stop.
+- In the desktop or phone app, find **Background** above the message box. Select the title of a
+  live view to open it. Select **Cancel** next to the Task you want to stop.
+
+**Cancelling…** means that the Task has not stopped yet. The Task leaves **Background** when it ends.
+Cancellation does not undo changes that the Task already made.
 
 ### Queue a message
 

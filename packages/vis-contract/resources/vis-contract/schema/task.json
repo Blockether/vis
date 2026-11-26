@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vis.blockether.com/schema/task.json",
+  "title": "Task",
   "type": "object",
   "required": [
     "id",
@@ -100,11 +101,11 @@
       "cancel": {
         "type": "object",
         "required": [
-          "accepted"
+          "requested"
         ],
         "additionalProperties": false,
         "properties": {
-          "accepted": {
+          "requested": {
             "type": "boolean"
           }
         }

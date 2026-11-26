@@ -136,7 +136,7 @@ def __vis_install_mcp__():
             rest = "arguments" if "arguments" not in taken else "more_arguments"
             named.append(inspect.Parameter(rest, inspect.Parameter.VAR_KEYWORD))
         named.sort(key=lambda p: (p.kind, p.default is not empty, p.name))
-        return inspect.Signature(named, return_annotation=dict)
+        return inspect.Signature(named, return_annotation=g["HostTask"])
 
     class _Handle:
         __slots__ = ("_parts",)
@@ -256,6 +256,9 @@ def __vis_install_mcp__():
         "or one dict. The answer is {server, tool, content, is_error}, and the text "
         'of a content block is at content[i]["text"]. A tool with an output schema '
         "also gives `structured_content`."
+        "\n\nA call starts a Task. Await the Task to get the result. "
+        "To request a stop, call `task.cancel()`. Do not repeat a call that "
+        "changes data if it might have run."
         "\n\n`apropos(pattern)` finds the tools, the prompts and the skills of each server by "
         "name and by description. `doc(<python_name>.<tool>)` prints the description "
         "and the input schema of one tool, and `doc(<python_name>)` prints the tools "

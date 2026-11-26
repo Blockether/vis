@@ -1090,7 +1090,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         if route.endswith("/agents/run"):
             return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
         if route.endswith("/tasks/t1/cancel"):
-            return 200, {"accepted": False}
+            return 200, {"requested": False}
         if route.endswith("/tasks/t1"):
             return 200, task_status("t1", "running", record, owner="example")
         if "/agents" in route:
@@ -1810,6 +1810,36 @@ def test_idle_timeout_ends_the_iteration_without_an_exception():
         elapsed = time.monotonic() - started
         assert seen == ["subscription.ready"]
         assert 0.4 <= elapsed < 2
+
+
+def test_task_events_and_ready_validate_rows_for_their_session():
+    from blockether.vis.engine import Event, ProtocolError
+
+    task = {
+        "id": "t1",
+        "session_id": "s1",
+        "kind": "mcp",
+        "name": "t1 server.read",
+        "state": "running",
+        "origin": {},
+        "started_at": 1,
+        "view_ids": [],
+        "detached": False,
+    }
+    frame = {"type": "task.started", "session_id": "s1", "seq": 2, "task": task}
+    assert Event.from_wire(frame).data["task"] == task
+    ready = {
+        "type": "subscription.ready",
+        "session_id": "s1",
+        "cursor": 1,
+        "tasks_seq": 2,
+        "tasks": [task],
+    }
+    assert Event.from_wire(ready).data == {"tasks_seq": 2, "tasks": [task]}
+    with pytest.raises(ProtocolError, match="invalid Task event"):
+        Event.from_wire({**frame, "task": {**task, "session_id": "s2"}})
+    with pytest.raises(ProtocolError, match="invalid Task snapshot"):
+        Event.from_wire({**ready, "tasks": [{**task, "kind": "not-a-task"}]})
 
 
 def test_async_iteration_and_task_cancellation_close_the_stream():

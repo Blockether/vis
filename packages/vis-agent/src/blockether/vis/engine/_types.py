@@ -969,7 +969,7 @@ class TaskOrigin(TypedDict):
     block: NotRequired[str]
 
 
-class TaskStatusTask(TypedDict):
+class Task(TypedDict):
     id: str
     session_id: str
     kind: TaskKind
@@ -993,14 +993,17 @@ class TaskStatusTask(TypedDict):
     detached: bool
 
 
+class TaskList(TypedDict):
+    tasks: list[Task]
+
+
 class TaskStatus(TypedDict):
-    task: TaskStatusTask
+    task: Task
     record: NotRequired[AgentsRecord]
-    value: NotRequired[JSONValue]
 
 
 class TaskCancel(TypedDict):
-    accepted: bool
+    requested: bool
 
 
 class AgentsTimelineItemsItem(TypedDict):
@@ -1130,6 +1133,9 @@ SessionEventType: TypeAlias = Literal[
     "speech.committed",
     "speech.invalidated",
     "subscription.ready",
+    "task.ended",
+    "task.started",
+    "task.updated",
     "turn.cancelled",
     "turn.completed",
     "turn.failed",
@@ -2914,8 +2920,34 @@ class SubscriptionReadyData(TypedDict):
     goal: None | SessionGoal
     agent_name: NotRequired[str]
     latest_iteration: NotRequired[int]
+    tasks: NotRequired[list[Task]]
+    tasks_seq: NotRequired[int]
     agents: NotRequired[list[AgentsAgent]]
     team_clocks: NotRequired[list[AgentsTeamClock]]
+
+
+class TaskEndedData(TypedDict):
+    """The `data` of an event of type `task.ended`."""
+
+    task: Task
+    schema: int
+    ts: int
+
+
+class TaskStartedData(TypedDict):
+    """The `data` of an event of type `task.started`."""
+
+    task: Task
+    schema: int
+    ts: int
+
+
+class TaskUpdatedData(TypedDict):
+    """The `data` of an event of type `task.updated`."""
+
+    task: Task
+    schema: int
+    ts: int
 
 
 class TurnCancelledData(TypedDict):
@@ -3266,6 +3298,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/slashes": "SessionSlashes",
     "GET /v1/sessions/:sid/speech/jobs/:job-id": "VoiceJob",
     "GET /v1/sessions/:sid/suggest": "SessionSuggestions",
+    "GET /v1/sessions/:sid/tasks": "TaskList",
     "GET /v1/sessions/:sid/tasks/:task-id": "TaskStatus",
     "GET /v1/sessions/:sid/trajectory.json": "SessionAtif",
     "GET /v1/sessions/:sid/transcript": "TranscriptRecord",
@@ -3614,6 +3647,27 @@ if TYPE_CHECKING:
         cursor: int
         data: SubscriptionReadyData
 
+    class TaskEndedEvent(Event):
+        """An event of type `task.ended`."""
+
+        type: Literal["task.ended"]
+        seq: int
+        data: TaskEndedData
+
+    class TaskStartedEvent(Event):
+        """An event of type `task.started`."""
+
+        type: Literal["task.started"]
+        seq: int
+        data: TaskStartedData
+
+    class TaskUpdatedEvent(Event):
+        """An event of type `task.updated`."""
+
+        type: Literal["task.updated"]
+        seq: int
+        data: TaskUpdatedData
+
     class TurnCancelledEvent(Event):
         """An event of type `turn.cancelled`."""
 
@@ -3792,6 +3846,9 @@ if TYPE_CHECKING:
         | SpeechCommittedEvent
         | SpeechInvalidatedEvent
         | SubscriptionReadyEvent
+        | TaskEndedEvent
+        | TaskStartedEvent
+        | TaskUpdatedEvent
         | TurnCancelledEvent
         | TurnCompletedEvent
         | TurnFailedEvent

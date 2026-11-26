@@ -24,6 +24,7 @@ requests, select **HTTP** at the top of the page.
 - **Your program must start work and wait for the answer.** [Create a session](#create-a-session).
   Then [send a message and wait](#send-a-message-and-wait).
 - **Your program must show progress while Vis works.** [Follow progress](#follow-progress).
+- **Your program must show running Tasks or stop one Task.** [Track Tasks](#track-tasks).
 - **A turn waits for a person.** [Answer a form](#answer-a-form).
 - **A session must stop using some tools, or use them again.**
   [Change the tools of a session](#change-the-tools-of-a-session).
@@ -230,6 +231,9 @@ Neither cancellation nor this event undoes completed actions.
 | Send a message and wait for a checked answer | `session.run(request, ...)` | No generated method |
 | Read a turn | `turn.read()`, `turn.wait()` | `client.routes.get_session_turn(sid, tid)` |
 | Follow events | `session.events(cursor=...)` | `client.routes.get_session_events_since(sid, query=...)` |
+| List Tasks | No typed call | `client.routes.get_session_tasks(sid)` |
+| Read one Task | No typed call | `client.routes.get_session_task(sid, task_id)` |
+| Request Task cancellation | No typed call | `client.routes.post_session_task_cancel(sid, task_id)` |
 | List open forms | `session.input_views()` | `client.routes.get_session_views_input(sid)` |
 | Answer a form or interrupt a view | `session.answer(...)`, `session.view_action(...)` | `client.routes.post_session_view(sid, view_id, body=...)` |
 | List turns or queued messages | `session.turns(...)` | `client.routes.get_session_turns(sid, query=...)` |
@@ -287,6 +291,9 @@ Neither cancellation nor this event undoes completed actions.
 | Read a turn | `GET /v1/sessions/{sid}/turns/{tid}` |
 | Follow events as a stream | `GET /v1/events` |
 | Read events as pages | `GET /v1/sessions/{sid}/events-since` |
+| List Tasks | `GET /v1/sessions/{sid}/tasks` |
+| Read one Task | `GET /v1/sessions/{sid}/tasks/{task-id}` |
+| Request Task cancellation | `POST /v1/sessions/{sid}/tasks/{task-id}/cancel` |
 | List open forms | `GET /v1/sessions/{sid}/views/input` |
 | Answer a form or interrupt a view | `POST /v1/sessions/{sid}/views/{view-id}/actions` |
 | List turns or queued messages | `GET /v1/sessions/{sid}/turns` |
@@ -976,6 +983,79 @@ An event without `row_ids` replaces the whole receipt, and a new connection star
 receipts. The page reads always return whole receipts.
 
 </div>
+
+## Track Tasks
+
+List the session's Tasks to find an operation that your program needs to monitor or stop. A list
+contains running Tasks and finished Tasks whose results the agent has not acknowledged. After
+acknowledgement, a request for that Task returns 404.
+
+<div data-variant="python">
+
+```python
+for row in client.routes.get_session_tasks(session_id)["tasks"]:
+    print(row["id"], row["name"], row["state"])
+
+# Use the ID of the Task that you want to stop.
+row = client.routes.get_session_task(session_id, task_id)["task"]
+if row["state"] == "running":
+    result = client.routes.post_session_task_cancel(session_id, task_id)
+    print(result["requested"])
+```
+
+A request for an unknown Task raises `GatewayError` with status 404.
+
+</div>
+
+<div data-variant="http">
+
+```bash
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/tasks"
+vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/tasks/$TASK_ID"
+# Send this request only if you want to stop the selected Task.
+vis_api -X POST "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/tasks/$TASK_ID/cancel"
+```
+
+An unknown Task returns 404 with error type `task-not-found`.
+
+</div>
+
+The list returns `tasks`. A read returns `task`. Each row has an `id`, a `name`, a `kind`, and a
+`state`. The `kind` is `tool`, `shell`, `mcp`, or `subagent`. The `state` is `running`, `done`,
+`failed`, or `cancelled`. The `view_ids` list names live views for the Task.
+
+If `requested` is true, the gateway accepted the stop request with reason `person`. That answer
+does not mean that the Task has stopped.
+
+### Follow Task events
+
+Use the [session event stream](#follow-progress) to keep a list of running Tasks current. On each
+`subscription.ready` frame with `tasks`, replace the list for that session with the running rows
+in `tasks`. Save `tasks_seq` for that session. Ignore Task events with `seq` less than or equal
+to `tasks_seq`. Use `cursor` as usual for replay of other session events.
+
+<div data-variant="python">
+
+Read `tasks`, `tasks_seq`, and `task` from `event.data`. Read `seq` from `event.seq`.
+
+</div>
+
+<div data-variant="http">
+
+Read `tasks`, `tasks_seq`, `task`, and `seq` from the JSON object on the SSE `data` line.
+
+</div>
+
+Each Task event carries the current row in `task`. Apply these events in `seq` order:
+
+| Event | Update to a running list |
+|---|---|
+| `task.started` | Add the row |
+| `task.updated` | Replace the row |
+| `task.ended` | Remove the row |
+
+A stop request sets `cancel_reason` on a `task.updated` row that is still `running`.
+Use `task.ended` to read the final state.
 
 ## Answer a form
 

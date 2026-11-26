@@ -103,7 +103,9 @@
    painter. Without this gate a background turn forces a full active-tab repaint
    per streamed token and starves the focused tab (it can't even echo typing)."
   [db]
-  (dissoc db :tab-locals :render-version :layout))
+  (-> db
+      (dissoc :tab-locals :render-version :layout :background-tasks)
+      (assoc :background-task-view (get-in db [:background-tasks (str (get-in db [:session :id]))]))))
 
 (defn- active-view-changed?
   [old-db new-db]
@@ -2551,7 +2553,10 @@
   ;; A remote DELETE is not a tab close: never re-submit pending sends, release
   ;; the deleted runtime, or write project membership back to the gateway.
   (fn [before [_ session-id]]
-    (let [db
+    (let [before (cond-> before
+                   (contains? (:background-tasks before) (str session-id))
+                   (update :background-tasks dissoc (str session-id)))
+          db
           (-> before
               ensure-tabs
               sync-active-tab)
@@ -4091,6 +4096,78 @@
     (cond (nil? sid) (current-tab-id db)
           (= sid root-sid) (current-tab-id db)
           :else (or (tab-id-for-session db sid) :not-here))))
+
+(defn background-task-dock
+  "The active session's Task rows and selected row."
+  [db]
+  (let [sid (str (get-in db [:session :id]))
+        {:keys [rows selected focused? pending]} (get-in db [:background-tasks sid])
+        index (or (first (keep-indexed #(when (= selected (get %2 "id")) %1) rows)) 0)
+        row (get rows index)]
+    (when row
+      {:sid sid :row row :index index :count (count rows) :focused? focused?
+       :cancelling? (or (contains? pending (get row "id")) (get row "cancel_reason"))
+       :view-id (some (set (map lv/view-id (:live-views db))) (get row "view_ids"))})))
+
+(reg-event-db :sync-background-tasks
+              (fn [db [_ sid {:keys [tasks task-seq task seq event-type]}]]
+                (let [path [:background-tasks (str sid)]
+                      held (get-in db path)
+                      running? #(and (= (str sid) (get % "session_id"))
+                                     (= "running" (get % "state")))]
+                  (cond
+                    (= :not-here (session-target-tab db sid)) db
+                    (vector? tasks)
+                    (let [rows (filterv running? tasks)]
+                      (assoc-in db path (cond-> (assoc (dissoc held :pending) :rows rows :seq (or task-seq -1))
+                                          (empty? rows) (dissoc :focused? :selected))))
+                    (and held (integer? seq) (> (long seq) (long (:seq held)))
+                         (= (str sid) (get task "session_id")))
+                    (let [rows (:rows held)
+                          id (get task "id")
+                          index (first (keep-indexed #(when (= id (get %2 "id")) %1) rows))
+                          next-rows (cond
+                                      (or (= "task.ended" event-type) (not (running? task)))
+                                      (filterv #(not= id (get % "id")) rows)
+                                      (some? index) (assoc rows index task)
+                                      :else (conj rows task))]
+                      (assoc-in db path (cond-> (assoc held :seq seq :rows next-rows)
+                                          (not (running? task)) (update :pending disj id)
+                                          (empty? next-rows) (dissoc :focused? :selected))))
+                    :else db))))
+
+(reg-event-db :focus-background-tasks
+              (fn [db [_ focus? step]]
+                (if-let [{:keys [sid index count]} (background-task-dock db)]
+                  (let [path [:background-tasks sid]
+                        index (mod (+ (long index) (long (or step 0))) (long count))]
+                    (update-in db path assoc :focused? focus?
+                               :selected (get-in db (into path [:rows index "id"]))))
+                  db)))
+
+(reg-event-fx :cancel-background-task
+              (fn [db [_ sid id]]
+                (let [{:keys [row cancelling?] active-sid :sid} (background-task-dock db)]
+                  (if (and row (= sid active-sid) (= id (get row "id")) (not cancelling?))
+                    {:db (update-in db [:background-tasks sid :pending] (fnil conj #{}) id)
+                     :fx [[:gateway-cancel-background-task sid id (get row "name")]]}
+                    {:db db}))))
+
+(reg-event-fx :background-task-cancel-reply
+              (fn [db [_ sid id name requested?]]
+                (let [path [:background-tasks sid]
+                      row (some #(when (= id (get % "id")) %) (get-in db (conj path :rows)))]
+                  (if (and row (not requested?))
+                    (cond-> {:db (update-in db (conj path :pending) disj id)}
+                      (not (get row "cancel_reason"))
+                      (assoc :fx [[:notify (str "Could not cancel " name) :warn 3000]]))
+                    {:db db}))))
+
+(reg-fx :gateway-cancel-background-task
+        (fn [sid id name]
+          (vis/worker-future "tui-cancel-background-task"
+                             #(let [requested? (try (vis/cancel-task! sid id) (catch Exception _ false))]
+                                (dispatch [:background-task-cancel-reply sid id name requested?])))))
 
 (defn- human-input-target-tab
   "The tab `form` is allowed to appear on — [[session-target-tab]] for `watched-sid`,

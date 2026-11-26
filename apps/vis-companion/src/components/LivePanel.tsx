@@ -100,14 +100,19 @@ export function LivePanel({
   client,
   sid,
   onClose,
+  initialViewId,
 }: {
   views: LiveViewModel[];
   client: GatewayClient;
   sid: string;
   onClose: () => void;
+  initialViewId?: string;
 }) {
   const owners = [...new Set(views.map(liveViewOwner))];
-  const [tab, setTab] = useState<string | null>(null);
+  const [tab, setTab] = useState<string | null>(() => {
+    const initial = views.find((view) => view.id === initialViewId);
+    return initial ? liveViewOwner(initial) : null;
+  });
   const current = tab !== null && owners.includes(tab) ? tab : (owners[0] ?? '');
   const shown = owners.length > 1 ? views.filter((view) => liveViewOwner(view) === current) : views;
   const selectByKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {

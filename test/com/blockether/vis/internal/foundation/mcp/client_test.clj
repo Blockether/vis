@@ -6,6 +6,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.mcp.body :as body]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [lazytest.core :refer [defdescribe expect it]])
@@ -115,6 +116,34 @@
             (expect (= "Capital of France?" (get-in @seen ["messages" 0 "content" "text"])))
             (expect (= -1
                        (get (call-json conn "sample" {:on-sampling (constantly nil)}) "code"))))))))
+
+(defdescribe mcp-duplex-cancel-test
+  (it "cancels the sent id once and accepts a reply to a different request"
+      (let [sent (promise)
+            notice (promise)
+            wire (atom [])
+            closed? (atom false)
+            write! (fn write ([msg] (write msg nil))
+                     ([msg sent!]
+                      (swap! wire conj msg)
+                      (when sent! (sent!))
+                      (if (= "notifications/cancelled" (get msg "method"))
+                        (deliver notice msg)
+                        (deliver sent msg))))
+            {:keys [request-fn receive!]} (#'mcp/duplex "fixture" write! closed? {})
+            work (future (request-fn "tools/call" {"name" "slow"} 5000))
+            slow-id (get (deref sent 3000 nil) "id")]
+        (expect (string? slow-id))
+        (future-cancel work)
+        (expect (= {"requestId" slow-id} (get (deref notice 3000 nil) "params")))
+        (let [quick (future (request-fn "tools/call" {"name" "quick"} 5000))]
+          (receive! {"id" slow-id "result" {"answer" "late"}})
+          (loop [retries 100]
+            (when (and (pos? retries) (not= 3 (count @wire)))
+              (Thread/sleep 10)
+              (recur (dec retries))))
+          (receive! {"id" (get (peek @wire) "id") "result" {"answer" "quick"}})
+          (expect (= {"answer" "quick"} (deref quick 2000 nil)))))))
 
 (defdescribe
   mcp-stdio-server-message-test
@@ -347,21 +376,29 @@
            {:status 200
             :body
             "{\"jsonrpc\":\"2.0\",\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"serverInfo\":{\"name\":\"fake\",\"version\":\"1\"}}}"})]
-        (with-redefs [http/request (fn [_]
-                                     (let [r @reply]
+        (with-redefs [body/tracked-body (fn [body begin! sent! _]
+                                          (when (or (not begin!) (begin!)) (sent!))
+                                          body)
+                      http/request (fn [{:keys [body]}]
+                                     (let [r @reply
+                                           id (when (string? body) (get (json/read-json body) "id"))
+                                           with-id (fn [text]
+                                                     (if (str/starts-with? text "{")
+                                                       (json/write-json-str (assoc (json/read-json text) "id" id))
+                                                       text))]
                                        (if (instance? Throwable r)
                                          (throw r)
                                          ;; The transport reads the body as a stream.
                                          (update r
                                                  :body
                                                  #(java.io.ByteArrayInputStream.
-                                                    (.getBytes ^String % "UTF-8"))))))]
+                                                    (.getBytes ^String (with-id %) "UTF-8"))))))]
           (let [conn (mcp/connect "fake"
                                   {:transport :streamable-http
                                    :url "https://gateway.example.com/mcp"})]
             (try (expect (true? (mcp/alive? conn)))
                  (reset! reply response)
-                 (let [result (try (mcp/call-tool conn "read" {}) (catch Throwable t t))]
+                 (let [result (try (mcp/request conn "resources/read" {}) (catch Throwable t t))]
                    (expect (or (instance? Throwable result) (true? (get result "isError"))))
                    (expect (= connected? (mcp/alive? conn))))
                  (finally (mcp/close conn)))))))))
@@ -465,6 +502,100 @@
                      (try (f conn requests) (finally (mcp/close conn)))))))
 
 (defn- call-text [conn] (get-in (mcp/call-tool conn "echo" {}) ["content" 0 "text"]))
+
+(defdescribe mcp-http-task-test
+  (it "calls a tool on a server that requires a fixed-length POST"
+      (with-http-conn
+        {"tools/call" (fn [{:keys [headers message]} exchange]
+                        (if (and (some-> (get headers "content-length") parse-long pos?)
+                                 (not (str/includes? (get headers "transfer-encoding" "") "chunked")))
+                          (send! exchange 200 "application/json" (text-result message "ok"))
+                          (send! exchange 411 "text/plain" "Content-Length required")))}
+        {}
+        (fn [conn _]
+          (expect (= "ok" (call-text conn))))))
+  (it "cancels only the outstanding request and keeps the same session"
+      (let [slow (promise)
+            notice (promise)]
+        (with-http-conn
+          {"tools/call" (fn [{:keys [message]} exchange]
+                          (when (= "slow" (get-in message ["params" "name"]))
+                            (deliver slow (get message "id"))
+                            (deref notice 3000 nil))
+                          (send! exchange 200 "application/json" (text-result message "ok")))
+           "notifications/cancelled" (fn [{:keys [message]} exchange]
+                                       (deliver notice (get-in message ["params" "requestId"]))
+                                       (send! exchange 202 "text/plain" ""))}
+          {}
+          (fn [conn requests]
+            (let [work (future (mcp/call-tool conn "slow" {}))
+                  id (deref slow 3000 nil)]
+              (expect (string? id))
+              (future-cancel work)
+              (expect (= id (deref notice 3000 nil)))
+              (expect (= "ok" (call-text conn)))
+              (expect (= 1 (count (filter #(= "notifications/cancelled" (get-in % [:message "method"])) @requests)))))))))
+  (it "sends a tool call and its cancellation under the same session during rotation"
+      (let [pause? (atom false)
+            before-send (promise)
+            resume (promise)
+            call (promise)
+            notice (promise)]
+        (with-http-conn
+          {"ping" (fn [{:keys [message]} ^HttpExchange exchange]
+                    (when-let [sid (get-in message ["params" "session"])]
+                      (.set (.getResponseHeaders exchange) "Mcp-Session-Id" sid))
+                    (send! exchange 200 "application/json" (rpc-result message {})))
+           "tools/call" (fn [{:keys [message] :as request} ^HttpExchange exchange]
+                          (if (= "slow" (get-in message ["params" "name"]))
+                            (do (deliver call request) (deref notice 3000 nil))
+                            (.set (.getResponseHeaders exchange) "Mcp-Session-Id" "after-tool"))
+                          (send! exchange 200 "application/json" (text-result message "ok")))
+           "notifications/cancelled" (fn [request ^HttpExchange exchange]
+                                       (.set (.getResponseHeaders exchange) "Mcp-Session-Id" "ignore-cancel")
+                                       (send! exchange 202 "text/plain" "")
+                                       (deliver notice request))}
+          {:bearer-fn (fn []
+                        (when (compare-and-set! pause? true false)
+                          (deliver before-send true)
+                          (deref resume 3000 nil))
+                        "token")}
+          (fn [conn requests]
+            (mcp/request conn "ping" {"session" "original"})
+            (reset! pause? true)
+            (let [work (future (mcp/call-tool conn "slow" {}))]
+              (try (expect (= true (deref before-send 3000 nil)))
+                   (mcp/request conn "ping" {"session" "rotated"})
+                   (deliver resume true)
+                   (let [sent (deref call 3000 nil)]
+                     (expect (some? sent))
+                     (future-cancel work)
+                     (let [cancelled (deref notice 3000 nil)]
+                       (expect (= (get-in sent [:message "id"])
+                                  (get-in cancelled [:message "params" "requestId"])))
+                       (expect (= ["original" "original"]
+                                  (mapv #(get-in % [:headers "mcp-session-id"]) [sent cancelled])))))
+                   (expect (= "ok" (call-text conn)))
+                   (mcp/request conn "ping" {})
+                   (expect (= "after-tool" (get-in (peek @requests) [:headers "mcp-session-id"])))
+                   (finally (deliver resume true) (future-cancel work))))))))
+  (it "does not send a second tool POST after authentication, nonce or redirect refusals"
+      (doseq [status [401 307]]
+        (let [refreshes (atom [])]
+          (with-http-conn
+            {"tools/call" (fn [_ ^HttpExchange exchange]
+                            (doto (.getResponseHeaders exchange)
+                              (.set "WWW-Authenticate" "DPoP error=\"use_dpop_nonce\"")
+                              (.set "DPoP-Nonce" "next")
+                              (.set "Location" "/mcp?redirected"))
+                            (send! exchange status "text/plain" "refused"))}
+            {:bearer-fn (fn ([] "token") ([rejected] (swap! refreshes conj rejected) "new-token"))
+             :proof-fn (fn [& _] "proof")}
+            (fn [conn requests]
+              (let [failure (try (call-text conn) (catch clojure.lang.ExceptionInfo e e))]
+                (expect (instance? Throwable failure))
+                (expect (= 1 (count (filter #(= "tools/call" (get-in % [:message "method"])) @requests))))
+                (expect (empty? @refreshes)))))))))
 
 (defdescribe
   mcp-http-reply-test
@@ -748,8 +879,9 @@
 (defn- with-legacy-sse
   "Run `(f url end-stream!)` against a local server that has only the HTTP+SSE
    transport: a GET on `/sse` names `/messages` for the POST of each message, and
-   every reply goes out on the stream."
-  [f]
+   every reply goes out on the stream. `routes` can own selected POST methods."
+  ([f] (with-legacy-sse {} f))
+  ([routes f]
   (let [pool
         (Executors/newCachedThreadPool)
 
@@ -800,17 +932,54 @@
 
                                 nil)]
 
-                          (send! exchange 202 "text/plain" "")
-                          (when reply
-                            (event! @stream (str "event: message\ndata: " reply "\n\n")))))))
+                          (if-let [handle-post (get routes (get message "method"))]
+                            (handle-post message exchange)
+                            (do (send! exchange 202 "text/plain" "")
+                                (when reply
+                                  (event! @stream (str "event: message\ndata: " reply "\n\n")))))))))
     (.setExecutor server pool)
     (.start server)
     (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/sse")
             #(deliver release true))
-         (finally (deliver release true) (.stop server 0) (.shutdownNow pool)))))
+         (finally (deliver release true) (.stop server 0) (.shutdownNow pool))))))
 
 (defdescribe
   mcp-legacy-sse-test
+  (it "cancels an outstanding tool on its message endpoint before the POST returns"
+      (let [sent (promise)
+            notice (promise)]
+        (with-legacy-sse
+          {"tools/call" (fn [msg exchange]
+                          (deliver sent (get msg "id"))
+                          (deref notice 3000 nil)
+                          (send! exchange 202 "text/plain" ""))
+           "notifications/cancelled" (fn [msg exchange]
+                                       (deliver notice (get-in msg ["params" "requestId"]))
+                                       (send! exchange 202 "text/plain" ""))}
+          (fn [url _]
+            (let [conn (mcp/connect "legacy" {:transport :sse :url url :timeout-ms 3000})]
+              (try (let [work (future (call-text conn))
+                         id (deref sent 3000 nil)]
+                     (expect (string? id))
+                     (future-cancel work)
+                     (expect (= id (deref notice 3000 nil))))
+                   (finally (mcp/close conn))))))))
+  (it "does not repeat a tool POST on an authentication refusal"
+      (let [attempts (atom 0)
+            refreshes (atom 0)]
+        (with-legacy-sse
+          {"tools/call" (fn [_ exchange]
+                          (swap! attempts inc)
+                          (send! exchange 401 "text/plain" "refused"))}
+          (fn [url _]
+            (let [conn (mcp/connect "legacy"
+                                    {:transport :sse :url url :timeout-ms 3000
+                                     :bearer-fn (fn ([] "token") ([_] (swap! refreshes inc) "fresh"))})]
+              (try (let [failure (try (call-text conn) (catch clojure.lang.ExceptionInfo e e))]
+                     (expect (= 401 (:status (ex-data failure))))
+                     (expect (= 1 @attempts))
+                     (expect (= 0 @refreshes)))
+                   (finally (mcp/close conn))))))))
   (it "calls a tool of a server that has only the HTTP+SSE transport"
       (with-legacy-sse
         (fn [url end-stream!]

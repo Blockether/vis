@@ -60,10 +60,10 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 183
-    assert len(operations) == 222
+    assert len(routes) == 184
+    assert len(operations) == 223
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 136,
+        "none": 137,
         "json": 80,
         "binary": 6,
     }
@@ -355,7 +355,20 @@ class _Renderer:
                 return self.type_of(self.target(ref), hint)
             if pointer.startswith("/$defs/") and "/" not in pointer[7:]:
                 return self.named(pointer[7:], document or self.document)
-            return self.foreign(self.target(ref))
+            target = self.target(ref)
+            if (
+                document
+                and not pointer
+                and target.get("title")
+                and target.get("properties")
+            ):
+                previous = self.document
+                self.document = document
+                try:
+                    return self.typed_dict(_camel(target["title"]), target)
+                finally:
+                    self.document = previous
+            return self.foreign(target)
         if isinstance(node.get("const"), str):
             return f"Literal[{json.dumps(node['const'])}]"
         if "const" in node:

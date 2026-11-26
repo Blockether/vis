@@ -1,11 +1,11 @@
 import type { GatewayStreamReason } from './diagnostics';
-import type { GatewayClient } from './gateway';
+import type { BackgroundTask, GatewayClient } from './gateway';
 import { approxBytes, registerMemoryOwner, type MemoryCell } from './perf';
 import { bufferStreamEvent } from './session-stream';
 import { MAX_SUBSCRIBED_SESSIONS } from './storage';
 import { onAway, onWake } from './wake';
 import type { SseEvent, Subagent, TeamClock } from './types';
-import { applyAgentChanges, mergeAgents, REWIND_CURSOR, teamChangesFromWire, teamClocksFromWire, teamRowsFromWire } from './gateway';
+import { applyAgentChanges, mergeAgents, REWIND_CURSOR, teamChangesFromWire, teamClocksFromWire, teamRowsFromWire, taskFromWire } from './gateway';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
@@ -94,6 +94,7 @@ export class SessionSubscriptionHub {
   // The deleted children of each session, from the `removed` of its pushes.
   private readonly gone = new Map<string, ReadonlySet<string>>();
   private readonly teamListeners = new Map<string, Set<TeamListener>>();
+  private readonly background = new Map<string, { seq: number; rows: readonly BackgroundTask[] }>();
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
@@ -147,6 +148,7 @@ export class SessionSubscriptionHub {
       this.ended.delete(sid);
       this.forgetCoverage(sid);
       this.setTeam(sid, undefined);
+      this.background.delete(sid);
       changed = true;
     }
     if (changed) this.restart({ reason: 'watch_changed' });
@@ -212,6 +214,34 @@ export class SessionSubscriptionHub {
       current?.delete(listener);
       if (current?.size === 0) this.teamListeners.delete(sid);
     };
+  }
+
+  /** Running Tasks of this session. The row identity stays fixed between Task events. */
+  tasks(sid: string): readonly BackgroundTask[] | undefined {
+    return this.background.get(sid)?.rows;
+  }
+
+  private noteTasks(sid: string, event: SseEvent): void {
+    if (event.type === 'subscription.ready') {
+      const cursor = event.tasks_seq ?? event.cursor;
+      const seq = typeof cursor === 'number' ? cursor : -1;
+      const rows = Array.isArray(event.tasks) ? event.tasks.flatMap((raw) => {
+        const row = taskFromWire(raw);
+        return row?.session_id === sid && row.state === 'running' ? [row] : [];
+      }) : [];
+      this.background.set(sid, { seq, rows });
+      return;
+    }
+    const previous = this.background.get(sid);
+    const row = taskFromWire(event.task);
+    if (!previous || typeof event.seq !== 'number' || event.seq <= previous.seq || row?.session_id !== sid) return;
+    const rows = previous.rows.slice();
+    const index = rows.findIndex((old) => old.id === row.id);
+    if (event.type === 'task.ended' || row.state !== 'running') {
+      if (index >= 0) rows.splice(index, 1);
+    } else if (index >= 0) rows[index] = row;
+    else rows.push(row);
+    this.background.set(sid, { seq: event.seq, rows });
   }
 
   private setTeam(sid: string, rows: readonly Subagent[] | undefined): void {
@@ -463,6 +493,7 @@ export class SessionSubscriptionHub {
     this.ended.clear();
     this.idle.clear();
     this.teams.clear();
+    this.background.clear();
     this.clocks.clear();
     this.gone.clear();
     this.teamListeners.clear();
@@ -617,6 +648,7 @@ export class SessionSubscriptionHub {
       this.teams.delete(sid);
       this.clocks.delete(sid);
       this.gone.delete(sid);
+      this.background.delete(sid);
       this.teamChanged(sid);
       this.teamListeners.delete(sid);
       for (const listener of [...(this.sessionListeners.get(sid) ?? [])]) listener(event);
@@ -636,6 +668,12 @@ export class SessionSubscriptionHub {
       else this.idle.delete(sid);
       if (typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
       this.noteTeam(sid, event);
+      this.noteTasks(sid, event);
+      for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
+      return;
+    }
+    if (event.type === 'task.started' || event.type === 'task.updated' || event.type === 'task.ended') {
+      this.noteTasks(sid, event);
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
       return;
     }

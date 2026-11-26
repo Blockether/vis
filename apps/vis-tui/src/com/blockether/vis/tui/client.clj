@@ -2085,6 +2085,12 @@
                       {:http-status (:status response) :body body})))
     body))
 
+(defn cancel-task!
+  "Request a stop of one Task. Return true if the gateway accepted it."
+  [sid id]
+  (true? (get (parsed-response! (request! :post (str "/v1/sessions/" (enc sid) "/tasks/" (enc id) "/cancel")))
+              "requested")))
+
 (def ^:private session-export-timeout-ms
   "A whole session arrives as ONE body. The page-sized read timeout would stop the
    export of a long session before its end."

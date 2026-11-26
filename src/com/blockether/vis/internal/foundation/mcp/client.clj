@@ -32,7 +32,7 @@
    OAuth 2.1 (spec `2025-06-18`) is supported for HTTP transports via
    `oauth.clj`: pass `:bearer-fn` (a 0/1-arg fn yielding the current Bearer
    token, called with the just-rejected token on 401). A 401 triggers a
-   single-flight refresh and one automatic retry.
+   single-flight refresh and one automatic retry for reads only.
 
    The client speaks two eras of the protocol. A server of a stateless revision
    (`2026-07-28`) answers `server/discover`: it gets no handshake and no session,
@@ -51,6 +51,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.foundation.mcp.apps :as apps]
+            [com.blockether.vis.internal.foundation.mcp.body :as body]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.sandbox.jail :as process-jail]
             [com.blockether.vis.internal.util :as util]
@@ -612,6 +613,18 @@
 
         ::timeout))))
 
+(defn- cancel-rpc!
+  "Send a notification for this outstanding request on a separate worker."
+  [send! id]
+  (cancellation/worker-future
+    "mcp-cancel-rpc"
+    (fn [] (try (send! {"jsonrpc" "2.0" "method" "notifications/cancelled"
+                       "params" {"requestId" id}})
+                (catch Throwable _ nil)))))
+
+(defn- check-interrupted! []
+  (when (.isInterrupted (Thread/currentThread)) (throw (InterruptedException.))))
+
 (defn- without-caller [callers inbox] (vec (remove #(identical? inbox (first %)) callers)))
 
 (defn- input-state
@@ -686,7 +699,7 @@
                    (handle-incoming! msg write! incoming inputs)
                    (when-let [id (get msg "id")]
                      (when-let [^LinkedBlockingQueue inbox (.remove pending id)]
-                       (.put inbox [:reply msg])))))
+                       (.offer inbox [:reply msg])))))
      :fail-pending! (fn []
                       (doseq [k (enumeration-seq (.keys pending))]
                         (when-let [^LinkedBlockingQueue inbox (.remove pending k)]
@@ -706,10 +719,20 @@
 
           (.put pending id inbox)
           (when answers (swap! callers conj [inbox (:asker opts)]))
-          (try (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
-                         (some? params)
-                         (assoc "params" params)))
-               (let [msg (await-reply! inbox timeout-ms answers)]
+          (try
+            (let [sent? (atom false)
+                  msg (try (check-interrupted!)
+                           (write! (cond-> {"jsonrpc" "2.0" "id" id "method" method}
+                                     (some? params) (assoc "params" params))
+                                   #(reset! sent? true))
+                           (await-reply! inbox timeout-ms answers)
+                           (catch Throwable t
+                             (if (cancellation/preserve-interrupt! t)
+                               (if (.remove pending id inbox)
+                                 (do (when @sent? (cancel-rpc! write! id)) (throw t))
+                                 ;; The reader removed this request first. Its reply owns the result.
+                                 (do (Thread/interrupted) (second (.take inbox))))
+                               (throw t))))]
                  (cond (= msg ::timeout) (throw (ex-info
                                                   (str "MCP " name " " method " timed out")
                                                   {:type :mcp/timeout :server name :method method}))
@@ -788,8 +811,13 @@
         (atom false)
 
         write!
-        (fn [m]
-          (locking in (.write in (.getBytes (str (->json m) "\n") "UTF-8")) (.flush in)))
+        (fn write ([m] (write m nil))
+          ([m sent!]
+           (locking in
+             (check-interrupted!)
+             (.write in (.getBytes (str (->json m) "\n") "UTF-8"))
+             (.flush in)
+             (when sent! (sent!)))))
 
         {:keys [receive! fail-pending!] :as core}
         (duplex name write! closed? spec)
@@ -991,12 +1019,12 @@
    (`:method`, `:headers`, `:body`, `:timeout`, and `:uri` for another URL than
    `url`) with the static `headers`, the protocol version, the session id and the
    token, and returns the response with an open body. The caller closes the body.
-   One 401 refreshes the token and sends again. The atoms `session`,
+   One 401 refreshes the token and sends again for reads. The atoms `session`,
    `protocol-version*` and `www-auth` are those of the transport.
 
    `proof-fn` gives the DPoP proof for a DPoP-bound token (RFC 9449): the request
    then has the `DPoP` scheme and the proof, with the last nonce of the server. One
-   `use_dpop_nonce` refusal is sent again with the new nonce."
+   `use_dpop_nonce` refusal is sent again with the new nonce for reads."
   [url headers bearer-fn proof-fn session protocol-version* www-auth]
   (let [nonce
         (atom nil)
@@ -1006,6 +1034,8 @@
           (let [target
                 (or (:uri request) url)
 
+                sid (get request ::session-id @session)
+
                 proof
                 (when (and bearer proof-fn)
                   (proof-fn (str/upper-case (name (:method request))) target bearer @nonce))
@@ -1013,12 +1043,12 @@
                 resp
                 (http/request (assoc request
                                 :uri target
-                                :client @mcp-http/client
+                                :client @(if (::no-retry? request) mcp-http/mutation-client mcp-http/client)
                                 :headers (cond-> (merge (apply-headers headers)
                                                         {"MCP-Protocol-Version" @protocol-version*}
                                                         (:headers request))
-                                           @session
-                                           (assoc "Mcp-Session-Id" @session)
+                                           sid
+                                           (assoc "Mcp-Session-Id" sid)
 
                                            bearer
                                            (assoc "Authorization"
@@ -1026,12 +1056,16 @@
 
                                            proof
                                            (assoc "DPoP" proof))
+                                :body (if-let [sent! (::sent! request)]
+                                        (body/tracked-body (:body request) (::begin! request) sent! (::no-retry? request))
+                                        (:body request))
                                 :throw false
                                 ;; A stream: the reply can come before the server ends the body.
                                 :as :stream))]
 
-            (when-let [sid (response-header resp "mcp-session-id")]
-              (reset! session sid))
+            (when-not (::ignore-response-session? request)
+              (when-let [sid (response-header resp "mcp-session-id")]
+                (reset! session sid)))
             (when-let [wa (response-header resp "www-authenticate")]
               (reset! www-auth wa))
             (when-let [value (response-header resp "dpop-nonce")]
@@ -1041,7 +1075,7 @@
         send
         (fn [request bearer]
           (let [resp (send1 request bearer)]
-            (if (and (::proof? resp)
+            (if (and (not (::no-retry? request)) (::proof? resp)
                      (= 401 (:status resp))
                      (some->> (response-header resp "www-authenticate")
                               (re-find #"use_dpop_nonce")))
@@ -1050,12 +1084,14 @@
 
     (fn [request]
       (let [tok
-            (when bearer-fn (try (bearer-fn) (catch Throwable _ nil)))
+            (when bearer-fn (try (bearer-fn)
+                                 (catch Throwable t
+                                   (when (cancellation/preserve-interrupt! t) (throw t)))))
 
             first-resp
             (send request tok)]
 
-        (if (and (= 401 (:status first-resp)) bearer-fn)
+        (if (and (= 401 (:status first-resp)) bearer-fn (not (::no-retry? request)))
           ;; `bearer-fn` refuses only with a typed failure: `:mcp/oauth-required`, or
           ;; `:mcp/oauth-token` for a grant that needs no person. It must escape: as
           ;; a plain HTTP 401 it skipped the sign-in backoff, and every turn
@@ -1077,7 +1113,7 @@
    `modern?`, a JSON-RPC error in the body is the refusal of the peer: a stateless
    server sends it with an HTTP error status, and the transport is not lost. A 401
    or 403 stays an HTTP failure, because the sign-in reads it."
-  [name resp method modern?]
+  [name resp id method modern?]
   (let [failure
         (http-error name resp method)
 
@@ -1087,7 +1123,8 @@
         error
         (when (and modern? (not (contains? #{401 403} status)))
           (let [value (try (json-> body) (catch Throwable _ nil))]
-            (when (and (map? value) (map? (get value "error"))) (get value "error"))))]
+            (when (and (= id (get value "id")) (map? (get value "error")))
+              (get value "error"))))]
 
     (if error (rpc-error->ex name method error status) failure)))
 
@@ -1134,17 +1171,19 @@
         (http-opener url headers bearer-fn proof-fn session protocol-version* www-auth)
 
         post!
-        (fn [body timeout-ms headers]
-          (open! {:method :post
+        (fn [body timeout-ms headers options]
+          (open! (merge options {:method :post
                   :headers (merge {"Content-Type" "application/json"
                                    "Accept" "application/json, text/event-stream"}
                                   headers)
                   :body body
-                  :timeout timeout-ms}))
+                  :timeout timeout-ms})))
 
         reply!
         (fn [msg]
-          (close-body! (post! (->json msg) 10000 nil)))
+          (close-body! (post! (->json msg) 10000 nil
+                               (when (= "notifications/cancelled" (get msg "method"))
+                                 {::no-retry? true ::sent! (fn [] nil)}))))
 
         ;; Read the events of `resp` until a message for which `reply?` is true, or
         ;; until the stream ends. Returns `cursor` with the last event `:id` and
@@ -1171,8 +1210,9 @@
         ;; event, after the delay that the server gave. A stateless server has no
         ;; stream to continue.
         reply-of
-        (fn [resp method timeout-ms inbox]
-          (cond (>= (long (:status resp)) 400) (throw (refusal name resp method @modern))
+        (fn [resp id method timeout-ms inbox]
+          (let [matching? #(and (response? %) (= id (get % "id")))]
+            (cond (>= (long (:status resp)) 300) (throw (refusal name resp id method @modern))
                 (event-stream? resp)
                 (loop [resp
                        resp
@@ -1180,7 +1220,7 @@
                        cursor
                        {}]
 
-                  (let [cursor (read-stream resp cursor response? inbox)]
+                  (let [cursor (read-stream resp cursor matching? inbox)]
                     (cond (:reply cursor) (:reply cursor)
                           (and (:id cursor) (not @modern))
                           (do (Thread/sleep (long (or (:retry cursor) 1000)))
@@ -1192,7 +1232,9 @@
                                   (recur resumed cursor)
                                   (close-body! resumed)))))))
                 :else (let [value (try (json-> (body-text resp)) (catch Throwable _ nil))]
-                        (if (sequential? value) (first (filter response? value)) value))))]
+                        (if (sequential? value)
+                           (first (filter matching? value))
+                           (when (matching? value) value))))))]
 
     (cond-> {:request-fn
              (fn request ([method params timeout-ms] (request method params timeout-ms nil))
@@ -1203,40 +1245,64 @@
                       inbox
                       (LinkedBlockingQueue.)]
 
-                  (when answers
-                    (swap! callers conj [inbox (:asker opts)])
-                    ;; A server can send its person input on the listen channel only.
-                    (when @listen-thread (deref listening 2000 nil)))
                   (try
-                    (let [body
-                          (->json
-                            (cond-> {"jsonrpc" "2.0" "id" (str (System/nanoTime)) "method" method}
-                              (some? params)
-                              (assoc "params" params)))
-
-                          ;; A stream read has no timeout of its own, so the exchange
-                          ;; runs apart and this thread keeps the deadline.
-                          exchange
-                          (future (.put inbox
-                                        [:reply
-                                         (try {:msg (reply-of (post! body
-                                                                     timeout-ms
-                                                                     (when @modern
-                                                                       (merge (request-headers
-                                                                                method
-                                                                                params)
-                                                                              headers)))
-                                                              method
-                                                              timeout-ms
-                                                              (when answers inbox))}
-                                              (catch Throwable t {:thrown t}))]))
-
-                          outcome
-                          (try (await-reply! inbox timeout-ms answers)
-                               (catch Throwable t (future-cancel exchange) (throw t)))
-
-                          msg
-                          (:msg outcome)]
+                    (check-interrupted!)
+                    (when answers
+                      (swap! callers conj [inbox (:asker opts)])
+                      ;; A server can send its person input on the listen channel only.
+                      (when @listen-thread (deref listening 2000 nil)))
+                    (let [id (str (random-uuid))
+                          mutation? (= "tools/call" method)
+                          state (atom :queued)
+                          result (promise)
+                          exchange-ref (promise)
+                          session-id @session
+                          cancel! (fn []
+                                    (cancel-rpc! #(close-body! (post! (->json %) 10000 nil
+                                                                     {::no-retry? true ::session-id session-id
+                                                                      ::ignore-response-session? true
+                                                                      ::sent! (fn [] nil)}))
+                                                 id))
+                          body (->json (cond-> {"jsonrpc" "2.0" "id" id "method" method}
+                                         (some? params) (assoc "params" params)))
+                          sent! (fn []
+                                  (when-not (compare-and-set! state :publishing :sent)
+                                    (when (= :cancel-after-body @state)
+                                      (cancel!)
+                                      (future-cancel @exchange-ref))))
+                          begin! #(or (compare-and-set! state :queued :publishing)
+                                      ;; A read can use a new body after an auth refusal.
+                                      (and (not mutation?) (= :sent @state)))
+                          ;; A stream read has no timeout of its own. The calling thread keeps it.
+                          exchange (future
+                                     (let [outcome (try {:msg (reply-of (post! body timeout-ms
+                                                                              (when @modern
+                                                                                (merge (request-headers method params) headers))
+                                                                              (cond-> {::no-retry? mutation?
+                                                                                        ::begin! begin! ::sent! sent!}
+                                                                                 mutation? (assoc ::session-id session-id)))
+                                                                        id method timeout-ms (when answers inbox))}
+                                                        (catch Throwable t {:thrown t}))]
+                                       (deliver result outcome)
+                                       (let [[old] (swap-vals! state #(if (#{:queued :publishing :sent} %) :replied %))]
+                                         (when (#{:queued :publishing :sent} old)
+                                           (.offer inbox [:reply outcome])))))
+                          _ (deliver exchange-ref exchange)
+                          outcome (try (await-reply! inbox timeout-ms answers)
+                                       (catch Throwable t
+                                         (if (cancellation/preserve-interrupt! t)
+                                           (let [[old] (swap-vals! state #(case %
+                                                                           :queued :cancelled
+                                                                           :sent :cancelled
+                                                                           :publishing :cancel-after-body
+                                                                           %))]
+                                             (if (= :replied old)
+                                               (do (Thread/interrupted) @result)
+                                               (do (when (= :sent old) (cancel!))
+                                                   (when (not= :publishing old) (future-cancel exchange))
+                                                   (throw t))))
+                                           (do (future-cancel exchange) (throw t)))))
+                          msg (:msg outcome)]
 
                       (cond (= ::timeout outcome)
                             (do (future-cancel exchange)
@@ -1251,7 +1317,7 @@
                     (catch Throwable t
                       ;; A refusal of the peer and a slow reply are no lost transport.
                       (when-not (or (contains? #{:mcp/rpc-error :mcp/timeout} (:type (ex-data t)))
-                                    (instance? InterruptedException t))
+                                    (cancellation/cancellation? t))
                         (reset! closed? true))
                       (throw t))
                     (finally (when answers (swap! callers without-caller inbox)))))))
@@ -1344,15 +1410,18 @@
         (promise)
 
         write!
-        (fn [msg]
-          (let [resp (open! {:uri @endpoint
+        (fn write ([msg] (write msg nil))
+          ([msg sent!]
+           (let [resp (open! {:uri @endpoint
                              :method :post
                              :headers {"Content-Type" "application/json"}
                              :body (->json msg)
+                             ::sent! (or sent! (when (= "tools/call" (get msg "method")) (fn [] nil)))
+                             ::no-retry? (contains? #{"tools/call" "notifications/cancelled"} (get msg "method"))
                              :timeout timeout-ms})]
             (if (>= (long (:status resp)) 400)
               (throw (http-error name resp "a message"))
-              (close-body! resp))))
+               (close-body! resp)))))
 
         {:keys [receive! fail-pending!] :as core}
         (duplex name write! closed? spec)

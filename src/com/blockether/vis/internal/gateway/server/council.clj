@@ -82,15 +82,6 @@
 
              (http/error-response status kind (ex-message e)))))))
 
-(defn- task-handler [cancel?]
-  (fn [request]
-    (let [{:keys [sid task-id]} (:path-params request)]
-      (try (http/json-response (state/task-operation! sid task-id cancel?))
-           (catch clojure.lang.ExceptionInfo e
-             (if (= :task-not-found (:error (ex-data e)))
-               (http/error-response 404 :task-not-found (ex-message e))
-               (throw e)))))))
-
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:post "/v1/sessions/:sid/agents"] (agents-handler :spawn)
@@ -100,8 +91,6 @@
    [:post "/v1/sessions/:sid/agents/grant"] (agents-handler :grant)
    [:post "/v1/sessions/:sid/agents/route"] (agents-handler :route)
    [:post "/v1/sessions/:sid/agents/run"] (agents-handler :run)
-   [:get "/v1/sessions/:sid/tasks/:task-id"] (task-handler false)
-   [:post "/v1/sessions/:sid/tasks/:task-id/cancel"] (task-handler true)
    [:get "/v1/sessions/:sid/agents/:child-id/timeline"] (agents-handler :timeline)
    [:get "/v1/sessions/:sid/council"] (council-handler :binding)
    [:post "/v1/sessions/:sid/council/wake"] (council-handler :wake)

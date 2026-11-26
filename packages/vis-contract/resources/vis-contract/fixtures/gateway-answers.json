@@ -1,29 +1,33 @@
 {
   "answers": {
-      "GET /v1/sessions/:sid/tasks/:task-id": {
-        "task": {
-          "id": "t7",
-          "session_id": "owner-session",
-          "kind": "subagent",
-          "name": "t7 council a1",
-          "state": "done",
-          "origin": {
-            "turn": 1,
-            "iteration": 2,
-            "block": "block-3"
-          },
-          "started_at": 1700000000000,
-          "ended_at": 1700000001000,
+    "GET /v1/sessions/:sid/tasks": {
+      "tasks": [
+        {
+          "origin": {},
+          "id": "t1",
+          "started_at": 1795651728425,
+          "detached": false,
+          "name": "t1 server.read",
+          "kind": "mcp",
+          "state": "running",
           "view_ids": [],
-          "detached": true
-        },
-        "record": {
-          "id": "a1",
-          "session_id": "child-session",
-          "status": "completed",
-          "answer": "Done."
+          "session_id": "6a29d65a-9333-4332-a0de-f0980901cc90"
         }
-      },
+      ]
+    },
+    "GET /v1/sessions/:sid/tasks/:task-id": {
+      "task": {
+        "origin": {},
+        "id": "t1",
+        "started_at": 1795651728425,
+        "detached": false,
+        "name": "t1 server.read",
+        "kind": "mcp",
+        "state": "running",
+        "view_ids": [],
+        "session_id": "6a29d65a-9333-4332-a0de-f0980901cc90"
+      }
+    },
     "DELETE /v1/session-groups/:gid": {
       "group_id": "e9428c64-2fef-4f76-a4bc-7a2d893f535e",
       "scattered_session_ids": [
@@ -2062,7 +2066,9 @@
       "archived_at": null
     },
     "POST /v1/sessions/:sid/agents/run": [{"task_id": "t7", "id": "a1", "session_id": "child-session"}],
-    "POST /v1/sessions/:sid/tasks/:task-id/cancel": {"accepted": true},
+    "POST /v1/sessions/:sid/tasks/:task-id/cancel": {
+      "requested": true
+    },
     "POST /v1/sessions/:sid/run": {
       "result": "4",
       "is_error": false
@@ -2321,6 +2327,15 @@
     }
   },
   "errors": {
+    "GET /v1/sessions/:sid/tasks/:task-id": {
+      "status": 404,
+      "body": {
+        "error": {
+          "message": "unknown Task",
+          "type": "task-not-found"
+        }
+      }
+    },
     "DELETE /v1/sessions/:sid/client-extensions": {
       "status": 403,
       "body": {

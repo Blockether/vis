@@ -448,6 +448,11 @@ the client lease, the client takes a new lease.
 Application extensions cannot move to a new lease. A client with an `Agent` that has extensions
 then raises `TransportError` for each request. Create a new client and a new `Agent`.
 
+### Follow background Tasks
+
+To list Tasks, stop one Task, or keep a list current after a reconnect, read
+[Track Tasks](sessions-api.md#track-tasks).
+
 ## Give the agent your functions
 
 Pass an `Extension` to your `Agent` to let it use business rules, query your data, or call your

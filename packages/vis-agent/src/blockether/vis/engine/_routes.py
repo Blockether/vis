@@ -40,6 +40,36 @@ class Routes:
     ```
     """
 
+    def get_session_tasks(
+        self, sid: str, *, timeout: float | None = None
+    ) -> _types.TaskList:
+        """GET /v1/sessions/:sid/tasks — list the running and unread Tasks."""
+        return self._client._request(
+            "GET", "/v1/sessions/:sid/tasks", path={"sid": sid}, timeout=timeout
+        ).json()
+
+    def get_session_task(
+        self, sid: str, task_id: str, *, timeout: float | None = None
+    ) -> _types.TaskStatus:
+        """GET /v1/sessions/:sid/tasks/:task-id — read one Task."""
+        return self._client._request(
+            "GET",
+            "/v1/sessions/:sid/tasks/:task-id",
+            path={"sid": sid, "task-id": task_id},
+            timeout=timeout,
+        ).json()
+
+    def post_session_task_cancel(
+        self, sid: str, task_id: str, *, timeout: float | None = None
+    ) -> _types.TaskCancel:
+        """POST /v1/sessions/:sid/tasks/:task-id/cancel — request a stop."""
+        return self._client._request(
+            "POST",
+            "/v1/sessions/:sid/tasks/:task-id/cancel",
+            path={"sid": sid, "task-id": task_id},
+            timeout=timeout,
+        ).json()
+
     def __init__(self, client: EngineClient):
         self._client = client
 

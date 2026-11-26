@@ -182,7 +182,7 @@
   (some #(when (= child (get % "session_id")) %) (reduce apply-team-event [] (map second @events))))
 
 (defn- request
-  [method path body]
+  [method path body & [query-params]]
   (let [match
         (r/match-by-path (#'server/router "test-token" []) path)
 
@@ -193,6 +193,7 @@
     (handler {:request-method method
               :uri path
               :path-params (:path-params match)
+              :query-params query-params
               :body (when body (ByteArrayInputStream. (.getBytes ^String body "UTF-8")))})))
 
 (defdescribe
@@ -1147,7 +1148,7 @@
           #(#'state/settle-dependents! db leader)
 
           read-task
-          (fn [id] (request :get (str "/v1/sessions/" leader "/tasks/" id) nil))
+          (fn [id] (request :get (str "/v1/sessions/" leader "/tasks/" id) nil {"include_record" "true"}))
 
           env {:db-info db :session-id leader}
           id (:id (#'state/register-agent-attempt! env (agents/info db a3) nil))]
@@ -1222,9 +1223,9 @@
           (expect (= 404 (:status (request :post (str foreign "/cancel") nil))))
           (let [cancel (request :post (str path "/cancel") nil)]
             (expect (= 200 (:status cancel)))
-            (expect (= {"accepted" true} (json/read-json (:body cancel)))))
+            (expect (= {"requested" true} (json/read-json (:body cancel)))))
           (task/await! leader id {:timeout-ms 5000})
-          (let [status (json/read-json (:body (request :get path nil)))]
+          (let [status (json/read-json (:body (request :get path nil {"include_record" "true"})))]
             (expect (document/valid-json? "task" "status" status))
             (expect (= [id leader "cancelled" a1]
                        [(get-in status ["task" "id"]) (get-in status ["task" "session_id"])
@@ -1234,7 +1235,7 @@
               (Thread/sleep 20)
               (recur (dec n))))
           (expect (= ["cancelled" "blocked"] (mapv #(:status (agents/info db %)) [a1 a2])))
-          (expect (= {"accepted" false}
+          (expect (= {"requested" false}
                      (json/read-json (:body (request :post (str path "/cancel") nil)))))))))
   (it "stops the child when the owning worker loses its Task registry"
       (with-team {:statuses ["running" "waiting"]}
