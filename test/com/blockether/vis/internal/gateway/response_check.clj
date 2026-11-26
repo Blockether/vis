@@ -110,8 +110,6 @@
    [:post "/v1/mcp/servers"] "needs a running MCP server process"
    [:post "/v1/mcp/servers/:name/actions/kill"] "needs a running MCP server process"
    [:post "/v1/mcp/servers/:name/actions/start"] "needs a running MCP server process"
-   [:post "/v1/mcp/servers/:name/auth/logout"] "needs a running MCP server process"
-   [:post "/v1/mcp/servers/actions/test"] "needs a running MCP server process"
    [:post "/v1/providers/:provider-id/auth/complete"]
    "needs a provider sign-in flow with an outside service"
    [:post "/v1/providers/:provider-id/logout"]
