@@ -27,7 +27,7 @@ import {
   transcriptColumnClass,
 } from '../components/TranscriptRows';
 import { ArtifactsSheet } from '../components/ArtifactsSheet';
-import { TurnAgents, agentsByTurn, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
+import { TurnAgents, agentsByTurn, childWakeCouncil, currentTurn, dockTeams, leaderLane, storedAgents, storedClocks, storedLeaderLane, useAgentTeam, waitLine, type LeaderLane } from '../components/AgentTeam';
 import { agentPath } from '../components/AgentCrumb';
 import { useSessionActive } from '../lib/session-active';
 import { AgentDock } from '../components/AgentDock';
@@ -214,7 +214,6 @@ import type {
   Toggle,
   GatewayAttachment,
   TranscriptAttachment,
-  RequestKind,
   CouncilRequest,
 } from '../lib/types';
 import {
@@ -5222,16 +5221,11 @@ export function SessionScreen({
     },
     [teams, clocks, docked, onOpenSession],
   );
-  // Traffic between this leader and its own subagents stays out of its transcript:
-  // the team rows show their work, and each child session keeps its own record.
-  const children = useMemo(
-    () => new Set(agents.filter((agent) => agent.parent_id === sid).map((agent) => agent.session_id)),
+  // A wake that one of this leader's subagents sent shows as one line that names the agent:
+  // the team rows show their work, and the line tells why the turn started.
+  const shownCouncil = useCallback(
+    (council: CouncilRequest | undefined) => childWakeCouncil(council, agents, sid),
     [agents, sid],
-  );
-  const isChildWake = useCallback(
-    (kind: RequestKind | undefined, council: CouncilRequest | undefined) =>
-      kind === 'council' && council?.author_session_id != null && children.has(council.author_session_id),
-    [children],
   );
   // Activity is transcript-native, like in the TUI. Resolve its live picture before
   // building either row owner so optimistic and persisted handoff paints one slot.
@@ -5530,7 +5524,7 @@ export function SessionScreen({
           key={turn.turn_id}
           turn={turn}
           isFirst={index === 0}
-          hidesRequest={isChildWake(turn.request_kind, turn.council)}
+          council={shownCouncil(turn.council)}
           agentName={session?.agent_name}
           onFork={turn.turn_id ? () => void forkThrough(turn.turn_id) : undefined}
           isForking={forkingTurnId === turn.turn_id}
@@ -5547,7 +5541,7 @@ export function SessionScreen({
       )),
     [
       teamFor,
-      isChildWake,
+      shownCouncil,
       visibleTurns,
       turnsSettled,
       hasRunningTurn,
@@ -5604,13 +5598,12 @@ export function SessionScreen({
         data-live="true"
         data-turn-id={runningTurn.id}
       >
-        {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) &&
-          !isChildWake(runningTurn.requestKind, runningTurn.council) && (
+        {(runningTurn.request || (liveAttachments?.length ?? 0) > 0) && (
           <UserMessage
             position={runningTurn.position}
             createdAt={runningTurn.createdAt ?? runningTurn.startedAt}
             requestKind={runningTurn.requestKind}
-            council={runningTurn.council}
+            council={shownCouncil(runningTurn.council)}
             attachments={liveAttachments}
             client={client}
             sid={sid}
@@ -5647,7 +5640,7 @@ export function SessionScreen({
     );
   }, [
     teamFor,
-    isChildWake,
+    shownCouncil,
     runningTurn,
     turns.length,
     openedAt,
@@ -5673,13 +5666,12 @@ export function SessionScreen({
         data-settling="true"
         data-turn-id={settlingTurn.id}
       >
-        {(settlingTurn.request || (attachments?.length ?? 0) > 0) &&
-          !isChildWake(settlingTurn.requestKind, settlingTurn.council) && (
+        {(settlingTurn.request || (attachments?.length ?? 0) > 0) && (
           <UserMessage
             position={settlingTurn.position}
             createdAt={settlingTurn.createdAt ?? settlingTurn.startedAt}
             requestKind={settlingTurn.requestKind}
-            council={settlingTurn.council}
+            council={shownCouncil(settlingTurn.council)}
             attachments={attachments}
             client={client}
             sid={sid}
@@ -5702,7 +5694,7 @@ export function SessionScreen({
     );
   }, [
     teamFor,
-    isChildWake,
+    shownCouncil,
     settlingShown,
     settlingTurn,
     fetchedRunningTurnAttachments,

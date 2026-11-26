@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 import { AssistantMessage, UserMessage } from './ChatContent';
-import type { TranscriptTurn } from '../lib/types';
+import type { CouncilRequest, TranscriptTurn } from '../lib/types';
 
 /**
  * The scroller of a transcript. The session screen and the HTML export share it, so an exported
@@ -35,30 +35,31 @@ export const OUTLINE_RAIL_CLASS =
   'pointer-events-none absolute inset-0 z-10 mx-auto flex max-w-3xl items-center justify-end pr-[env(safe-area-inset-right)] mouse:max-w-6xl';
 
 /**
- * One persisted turn of a transcript: the request, then the answer. `hidesRequest` drops the
- * request of a wake that a subagent of this session sent. The HTML export draws the same row.
+ * One persisted turn of a transcript: the request, then the answer. `council` is the Council
+ * entry that the request shows, which [[childWakeCouncil]] cuts to one line for a wake that a
+ * subagent of this session sent. The HTML export draws the same row.
  */
 export function StoredTurnRow({
   turn,
   isFirst,
-  hidesRequest = false,
+  council = turn.council,
   ...answer
 }: Omit<ComponentProps<typeof AssistantMessage>, 'turn'> & {
   turn: TranscriptTurn;
   isFirst: boolean;
-  hidesRequest?: boolean;
+  council?: CouncilRequest;
 }) {
   const request = turn.request ?? '';
   // A turn skips its own paint, in `AssistantMessage` (`useMeasuredPaintSkip`), never from
   // this wrapper: the size a skip stands in for has to be the one that turn MEASURED.
   return (
     <div className={isFirst ? '' : 'mt-10'} data-turn-id={turn.turn_id}>
-      {(request || (turn.attachments?.length ?? 0) > 0) && !hidesRequest && (
+      {(request || (turn.attachments?.length ?? 0) > 0) && (
         <UserMessage
           position={turn.position}
           createdAt={turn.created_at}
           requestKind={turn.request_kind}
-          council={turn.council}
+          council={council}
           attachments={turn.attachments}
           client={answer.client}
           sid={answer.sid}

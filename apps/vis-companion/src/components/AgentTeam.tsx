@@ -11,7 +11,7 @@ import {
 } from 'react';
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import { mergeAgents, type GatewayClient } from '../lib/gateway';
-import type { Subagent, TeamClock, TranscriptIteration, TranscriptTurn } from '../lib/types';
+import type { CouncilRequest, Subagent, TeamClock, TranscriptIteration, TranscriptTurn } from '../lib/types';
 import { councilLine, councilMarkdown } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
@@ -78,6 +78,37 @@ export function agentLabel(agent: Subagent, agents: readonly Subagent[]): string
   if (agent.title?.trim()) return agent.title.trim();
   const team = spawnOrder(agents.filter((other) => other.team_id === agent.team_id));
   return `#${team.findIndex((other) => other.session_id === agent.session_id) + 1}`;
+}
+
+// The characters of a child's Council message that its one transcript line keeps.
+const NOTE_WIDTH = 120;
+
+const notes = new WeakMap<CouncilRequest, { content: string; note: CouncilRequest }>();
+
+/**
+ * The Council entry that the transcript of a leader shows for the request of a turn. An entry
+ * that an agent of the leader wrote shows as one line that names the agent, such as
+ * `IMPLEMENT | Fix parser: Fix round in progress.`: the team rows show the full message, and the
+ * line tells why the turn started. Mirrors the TUI. An unchanged line keeps its object, so a
+ * memoized row does not paint again.
+ */
+export function childWakeCouncil(
+  council: CouncilRequest | undefined,
+  agents: readonly Subagent[],
+  leader: string | undefined,
+): CouncilRequest | undefined {
+  const author = council?.author_session_id;
+  const agent = author == null ? undefined : agents.find((a) => a.session_id === author && a.parent_id === leader);
+  if (!council || !agent) return council;
+  const line = (council.content ?? '').trim().split('\n')[0].replace(/\s+/g, ' ').trim();
+  const short = line.length > NOTE_WIDTH ? `${line.slice(0, NOTE_WIDTH - 1)}…` : line;
+  const role = agent.role?.trim() ? `${agent.role.trim().toUpperCase()} | ` : '';
+  const content = `${role}${agentLabel(agent, agents)}: ${short}`;
+  const cached = notes.get(council);
+  if (cached?.content === content) return cached.note;
+  const note = { ...council, content };
+  notes.set(council, { content, note });
+  return note;
 }
 
 /**
