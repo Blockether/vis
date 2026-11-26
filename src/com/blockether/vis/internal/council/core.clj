@@ -228,7 +228,9 @@
                       :id ::wake-skipped
                       :data {:session-id sid
                              :entry-id (:entry_id entry)
-                             :error-class (.getName (class e))}})))))
+                             :error-class (.getName (class e))
+                             :error (:error (ex-data e))
+                             :message (ex-message e)}})))))
 
 (defn publish!
   "Publish atomically, ignoring continuation titles before validation and idempotency checks.

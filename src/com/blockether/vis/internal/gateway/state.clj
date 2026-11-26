@@ -6954,16 +6954,17 @@
   (let [child (agents/info db sid)
         ended? (agents/attempt-ended? child)
         owner (:parent_id child)
-        env {:db-info db :router (or (:router (live-env owner)) (loop-router/get-router)) :session-id owner}]
+        ;; Only an ended attempt needs the router: a root peer has no owner to read it from.
+        env (delay {:db-info db :router (or (:router (live-env owner)) (loop-router/get-router)) :session-id owner})]
     (when (and (not= (str owner) (str author_session_id)) (= "cancelled" (:status child)))
       (agents/fail! :invalid-recipient "Start another task for this subagent with council.run"))
     (when ended?
-      (agents/settle-task! env child))
+      (agents/settle-task! @env child))
     (let [restore! (or (agents/queue-turn! db sid)
                        (agents/fail! :invalid-recipient "Subagent cannot take a follow-up turn"))
           handle (try
                    (when (and ended? (= (str owner) (str author_session_id)))
-                     (register-agent-attempt! env child nil))
+                     (register-agent-attempt! @env child nil))
                    (catch Throwable t (restore!) (throw t)))]
       (fn []
         (when handle (task/discard! owner (:id handle)))
