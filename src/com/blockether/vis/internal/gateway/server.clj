@@ -2172,8 +2172,7 @@
    half of the machine sees a free port and starts a SECOND gateway on it: split
    brain rather than a visible error. The mirror shares the same `Server`, so it
    is one handler, one thread pool, one session state, and it widens reach by
-   exactly loopback — auth is untouched. `0.0.0.0` already covers loopback and
-   must not get a mirror (the bind would collide with itself)."
+   exactly loopback — auth is untouched."
   [^long port]
   (fn [^Server server]
     (let [^ServerConnector primary
@@ -2193,6 +2192,13 @@
       (.setHost mirror DEFAULT_HOST)
       (.setPort mirror (int port))
       (.addConnector server mirror))))
+
+(defn- loopback-mirror?
+  "True when a bind on `host` needs the 127.0.0.1 mirror connector. Loopback
+   is served already, and a wildcard bind (`0.0.0.0`, `::`) answers on loopback
+   too, so its mirror would collide with the primary bind."
+  [host]
+  (not (or (= host DEFAULT_HOST) (pairing/wildcard-bind? host))))
 
 (def ^:private GZIP_MIN_BYTES
   "Response floor below which gzip is not worth its own framing (1 KiB). Jetty's
@@ -2362,7 +2368,7 @@
          ;; Keep 127.0.0.1 served even when the primary bind is a concrete remote
          ;; IP, so a `--pair` daemon is still the one gateway the local TUI finds.
          mirror-loopback?
-         (not (or loopback? (= host "0.0.0.0")))
+         (loopback-mirror? host)
 
          ;; Loopback default: NO token (single local user; the dance is
          ;; friction). Non-loopback: token MANDATORY, not overridable —

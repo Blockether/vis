@@ -4260,6 +4260,28 @@
       (expect (nil? (non-loopback-ipv4)) "no non-loopback interface here; nothing to mirror"))))
 
 (defdescribe
+  wildcard-bind-gets-no-loopback-mirror
+  (it "starts on `::`, which answers on loopback already, without a colliding 127.0.0.1 connector"
+      (let [loopback-mirror? (rv 'loopback-mirror?)]
+        (expect (not (loopback-mirror? "::")))
+        (expect (not (loopback-mirror? "0.0.0.0")))
+        (expect (not (loopback-mirror? "127.0.0.1")))
+        (expect (true? (loopback-mirror? "192.168.0.5")))
+        (let [server (jetty/run-jetty (constantly {:status 200 :headers {} :body "ok"})
+                                      {:port 0
+                                       :host "::"
+                                       :join? false
+                                       :configurator
+                                       (fn [^org.eclipse.jetty.server.Server server]
+                                         (.open ^org.eclipse.jetty.server.ServerConnector
+                                                (first (.getConnectors server)))
+                                         (((rv 'gateway-configurator)
+                                           (when (loopback-mirror? "::") (bound-port server)))
+                                          server))})]
+          (try (expect (= "ok" (slurp (str "http://127.0.0.1:" (bound-port server) "/"))))
+               (finally (.stop ^org.eclipse.jetty.server.Server server)))))))
+
+(defdescribe
   the-adapters-own-jvm-shutdown-hook-stays-off
   (it
     "`ring.adapter.jetty9` builds its Server with `stopAtShutdown` ON, which registers
