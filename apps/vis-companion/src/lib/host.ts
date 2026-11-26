@@ -57,5 +57,26 @@ export function shellHost(): ShellHost {
 export function stampShellHost(root: HTMLElement = document.documentElement): ShellHost {
   const host = shellHost();
   if (root.dataset.host !== host) root.dataset.host = host;
+  if (host === 'desktop' && hasOverlayTitleBar()) followTitleBar(root);
   return host;
+}
+
+type PakeHost = Window & { pakeConfig?: { hide_title_bar?: boolean } };
+
+/** Is the macOS desktop window without its title bar, with the traffic lights over the page? */
+function hasOverlayTitleBar(): boolean {
+  return (window as PakeHost).pakeConfig?.hide_title_bar === true && /mac/i.test(navigator.platform);
+}
+
+/**
+ * Stamp `data-titlebar` for `titlebar:` in `index.css`: the app bar makes room for the
+ * traffic lights. A full-screen window has no traffic lights, so it has no such room.
+ */
+function followTitleBar(root: HTMLElement): void {
+  const stamp = () => {
+    const isFull = window.innerWidth === screen.width && window.innerHeight === screen.height;
+    root.dataset.titlebar = isFull ? 'fullscreen' : 'overlay';
+  };
+  stamp();
+  window.addEventListener('resize', stamp);
 }

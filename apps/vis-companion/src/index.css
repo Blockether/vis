@@ -79,6 +79,22 @@
    viewport edge to edge, with square corners and no frame (#381). */
 @custom-variant desktop (&:where([data-host='desktop'], [data-host='desktop'] *));
 @custom-variant web (&:where([data-host='web'], [data-host='web'] *));
+/* The macOS desktop window has no title bar: the traffic lights sit over the app bar's
+   left end, and the app bar drags the window (`lib/host.ts`). */
+@custom-variant titlebar (&:where([data-titlebar='overlay'], [data-titlebar='overlay'] *));
+/* The app bar is the drag area, so Pake's own strip over its buttons goes away. A screen
+   without the app bar (a Zen session, a narrow window's session) gets a strip of its own
+   above the shell, so its controls stay clear of the traffic lights. */
+:root[data-titlebar]:has([data-app-header]) #pake-top-dom {
+  display: none;
+}
+:root[data-titlebar='overlay']:not(:has([data-app-header])) #pake-top-dom {
+  height: 3rem;
+}
+:root[data-titlebar='overlay']:not(:has([data-app-header])) [data-viewport-shell] {
+  top: 3rem;
+  height: auto;
+}
 :root[data-host='web'],
 :root[data-host='web'] body,
 :root[data-host='web'] #root,

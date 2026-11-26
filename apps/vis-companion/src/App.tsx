@@ -1832,7 +1832,10 @@ export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
     </>
   );
   return (
+    // On the macOS desktop the bar is also the title bar: its empty parts drag the window.
     <header
+      data-app-header
+      data-tauri-drag-region
       className={`relative z-30 shrink-0 border-b border-dialog-edge bg-panel-2 pt-[env(safe-area-inset-top)] ${nativeIos ? 'sm:pt-0' : ''}`}
     >
       {/* SEARCH IS A DIALOG, AND THE BAR IS ITS DOOR.
@@ -1843,7 +1846,10 @@ export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
           under it, so a search took over the list the reader was working from. Now
           the glass beside the cog opens the search in its own dialog
           (`SessionSearchDialog`), and the list behind it stays as the reader left it. */}
-      <div className="flex w-full items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]">
+      <div
+        data-tauri-drag-region
+        className="flex w-full items-center gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] titlebar:pl-24"
+      >
         {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
             pupil, a highlight, a smile and seven rays share the box, so barely a
             third of it is ink and it reads smaller than it measures; under 24px a
@@ -1868,14 +1874,19 @@ export function Header({ onSearch, onAppSettings, globalApps }: HeaderProps) {
             {mark}
           </a>
         ) : (
-          <div className="flex h-12 min-w-0 items-center gap-2.5" aria-label={name} data-wordmark>
+          <div
+            className="flex h-12 min-w-0 items-center gap-2.5 titlebar:*:pointer-events-none"
+            aria-label={name}
+            data-wordmark
+            data-tauri-drag-region
+          >
             {mark}
           </div>
         )}
         {/* Global destinations share the same labelled icon controls. The negative margin
             takes back the empty face beside the last 16px glyph, so it ends on the bar's
             inset exactly as the mark starts on it. */}
-        <div className="-mr-2 ml-auto flex h-12 items-center gap-2 mouse:-mr-1.5">
+        <div data-tauri-drag-region className="-mr-2 ml-auto flex h-12 items-center gap-2 mouse:-mr-1.5">
           {/* The icon links of a white label. A phone has no room for them beside the mark. */}
           {brand.links && brand.links.length > 0 && (
             <div className="hidden items-center gap-2 sm:flex">

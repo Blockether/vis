@@ -31,9 +31,10 @@
  *
  * Pake needs Node >= 20 and a Rust toolchain (>= 1.85); on Linux the webkit2gtk-4.1
  * dev packages the workflow installs. Windows needs the MSVC C++ build tools and
- * WebView2. Invoke this script through npm on Windows. The native window keeps
- * its title bar on purpose: with `--hide-title-bar` the macOS traffic lights sit
- * on the app bar's logo. Pake's `--app-version` is what the OS shows as the app version.
+ * WebView2. Invoke this script through npm on Windows. On macOS the app bar is the
+ * title bar: `--hide-title-bar` lays the traffic lights over the page, the host moves
+ * them to the centre of the bar's row (TRAFFIC_LIGHTS), and the bar starts after them
+ * (`titlebar:` in `index.css`). Pake's `--app-version` is what the OS shows as the app version.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -91,6 +92,8 @@ export function pakeArgs({ distDir, version, target, icon = ICON, dev = false, l
     // entitlements.plist for the microphone and the camera; other hosts ignore them.
     '--microphone',
     '--camera',
+    // Only macOS has the overlay title bar; Pake ignores the flag elsewhere with a warning.
+    ...(target.ext === 'dmg' ? ['--hide-title-bar'] : []),
     '--targets',
     target.targets,
     ...(target.targets === 'universal' ? ['--multi-arch'] : []),
@@ -141,6 +144,23 @@ export const WINDOW_SETUP =
 
 /** Reloads a window after WebKit ends its page process; see `native/desktop/web_content.rs`. */
 export const WEB_CONTENT_RELOAD = 'web_content::reload_after_web_content_exit(&window);';
+
+/** The Pake line that sets the macOS title bar style of the main window. */
+export const TITLE_BAR_STYLE = 'window_builder = window_builder.title_bar_style(title_bar_style);';
+
+/**
+ * The overlay title bar keeps the window title out of the app bar, and puts the traffic
+ * lights on the vertical centre of the bar's 48px row. macOS measures `y` to the buttons'
+ * container, not to their top edge: 26 puts their centre at 24px.
+ */
+export const TRAFFIC_LIGHTS = `if window_config.hide_title_bar {
+            window_builder = window_builder
+                .hidden_title(true)
+                .traffic_light_position(tauri::LogicalPosition::new(18.0, 26.0));
+        }`;
+
+/** The double click on the app bar zooms the window, as on a native title bar. */
+export const ZOOM_PERMISSION = 'core:window:allow-internal-toggle-maximize';
 
 const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -212,6 +232,14 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
   lib = lib.replace(module, `${module}\nmod web_content;`);
   lib = lib.replace(WINDOW_SETUP, `${WINDOW_SETUP}\n            ${WEB_CONTENT_RELOAD}`);
   writeFileSync(libPath, lib);
+  const windowPath = join(sourceDir, 'app', 'window.rs');
+  let windowSource = readFileSync(windowPath, 'utf8');
+  if (!windowSource.includes(TITLE_BAR_STYLE)) throw new Error('Pake title bar style changed');
+  // A kept tools directory holds the block of an earlier build, maybe with other values.
+  windowSource = windowSource
+    .replace(new RegExp(`\\n *if window_config\\.hide_title_bar \\{\\n[^}]*\\.traffic_light_position\\([^}]*\\}`), '')
+    .replace(TITLE_BAR_STYLE, `${TITLE_BAR_STYLE}\n        ${TRAFFIC_LIGHTS}`);
+  writeFileSync(windowPath, windowSource);
   const cargoPath = join(pakeDir, 'src-tauri', 'Cargo.toml');
   const cargo = readFileSync(cargoPath, 'utf8');
   if (!/^rfd = /m.test(cargo)) {
@@ -223,11 +251,14 @@ export function prepareDesktopHost({ npmCli, toolsDir, env, windowsSigning = fal
   // tools directory serves later release builds, so each build sets the list again.
   const capabilityPath = join(pakeDir, 'src-tauri', 'capabilities', 'default.json');
   const capability = JSON.parse(readFileSync(capabilityPath, 'utf8'));
-  if (!Array.isArray(capability.remote?.urls)) throw new Error('Pake capability changed');
+  if (!Array.isArray(capability.remote?.urls) || !Array.isArray(capability.permissions)) {
+    throw new Error('Pake capability changed');
+  }
   capability.remote.urls = [
     ...capability.remote.urls.filter((url) => url !== LIVE_URL),
     ...(live ? [LIVE_URL] : []),
   ];
+  if (!capability.permissions.includes(ZOOM_PERMISSION)) capability.permissions.push(ZOOM_PERMISSION);
   writeFileSync(capabilityPath, `${JSON.stringify(capability, null, 2)}\n`);
   for (const name of ['artifact.rs', 'engine.rs', 'proxy_browser.rs', 'web_content.rs']) {
     writeFileSync(

@@ -14,6 +14,8 @@ import {
   PAKE_VERSION,
   PROXY_BROWSER_COMMANDS,
   RFD_DEPENDENCY,
+  TITLE_BAR_STYLE,
+  TRAFFIC_LIGHTS,
   WEB_CONTENT_RELOAD,
   WINDOW_SETUP,
 } from './desktop-package.mjs';
@@ -33,6 +35,9 @@ vi.mock('node:fs', async (importOriginal) => {
       if (String(args[0]).endsWith('lib.rs')) {
         return 'mod util;\nfn run() { builder.invoke_handler(tauri::generate_handler![download_file,]); }\nfn setup() {\n            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;\n}\n';
       }
+      if (String(args[0]).endsWith('window.rs')) {
+        return `    {\n        window_builder = window_builder.title_bar_style(title_bar_style);\n    }\n`;
+      }
       if (String(args[0]).endsWith('Cargo.toml')) {
         return '[package]\n\n[dependencies]\nserde = "1"\n';
       }
@@ -42,7 +47,7 @@ vi.mock('node:fs', async (importOriginal) => {
         });
       }
       if (String(args[0]).endsWith('default.json')) {
-        return JSON.stringify({ remote: { urls: ['https://*.*'] } });
+        return JSON.stringify({ remote: { urls: ['https://*.*'] }, permissions: [] });
       }
       return original.readFileSync(...args);
     }),
@@ -84,7 +89,7 @@ describe('desktop package', () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('packages the local bundle, keeps the native title bar and builds macOS universal', () => {
+  it('packages the local bundle, lays the app bar under the macOS title bar and builds macOS universal', () => {
     const args = pakeArgs({
       distDir: '/tmp/dist',
       version: '0.1.30',
@@ -98,7 +103,7 @@ describe('desktop package', () => {
     // the microphone as "The request is not allowed by the user agent" and never prompts.
     expect(args).toContain('--microphone');
     expect(args).toContain('--camera');
-    expect(args).not.toContain('--hide-title-bar');
+    expect(args).toContain('--hide-title-bar');
     expect(args.slice(args.indexOf('--app-version'), args.indexOf('--app-version') + 2)).toEqual([
       '--app-version',
       '0.1.30',
@@ -110,6 +115,7 @@ describe('desktop package', () => {
       icon: '/i.png',
     });
     expect(linux).not.toContain('--multi-arch');
+    expect(linux).not.toContain('--hide-title-bar');
     expect(linux.slice(linux.indexOf('--targets'), linux.indexOf('--targets') + 2)).toEqual([
       '--targets',
       'deb',
@@ -177,6 +183,31 @@ describe('desktop package', () => {
       expect(writeFileSync.mock.calls.some(([path]) => String(path).endsWith('Cargo.toml'))).toBe(
         false,
       );
+    } finally {
+      readFileSync.mockImplementation(fresh);
+    }
+  });
+
+  // Without the hidden title, macOS draws the window name over the app bar; without the
+  // position, the traffic lights sit above the logo row. A second block fails the Rust build.
+  it('hides the window title and centres the traffic lights on the app bar once', () => {
+    const fresh = readFileSync.getMockImplementation();
+    readFileSync.mockImplementation((path, ...rest) => {
+      if (String(path).endsWith('window.rs')) {
+        const earlier = TRAFFIC_LIGHTS.replace('26.0', '9.0');
+        return `    {\n        ${TITLE_BAR_STYLE}\n        ${earlier}\n    }\n`;
+      }
+      return fresh(path, ...rest);
+    });
+    try {
+      vi.clearAllMocks();
+      prepareDesktopHost({ npmCli: '/npm-cli.js', toolsDir: '/tools', env: process.env });
+      const [, source] = writeFileSync.mock.calls.find(([path]) => String(path).endsWith('window.rs'));
+      expect(source).toBe(`    {\n        ${TITLE_BAR_STYLE}\n        ${TRAFFIC_LIGHTS}\n    }\n`);
+      const [, capability] = writeFileSync.mock.calls.find(([path]) =>
+        String(path).endsWith('default.json'),
+      );
+      expect(JSON.parse(capability).permissions).toContain('core:window:allow-internal-toggle-maximize');
     } finally {
       readFileSync.mockImplementation(fresh);
     }
@@ -252,7 +283,7 @@ describe('desktop package', () => {
     const read = readFileSync.getMockImplementation();
     readFileSync.mockImplementation((...args) =>
       String(args[0]).endsWith('default.json')
-        ? JSON.stringify({ remote: { urls: ['https://*.*', LIVE_URL] } })
+        ? JSON.stringify({ remote: { urls: ['https://*.*', LIVE_URL] }, permissions: [] })
         : read(...args),
     );
     try {
