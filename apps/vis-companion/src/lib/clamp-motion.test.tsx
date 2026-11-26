@@ -8,10 +8,13 @@ import { CLAMP_CLASS, CLAMP_MOTION_MS, disclosureAnchor, useClampMotion } from '
 // A clamped body is 80 px tall and an open one is 200 px.
 function Body() {
   const ref = useRef<HTMLDivElement>(null);
-  const { isOpen, clampClass, toggle } = useClampMotion(ref);
+  const content = useRef<HTMLDivElement>(null);
+  const { isOpen, isClamped, toggle } = useClampMotion(ref, content);
   return (
     <>
-      <div ref={ref} data-body className={clampClass} />
+      <div ref={ref} data-body style={isClamped ? { maxHeight: 80 } : undefined}>
+        <div ref={content} />
+      </div>
       <button type="button" onClick={toggle}>
         {isOpen ? 'Show less' : 'Show more'}
       </button>
@@ -32,7 +35,7 @@ describe('useClampMotion', () => {
     finish = [];
     reduced = false;
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      return rect(0, this.classList.contains(CLAMP_CLASS) ? 80 : 200);
+      return rect(0, this.classList.contains(CLAMP_CLASS) || this.style.maxHeight ? 80 : 200);
     });
     HTMLElement.prototype.animate = vi.fn(function (frames: Keyframe[]) {
       played.push(frames);
@@ -57,7 +60,7 @@ describe('useClampMotion', () => {
     const view = render(<Body />);
     const body = view.container.querySelector('[data-body]')!;
     fireEvent.click(view.getByRole('button', { name: 'Show more' }));
-    expect(body).not.toHaveClass(CLAMP_CLASS);
+    expect(body).not.toHaveStyle({ maxHeight: '80px' });
     expect(played).toEqual([
       [
         { height: '80px', overflow: 'hidden' },
@@ -75,9 +78,9 @@ describe('useClampMotion', () => {
       { height: '200px', overflow: 'hidden' },
       { height: '80px', overflow: 'hidden' },
     ]);
-    expect(body).not.toHaveClass(CLAMP_CLASS);
+    expect(body).not.toHaveStyle({ maxHeight: '80px' });
     act(() => finish[1]());
-    expect(body).toHaveClass(CLAMP_CLASS);
+    expect(body).toHaveStyle({ maxHeight: '80px' });
   });
 
   it('ignores the end of a slide that a second press replaced', () => {
@@ -87,7 +90,7 @@ describe('useClampMotion', () => {
     fireEvent.click(view.getByRole('button', { name: 'Show less' }));
     fireEvent.click(view.getByRole('button', { name: 'Show more' }));
     act(() => finish[1]());
-    expect(body).not.toHaveClass(CLAMP_CLASS);
+    expect(body).not.toHaveStyle({ maxHeight: '80px' });
   });
 
   it('clamps at once for a reader who wants reduced motion', () => {
@@ -97,7 +100,7 @@ describe('useClampMotion', () => {
     fireEvent.click(view.getByRole('button', { name: 'Show more' }));
     fireEvent.click(view.getByRole('button', { name: 'Show less' }));
     expect(played).toEqual([]);
-    expect(body).toHaveClass(CLAMP_CLASS);
+    expect(body).toHaveStyle({ maxHeight: '80px' });
   });
 });
 

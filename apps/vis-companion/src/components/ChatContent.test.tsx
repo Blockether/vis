@@ -386,8 +386,8 @@ describe('request speaker labels', () => {
     const request = 'Actual request\nLine two\nLine three\nLine four\nLast line';
     try {
       const view = render(<UserMessage requestKind="council">{request}</UserMessage>);
-      const body = view.container.querySelector('.line-clamp-4')!;
       const button = view.getByRole('button', { name: 'Show full message' });
+      const body = document.getElementById(button.getAttribute('aria-controls')!)!;
       expect([...body.querySelectorAll('p')].map((line) => line.textContent)).toEqual(
         request.split('\n'),
       );

@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 /** How long a body takes to open or close, in milliseconds. */
 export const CLAMP_MOTION_MS = 200;
 
-/** The class that cuts a closed body to its first four lines. */
+/** The class that measures the first four lines on a hidden copy. */
 export const CLAMP_CLASS = 'line-clamp-4';
 
 // The ease of the transcript's own entry motion (`--animate-transcript-*` in index.css).
@@ -24,9 +24,12 @@ function wantsMotion(view: Window | null): boolean {
  * clamp: a clamp at the start would cut the text above empty paper. A second press
  * during a slide continues from the height on screen. Reduced motion swaps at once.
  */
-export function useClampMotion(body: RefObject<HTMLElement | null>): {
+export function useClampMotion(
+  body: RefObject<HTMLElement | null>,
+  content: RefObject<HTMLElement | null>,
+): {
   isOpen: boolean;
-  clampClass: string;
+  isClamped: boolean;
   toggle: () => void;
 } {
   const [isOpen, setOpen] = useState(false);
@@ -36,13 +39,14 @@ export function useClampMotion(body: RefObject<HTMLElement | null>): {
 
   useLayoutEffect(() => {
     const element = body.current;
+    const inner = content.current;
     const start = from.current;
     from.current = null;
-    if (!element || start === null) return;
+    if (!element || !inner || start === null) return;
     motion.current?.cancel();
     motion.current = null;
     // A closing body has no clamp yet. Measure the clamped height on a copy.
-    const end = isOpen ? element.getBoundingClientRect().height : measureClamped(element).height;
+    const end = isOpen ? element.getBoundingClientRect().height : measureClamped(inner).height;
     if (
       Math.abs(end - start) < 1 ||
       typeof element.animate !== 'function' ||
@@ -66,13 +70,13 @@ export function useClampMotion(body: RefObject<HTMLElement | null>): {
       if (!isOpen) flushSync(() => setClamped(true));
       animation.cancel();
     });
-  }, [body, isOpen]);
+  }, [body, content, isOpen]);
 
   useLayoutEffect(() => () => motion.current?.cancel(), []);
 
   return {
     isOpen,
-    clampClass: isClamped ? CLAMP_CLASS : '',
+    isClamped,
     toggle: () => {
       const element = body.current;
       if (!element) return;
@@ -97,7 +101,6 @@ export function measureClamped(element: HTMLElement): { height: number; overflow
     height: box.getBoundingClientRect().height,
     overflows: box.scrollHeight > box.clientHeight + 1,
   });
-  if (element.classList.contains(CLAMP_CLASS)) return read(element);
   const copy = element.cloneNode(true) as HTMLElement;
   copy.removeAttribute('id');
   copy.setAttribute('aria-hidden', 'true');

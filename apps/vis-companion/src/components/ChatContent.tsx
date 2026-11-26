@@ -5218,38 +5218,41 @@ function UserFileAttachment({
 /** Council requests and wakes are agent Markdown; each authored line is its own block. */
 function CouncilRequestBody({ children }: { children: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bodyId = useId();
-  const { isOpen: expanded, clampClass, toggle } = useClampMotion(bodyRef);
-  const [collapsible, setCollapsible] = useState(false);
+  const { isOpen: expanded, isClamped, toggle } = useClampMotion(bodyRef, contentRef);
+  const [preview, setPreview] = useState<{ height: number; overflows: boolean }>();
 
   useLayoutEffect(() => {
-    const body = bodyRef.current;
-    if (!body) return;
+    const content = contentRef.current;
+    if (!content) return;
     const measure = () => {
-      // A sliding body has the slide's height, not its own.
-      if (isPaintSkipped(body) || body.getAnimations?.().length) return;
-      // Ask the clamp itself whether it cuts text. Each authored line is a block with a
-      // gap, so four short lines were taller than four line heights and got a toggle.
-      const { overflows } = measureClamped(body);
-      return () => setCollapsible(overflows);
+      if (isPaintSkipped(content)) return;
+      // Measure the line cutoff, including the gaps between blocks, on a hidden copy.
+      // Clip the visible body at that height so the browser cannot paint an ellipsis.
+      const next = measureClamped(content);
+      return () => setPreview((current) =>
+        current?.height === next.height && current.overflows === next.overflows ? current : next,
+      );
     };
     measure()?.();
-    return observeBox(body, measure);
+    return observeBox(content, measure);
   }, [children]);
 
   return (
     <>
-      {/* The edge blocks lose their outer margins. A clamped or sliding body holds them
-          inside its box, an open one lets them collapse out; the slide ended a margin short
-          and the toggle jumped on its last frame. */}
       <div
         id={bodyId}
         ref={bodyRef}
-        className={`whitespace-normal [&>:first-child]:mt-0 [&>:last-child]:mb-0 ${clampClass}`}
+        className="flow-root"
+        style={isClamped && preview?.overflows ? { maxHeight: preview.height, overflow: 'hidden' } : undefined}
       >
-        {children && <Markdown hardBreaks>{councilMarkdown(children)}</Markdown>}
+        {/* Keep the edge blocks flush to the body during the slide. */}
+        <div ref={contentRef} className="whitespace-normal [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+          {children && <Markdown hardBreaks>{councilMarkdown(children)}</Markdown>}
+        </div>
       </div>
-      {collapsible && (
+      {preview?.overflows && (
         <Disclosure
           isOpen={expanded}
           aria-controls={bodyId}
