@@ -866,6 +866,26 @@ export const SessionRow = memo(function SessionRow({
                   <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums mouse:@3xl:justify-self-end">
                     {turns} {turns === 1 ? 'turn' : 'turns'}
                   </span>
+                  {/* The location rides the meta line in italics. Each name stops at 12
+                characters with an ellipsis, and its title gives the full name. In the wide
+                mouse layout this line dissolves, so the location takes its own row. */}
+                  {location && (location.project !== undefined || location.group !== undefined) && (
+                    <>
+                      <span className="mouse:@3xl:hidden" aria-hidden="true">
+                        ·
+                      </span>
+                      <span data-session-location className="flex min-w-0 items-center gap-x-2 italic mouse:@3xl:col-span-full mouse:@3xl:row-start-2">
+                        {location.project !== undefined && (
+                          <span className="flex min-w-0 gap-x-1"><strong className="shrink-0 font-bold">Project:</strong> <span className="max-w-[12ch] truncate" title={location.project}>{location.project}</span></span>
+                        )}
+                        {/* Flex drops this space from the layout; text and screen readers keep it. */}
+                        {location.project !== undefined && location.group !== undefined && ' '}
+                        {location.group !== undefined && (
+                          <span className="flex min-w-0 gap-x-1"><strong className="shrink-0 font-bold">Group:</strong> <span className="max-w-[12ch] truncate" title={location.group}>{location.group}</span></span>
+                        )}
+                      </span>
+                    </>
+                  )}
                 </span>
                 <span className="col-start-3 row-start-1 inline-flex shrink-0 items-center gap-2 justify-self-end mouse:@3xl:col-start-auto mouse:@3xl:row-start-auto mouse:@3xl:justify-self-start">
                   <span
@@ -909,18 +929,6 @@ export const SessionRow = memo(function SessionRow({
                 >
                   {timeLabel(timestamp)}
                 </span>
-                {location && (location.project !== undefined || location.group !== undefined) && (
-                  <span data-session-location className="col-span-full flex min-w-0 flex-wrap gap-x-4 gap-y-1 font-mono text-meta text-dialog-hint">
-                    {location.project !== undefined && (
-                      <span className="min-w-0 break-words"><strong className="font-bold">Project:</strong> {location.project}</span>
-                    )}
-                    {/* Flex drops this space from the layout; text and screen readers keep it. */}
-                    {location.project !== undefined && location.group !== undefined && ' '}
-                    {location.group !== undefined && (
-                      <span className="min-w-0 break-words"><strong className="font-bold">Group:</strong> {location.group}</span>
-                    )}
-                  </span>
-                )}
               </span>
             </SessionRowSurface>
           </div>
