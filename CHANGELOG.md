@@ -18,10 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Apps: the `group` node is removed. Use the layout nodes `flex`, `grid`, `section`, `collapsible` and `card`. Section, card, dialog and Ask frames have square corners in the Companion, the web app and the terminal app.
 - Python SDK: the `multiselect` field and `vis.ui.select.many` are removed. Use `select` with `is_multiple=True`. Its answer is a list of option values in option order. The Companion and the terminal app use the option value, not the label, to keep a selection.
-- Tasks: shell handle fields now give the current process state on each read. Sandbox shell and subagent Tasks no longer have a `wait` method. Use `asyncio.wait([task], timeout=seconds)` in the sandbox or `concurrent.futures.wait([sh], timeout=seconds)` for extension shell handles. Read `child.record()` for the current subagent record.
+- Tasks: shell handle fields now give the current process state on each read. Sandbox shell and subagent Tasks no longer have a `wait` method. Read `child.record()` for the current subagent record.
+- Python SDK: use `await asyncio.wait([sh], timeout=seconds)` for shell handles in async code, as in the sandbox. Use `concurrent.futures.wait([sh], timeout=seconds)` in a plain `def`.
+- Live views: wait for `view.changed()` with `asyncio.wait`. `view.events()` now reads new events without waiting.
 
 ### Fixed
 
+- Shell: on Linux, a quiet shell now gets the note **No output and almost no CPU**. Before, the CPU used at the start hid the note, because Linux `ps` gives the average CPU share over the life of the process.
+- Shell: a new `shell()` for the same command no longer returns a shell that is stopping. Before, it could return a handle that was stopped with exit 143.
 - Provider: the first turn on a provider whose model limits come only from its live model list no longer stops with **Model limits unavailable**. Before, Vis asked for the prompt cache identity before it loaded that list.
 - Provider: when a provider says that a quota is exhausted or rate-limited and gives the time until the reset, the error card tells the user how long to wait. Svar now reads this time from a Google error body. A Google per-minute throttle is no longer shown as an exhausted account.
 - Provider: when Vis cannot load the live model list, the error card shows the real cause. Before, it showed **Model limits unavailable**.

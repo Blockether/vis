@@ -70,6 +70,7 @@ of the repository](https://github.com/Blockether/vis/blob/main/.vis/extensions/g
 ```python
 import json
 import time
+from concurrent.futures import wait
 
 import blockether.vis.extension as vis
 
@@ -118,9 +119,14 @@ def watch_run(run_id: int) -> dict:
                 break
             deadline = time.monotonic() + 5
             while (remaining := deadline - time.monotonic()) > 0:
-                view.sleep(remaining)
-                if view.is_interrupted:
+                watch = view.changed()
+                done, _ = wait([watch], timeout=remaining)
+                if not done:
+                    watch.cancel()
+                    break
+                if watch.result() == "closed":
                     return view.close(summary="Stopped watching before the run completed")
+                view.events()
             run = poll(run_id)
         view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
         return view.close(summary=f"Run result: {run['conclusion']}")
@@ -157,7 +163,7 @@ running thread to stop. Use a client with bounded operations, and test its clean
 # monitor.py
 import math
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from threading import Event
 
@@ -192,6 +198,7 @@ def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
                                     vis.ui.table.column("state", "Last observation")]),
     ]) as view:
         pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ci-reader")
+        watch = None
         try:
             for i, row in enumerate(last):
                 view["builds"].upsert(str(i), [row["environment"], row["build_id"],
@@ -235,9 +242,16 @@ def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
                         pending[pool.submit(read_once, build,
                                             deadline=min(deadline, now + 5.0),
                                             stop=stop)] = i
-                # Futures do not wake the view. Check them within 100 ms; Stop
-                # wakes this host wait immediately. UI events do not reset due[].
-                view.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+                if watch is None:
+                    watch = view.changed()
+                done, _ = wait([watch, *pending], return_when=FIRST_COMPLETED,
+                               timeout=min(0.1, max(0.0, deadline - time.monotonic())))
+                if watch in done:
+                    if watch.result() == "closed":
+                        outcome = "interrupted"
+                        break
+                    view.events()
+                    watch = None
         except vis.Interrupted:
             # Stop can race with any view update, not just the explicit flag read.
             outcome = "interrupted"
@@ -245,6 +259,8 @@ def watch_builds(builds, read_once, *, timeout_s=600.0, poll_s=5.0):
             outcome = "failed"
             raise
         finally:
+            if watch is not None:
+                watch.cancel()
             stop.set()
             try:
                 reason = "failed" if outcome == "observation_error" else outcome
@@ -451,12 +467,14 @@ The spinner variants are `braille`, `dots`, `line`, and `pulse`. `is_active=Fals
 and keeps its text. A completed receipt never animates, and the Companion app obeys the
 reduced-motion preference.
 
-An accepted press adds 1 to the `clicks` of that node in the shared state and wakes
-`view.sleep(...)`. Read the count with `view.state()`. Disabled buttons and completed receipts
+An accepted press adds 1 to the `clicks` of that node and completes a `view.changed()` handle.
+Read the count with `view.state()`. Disabled buttons and completed receipts
 refuse a press. Treat a network request without confirmation as uncertain, and check the state
 before you repeat an action with consequences.
 
 ```python
+import concurrent.futures
+
 with vis.live("Review", [
     vis.ui.heading("title", "Build review", level=1),
     vis.ui.paragraph("intro", "Read the output before continuing."),
@@ -478,7 +496,11 @@ with vis.live("Review", [
             view["continue"].set(is_disabled=True)
             view["waiting"].set("Review accepted", is_active=False)
             break
-        view.sleep(60)
+        watch = view.changed()
+        concurrent.futures.wait([watch])
+        if watch.result() == "closed":
+            break
+        view.events()
 ```
 
 With one argument, `vis.ui.heading(text)` and `vis.ui.paragraph(text)` stay form decorations. With
@@ -800,15 +822,15 @@ value, change the label, for example to `5 tokens left`.
 
 ## Updating
 
-- `view.sleep(seconds)` blocks in the host until the view changes, the view closes, or the time
-  ends. It returns `True` for a change or a close, and `False` for a timeout. The wait polls no
-  state, and a timeout without a change returns no view payload. In a view loop, use it in place of
-  `time.sleep`.
-- A wait publishes no view update and no activity. Send only data that changed. An external service
-  still needs its own poll interval, because a click or a stop must not start another GitHub
-  request. The example keeps its deadline of five seconds when a view event wakes it early.
-- A wait time must be finite and at most 86400 seconds. A time of zero or less returns `False`
-  without a host call.
+- `watch = view.changed()` returns a handle for the next unread state change, public event, or
+  close. The result is `"changed"`, `"event"`, or `"closed"`. A person who interrupts the view gives
+  the result `"closed"`. Read `view.state()` or drain `view.events()` after the wait.
+- In async code, use `await asyncio.wait([watch], timeout=seconds)`. In a plain `def` in an
+  extension or SDK program, use `concurrent.futures.wait([watch], timeout=seconds)` on the same
+  handle. A timeout does not cancel the handle. Wait again on the pending handle, or call
+  `watch.cancel()` if you no longer need it. Cancellation does not close the view.
+- A wait publishes no view update and no activity. Keep a separate poll interval for an external
+  service. The CI example keeps its five-second deadline when a view event arrives earlier.
 - `with view.batch(): ...` sends several node changes as one patch.
 - Vis sends the first update immediately and batches later updates within `flush_ms`, which is 100
   ms by default. Set the interval with `vis.live(..., flush_ms=…)`. A read and `view.close(...)`
@@ -905,7 +927,10 @@ A live view can hold the same [inputs](components.md#inputs) as a form. Each inp
 `value` while the view is open, and each client shows the same value.
 
 ```python
-def choose_target() -> str | None:
+import asyncio
+
+
+async def choose_target() -> str | None:
     """Show a deploy form in a live view and return the chosen target."""
     with vis.live("Deploy", [
         vis.ui.section("target",
@@ -915,10 +940,14 @@ def choose_target() -> str | None:
         vis.ui.status("state", "Waiting for a target", tone="idle"),
     ]) as view:
         while not view.is_interrupted:
-            for event in view.events(timeout=60):
+            watch = view.changed()
+            await asyncio.wait([watch])
+            for event in view.events():
                 if event.type == "submit" and event.node_id == "deploy":
                     view["state"].set(f"Deploying to {event.values['env']}", tone="running")
                     return event.values["env"]
+            if watch.result() == "closed":
+                break
     return None
 ```
 
@@ -932,9 +961,9 @@ Each action of a person becomes a `vis.LiveEvent`:
 | `select` | A person selects rows in a selectable table | `node_id` and `item_ids`, the IDs of the selected rows |
 
 - `view.values()` returns the current value of each input by ID, without the secret inputs.
-- `view.events(timeout=None)` returns the events since the last call. With `timeout`, it waits up
-  to that number of seconds for the first new event.
-- `view.on_event(callback)` calls `callback(event)` for each event that `events` or `sleep` reads.
+- `view.events()` returns the new events without waiting. To wait, use `view.changed()` as described
+  in [Updating](#updating).
+- `view.on_event(callback)` calls `callback(event)` in the thread that calls `view.events()`.
 - In a panel view, `vis.live(..., on_event=callback)` gets each event from the host. The callback
   runs as an extension callback with the session of the view bound, so it can call `Session.send`
   or `vis.sessions.create`.
@@ -957,16 +986,16 @@ vis.ui.plaintext("port", label="Port",
   good value, or the error message.
 - Your code runs the function when the person submits, before Vis accepts the submit. The function
   never leaves your process.
-- An extension and an SDK program get the question from the host. In the `py3`
-  sandbox, your code answers it while it reads events with `events`, `sleep`, or `run`.
+- In pull mode, the `view.changed()` handle runs pending validators while it waits.
+  `view.events()` can also run validators. Validation does not appear in the public events.
 - If your code does not answer in 5 seconds, Vis refuses the submit. The submit button then shows
   "The app did not answer. Try again."
 - A validator lives only in the process that declared it. After a restart, open the view again with
   the same key to restore it.
 - An input that `view.add(...)` adds with `validate=` also gets its validator. `view.drop(...)`
   removes the validator with the input.
-- When you open a view without `on_event` and without a validated input, an extension answers later
-  validators only while it reads events.
+- If you add a validator to an open view without `on_event`, keep a readiness wait active or
+  drain events to answer validation requests.
 
 ## Side panel
 
@@ -1076,22 +1105,34 @@ Each Send gives your code one `submit` event. `event.submission_id` names its re
 `message_id` identifies the comment in the receipt, not a message in the thread.
 
 ```python
-def answer_sends(app):
-    """Answer each Send of `app` in the thread of its first comment."""
-    for event in app.events(timeout=60):
-        if event.type != "submit" or event.submission_id is None:
-            continue
-        app.set_status(event.submission_id, "processing", note="Reading your comments")
-        if not event.comments:
-            app.set_status(event.submission_id, "answered")
-            continue
-        first = event.comments[0]
-        app.reply(first["node_id"], "Thanks. I changed it.",
-                  thread_id=first["thread_id"], submission_id=event.submission_id)
+import asyncio
+
+
+async def answer_sends(app):
+    """Answer Sends in their first comment threads until the app closes."""
+    while True:
+        watch = app.changed()
+        try:
+            await asyncio.wait([watch])
+        finally:
+            if not watch.done():
+                watch.cancel()
+        if watch.result() == "closed":
+            break
+        for event in app.events():
+            if event.type != "submit" or event.submission_id is None:
+                continue
+            app.set_status(event.submission_id, "processing", note="Reading your comments")
+            if not event.comments:
+                app.set_status(event.submission_id, "answered")
+                continue
+            first = event.comments[0]
+            app.reply(first["node_id"], "Thanks. I changed it.",
+                      thread_id=first["thread_id"], submission_id=event.submission_id)
 ```
 
-An app that the agent opens in `py3` has no code that waits for events. When a person
-sends it, Vis adds one short message to the session of the agent. The message names the app, the
+The agent can open an app in `py3` and leave it open without a wait loop. Vis then sends a short
+message when a person submits the app. The message names the app, the
 receipt, and the calls that read the receipt, but not the comments. If the agent is busy, the
 message waits in the queue of the session.
 
@@ -1164,10 +1205,10 @@ An app gets its events in one of three ways:
 - `vis.attach(app_declaration, on_event=callback)` runs `callback(event)` for each change, submit,
   activate, select, shortcut, move, or edit, as `vis.live(..., on_event=...)` does. In an extension, each call
   runs with the session of the app bound, also after your tool returns.
-- `app.events(timeout=60)` returns the events that arrived since the last call.
-- `app.run(callback, *, timeout=None)` serves events and blocks. It returns when the app closes,
-  when `callback` returns `False`, after `timeout` seconds, or on Ctrl+C. It returns the number of
-  events that it served.
+- In async code, wait for `app.changed()` with `asyncio.wait`, then call `app.events()` to drain
+  the events. The same loop works in the sandbox.
+- In plain synchronous code, `app.run(callback)` serves events until the app closes, `callback`
+  returns `False`, or you press Ctrl+C. It returns the number of events that it served.
 
 ```python
 def on_key(event):

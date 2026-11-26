@@ -375,7 +375,8 @@ attach(report.encode("utf-8"), filename="IMPLEMENTATION-search.md", kind="doc",
 
 `attach(...)` also opens an app, a live view that people use after your block ends. Import the
 builders with `from blockether.vis.extension import ui`, then call `attach(ui.app(...))`.
-[Apps](live-views.md#apps) shows the components and how you answer a Send.
+To wait for input in a running block, use `await asyncio.wait([app.changed()])`, then call
+`app.events()`. [Apps](live-views.md#apps) shows the components and how you answer a Send.
 
 ## Runtime locations
 

@@ -2929,7 +2929,8 @@
   {:kind :live
    :id (:id view)
    :view (atom view)
-   :events (atom {:cursor 0 :items []})
+   :events (atom {:cursor 0 :public-cursor 0 :items []})
+   :change-watches (atom {})
    :file file
    :promise (promise)
    :session-id (:session-id view)
@@ -3368,6 +3369,23 @@
           (merge view (select-keys record [:settings-name]))
           declared-presentation))
 
+(defn- change-ready
+  "The first unread class of change for a live view. Caller holds its view lock."
+  [entry after-seq after]
+  (let [current (live-entry (:id entry))]
+    (cond (or (not (identical? (:view entry) (:view current))) (app-stale? current)) "closed"
+          (> (long (or (:public-cursor @(:events entry)) 0)) (long after)) "event"
+          (> (long (:seq @(:view entry))) (long after-seq)) "changed")))
+
+(defn- notify-change-watches!
+  "Publish ready watches once. Caller holds the view lock."
+  [entry]
+  (doseq [[id {:keys [after-seq after result]}] @(:change-watches entry)
+          :let [ready (change-ready entry after-seq after)]
+          :when ready]
+    (swap! (:change-watches entry) dissoc id)
+    (deliver result ready)))
+
 (defn- adopt-app!
   "Give the open app to its current owner. Keep its nodes and take the title,
    description, shortcuts, header, icon and settings name that the owner declares, so a
@@ -3400,6 +3418,8 @@
                                    app-stale?)))
               (publish! (:channel-ids adopted)
                         (lifecycle-event :view/open adopted {:view (app-picture adopted)})))
+            (notify-change-watches! entry)
+            (.notifyAll ^Object cell)
             (some-> adopted
                     app-picture)))))))
 
@@ -3460,7 +3480,8 @@
          :view cell
          ;; What the human DID in this view, in order: changes, submits and
          ;; activations. The owner reads them with `events`, waiting when none is new.
-         :events (atom {:cursor 0 :items []})
+         :events (atom {:cursor 0 :public-cursor 0 :items []})
+         :change-watches (atom {})
          :file file
          :promise (promise)
          :session-id (:session-id view)
@@ -3599,14 +3620,11 @@
       (#(materializer/land-node-refs view % (when-not *host-patch* owner-op)))
       checked-live-patch))
 
-(defn patch-live!
-  "Apply `patch` to live view `view-id` and return the view it made.
+(declare push-live-event!)
 
-   One patch at a time per view: the record on disk is the order the engine
-   ACCEPTED patches in, and two threads racing would leave a file no replay can
-   trust. The line is written BEFORE any surface is told, so a crash keeps what
-   the engine accepted rather than what a screen managed to paint."
-  [view-id patch]
+(defn- patch-with-event!
+  "Commit a patch and its public event under the same view lock."
+  [view-id patch event]
   (let [entry
         (live-entry! view-id)
 
@@ -3644,8 +3662,21 @@
                                      (assoc :is-app
                                        true :before
                                        before))))
-        (.notifyAll ^Object cell)
+        (if event
+          (push-live-event! entry (if (fn? event) (event patched) event))
+          (do (notify-change-watches! entry)
+              (.notifyAll ^Object cell)))
         patched))))
+
+(defn patch-live!
+  "Apply `patch` to live view `view-id` and return the view it made.
+
+   One patch at a time per view: the record on disk is the order the engine
+   ACCEPTED patches in, and two threads racing would leave a file no replay can
+   trust. The line is written BEFORE any surface is told, so a crash keeps what
+   the engine accepted rather than what a screen managed to paint."
+  [view-id patch]
+  (patch-with-event! view-id patch nil))
 
 (defn select-live!
   "Select `item-ids` in selectable table `node-id` of open view `view-id`.
@@ -3994,6 +4025,7 @@
                               (seq snapshots)
                               (assoc :selection-snapshots snapshots)))
                (deliver (:promise entry) model-result)
+               (notify-change-watches! entry)
                (.notifyAll ^Object cell)
                (when (or (:owned-key entry) (:is-app entry))
                  (swap! ended-owned assoc view-id (:session-id entry)))
@@ -4139,31 +4171,23 @@
   [ctx]
   ;; An app outlives its extension. It only loses the callback, and its Sends wait
   ;; as accepted until the extension opens the same key again.
-  (let [released?
-        #(and (:is-app %) (identical? ctx (:owner-context %)))
-
-        [before after]
-        (swap-vals! pending
-                    (fn [entries]
-                      (into {}
-                            (map
-                              (fn [[id entry]]
-                                [id
-                                 (if (released? entry)
-                                   (dissoc entry :owner-context :listener :listener-agent :is-held)
-                                   entry)]))
-                            entries)))]
-
-    ;; The surfaces show each released app as disconnected.
-    (doseq [[id entry]
-            before
-
-            :let [now
-                  (get after id)]
-            :when (and (released? entry) now (app-stale? now))]
-
-      (publish! (:channel-ids now) (lifecycle-event :view/open now {:view (app-picture now)}))
-      (app-disconnected! now (get (:hooks entry) "reload"))))
+  (doseq [[id entry] @pending
+          :when (and (:is-app entry) (identical? ctx (:owner-context entry)))]
+    (let [cell (:view entry)
+          released
+          (locking cell
+            (let [current (get @pending id)]
+              (when (and (identical? cell (:view current))
+                         (identical? ctx (:owner-context current)))
+                (let [app (dissoc current :owner-context :listener :listener-agent :is-held)]
+                  (swap! pending assoc id app)
+                  (when (app-stale? app)
+                    (notify-change-watches! entry)
+                    (.notifyAll ^Object cell)
+                    app)))))]
+      (when released
+        (publish! (:channel-ids released) (lifecycle-event :view/open released {:view (app-picture released)}))
+        (app-disconnected! released (get (:hooks entry) "reload")))))
   (->> (vals @pending)
        (filter #(and (:owned-key %) (identical? ctx (:owner-context %))))
        (sort-by :created-at)
@@ -4351,7 +4375,7 @@
   [entry event]
   (let [cell (:view entry)]
     (locking cell
-      (let [{:keys [items]} (swap! (:events entry) (fn [{:keys [cursor items]}]
+      (let [{:keys [items]} (swap! (:events entry) (fn [{:keys [cursor items public-cursor]}]
                                                      (let [next-cursor (inc (long cursor))
                                                            items (conj items
                                                                        (assoc event
@@ -4360,6 +4384,9 @@
                                                            extra (- (count items) max-live-events)]
 
                                                        {:cursor next-cursor
+                                                        :public-cursor (if (= :validate (:type event))
+                                                                         public-cursor
+                                                                         next-cursor)
                                                         :items (if (pos? extra)
                                                                  (into [] (subvec items extra))
                                                                  items)})))]
@@ -4400,26 +4427,134 @@
                           (some-> (:delivering entry)
                                   (swap! disj submission-id)))
                         nil)))))
+      (notify-change-watches! entry)
       (.notifyAll ^Object cell))))
 
 (defn live-events
   "The events of live view `view-id` after cursor `after`. Waits up to
    `timeout-ms` for a new one. Returns `{:events [...] :cursor n :is-open b}`;
    `:is-open` is false once the view is closed, so a reader can stop."
-  [view-id after timeout-ms]
-  (let [deadline (+ (util/now-ms) (long timeout-ms))]
-    (loop []
+  ([view-id after timeout-ms] (live-events view-id after timeout-ms false))
+  ([view-id after timeout-ms public-only?]
+   (if-let [entry (live-entry (str view-id))]
+    (let [cell (:view entry)
+          deadline (+ (System/nanoTime) (* (long timeout-ms) 1000000))]
+      (locking cell
+        (loop []
+          (let [current (live-entry (str view-id))
+                {:keys [cursor public-cursor items]} @(:events entry)
+                fresh (filterv #(and (> (long (:seq %)) (long after))
+                                     (or (not public-only?) (not= :validate (:type %))))
+                               items)
+                left (quot (- deadline (System/nanoTime)) 1000000)]
+            (cond (not (identical? cell (:view current)))
+                  {:events [] :cursor (long after) :is-open false}
+                  (app-stale? current) {:events [] :cursor 0 :is-open true :is-stale true}
+                  (or (seq fresh) (<= left 0))
+                  {:events fresh :cursor (if public-only? (or public-cursor 0) cursor)
+                   :seq (:seq @cell) :is-open true}
+                  :else (do (.wait ^Object cell (long left)) (recur)))))))
+    {:events [] :cursor (long after) :is-open false})))
 
-      (if-let [entry (live-entry (str view-id))]
-        (let [cell (:view entry)
-              {:keys [cursor items]} @(:events entry)
-              fresh (filterv #(> (long (:seq %)) (long after)) items)
-              left (- deadline (util/now-ms))]
+(defn- watch-live!
+  "Register one readiness observation. Check and subscribe under one view lock.
+   The returned cancel function removes the watch, not the view."
+  [view-id opts]
+  (let [after-seq (get opts "after_seq" 0)
+        after (get opts "after" 0)
+        result (promise)]
+    (when-not (every? #(and (integer? %) (<= 0 % Long/MAX_VALUE)) [after-seq after])
+      (invalid-live-patch! "watch after and after_seq must be nonnegative integers"))
+    (if-let [entry (live-entry view-id)]
+      (let [cell (:view entry)
+            id (str (random-uuid))]
+        (locking cell
+          (if-let [ready (change-ready entry after-seq after)]
+            (deliver result ready)
+            (swap! (:change-watches entry) assoc id {:after-seq after-seq :after after :result result})))
+        {:result result
+         :cell cell
+         :end-result (:promise entry)
+         :cancel! (fn []
+                    (locking cell
+                      (when (contains? @(:change-watches entry) id)
+                        (swap! (:change-watches entry) dissoc id)
+                        (deliver result "cancelled")
+                        true)))})
+      {:result (deliver result "closed") :cancel! (constantly false)})))
 
-          (if (or (seq fresh) (<= left 0))
-            {:events fresh :cursor cursor :is-open true}
-            (do (locking cell (.wait ^Object cell (long (min left 1000)))) (recur))))
-        {:events [] :cursor (long after) :is-open false}))))
+(defonce ^:private wire-change-watches (atom {}))
+(def ^:private wire-watch-lease-ms 120000)
+
+(defn- expire-wire-watches!
+  "Remove watches whose SDK clients stopped asking for the result."
+  []
+  (let [now (util/now-ms)
+        [before after] (swap-vals! wire-change-watches
+                                  #(into {} (remove (fn [[_ w]] (<= (:expires w) now))) %))]
+    (doseq [[id {:keys [cancel!]}] before :when (not (contains? after id))]
+      (cancel!))))
+
+(defonce ^:private wire-watch-reaper
+  (delay (.scheduleWithFixedDelay ^ScheduledExecutorService @owned-saver
+                                  ^Runnable expire-wire-watches!
+                                  wire-watch-lease-ms wire-watch-lease-ms TimeUnit/MILLISECONDS)))
+
+(defn- watch-reply
+  [ready {:keys [end-result]}]
+  (cond-> {:readiness ready}
+    (and (= "closed" ready) end-result (realized? end-result))
+    (assoc :result @end-result)))
+
+(defn- wire-watch!
+  "Keep the capability between the SDK's registration and readiness requests."
+  [view-id opts]
+  (let [{:keys [result] :as watch} (watch-live! view-id opts)]
+    (if (realized? result)
+      (watch-reply @result watch)
+      (let [id (str (random-uuid))]
+        @wire-watch-reaper
+        (swap! wire-change-watches assoc id
+               (assoc watch :view-id view-id :expires (+ (util/now-ms) wire-watch-lease-ms)))
+        {:watch-id id}))))
+
+(defn- wire-watch-op!
+  [view-id opts op]
+  (let [id (get opts "watch_id")
+        {:keys [cell cancel! result] :as watch} (get @wire-change-watches id)]
+    (cond
+      (not= view-id (:view-id watch)) {:readiness "closed"}
+      (= op "unwatch") (do (swap! wire-change-watches dissoc id)
+                           (cancel!)
+                           {:readiness "cancelled"})
+      :else
+      (let [timeout (get opts "timeout_ms" 0)
+            current-cell #(:view (live-entry view-id))]
+        (when-not (and (integer? timeout) (<= 0 timeout 30000))
+          (invalid-live-patch! "watch-result timeout_ms must be 0..30000"))
+        (swap! wire-change-watches
+               #(cond-> % (contains? % id) (assoc-in [id :expires] (+ (util/now-ms) wire-watch-lease-ms))))
+        (let [ready (if (identical? cell (current-cell)) (deref result (long timeout) nil) (deref result 0 nil))
+              current (current-cell)]
+          (cond
+            (and current (not (identical? cell current)))
+            (do (swap! wire-change-watches dissoc id) (cancel!) {:readiness "closed"})
+            ready (do (swap! wire-change-watches dissoc id) (watch-reply ready watch))
+            (nil? current) (do (swap! wire-change-watches dissoc id) (cancel!) {:readiness "closed"})
+            :else {}))))))
+
+(defn- pull-validations!
+  "Take private validation questions once without consuming any public events."
+  [view-id]
+  (if-let [entry (live-entry view-id)]
+    (let [cell (:view entry)]
+      (locking cell
+        (if (identical? cell (:view (live-entry view-id)))
+          (let [[before _] (swap-vals! (:events entry) update :items
+                                       #(filterv (fn [event] (not= :validate (:type event))) %))]
+            {:validations (filterv #(= :validate (:type %)) (:items before))})
+          {:validations []})))
+    {:validations []}))
 
 (defn- view-node
   "The node `node-id` anywhere in the component tree `nodes`, or nil."
@@ -4452,8 +4587,8 @@
       (let [[status coerced] (coerce-value (assoc node :is-required false) value)]
         (if (= :error status)
           {:is-accepted false :reason "invalid" :errors {node-id coerced}}
-          (do (patch-live! view-id [{:op :set-value :node-id node-id :value coerced}])
-              (push-live-event! entry {:type :change :node-id node-id :value coerced})
+          (do (patch-with-event! view-id [{:op :set-value :node-id node-id :value coerced}]
+                                 {:type :change :node-id node-id :value coerced})
               {:is-accepted true :node-id node-id}))))))
 
 (defn- live-submit!
@@ -4486,13 +4621,13 @@
         (if-not (:is-accepted outcome)
           {:is-accepted false :reason "invalid" :errors (:errors outcome)}
           (let [shown (remove :is-secret scope)]
-            (patch-live!
+            (patch-with-event!
               view-id
               (into [{:op :set :node-id node-id :clicks (inc (long (or (:clicks button) 0)))}]
                     (map (fn [{:keys [id]}]
                            {:op :set-value :node-id id :value (get (:values outcome) id)}))
-                    shown))
-            (push-live-event! entry {:type :submit :node-id node-id :values (:values outcome)})
+                    shown)
+              {:type :submit :node-id node-id :values (:values outcome)})
             {:is-accepted true :node-id node-id}))))))
 
 (defn- app-locked
@@ -4579,18 +4714,17 @@
                             thread-id
                             (or (get-in op [:thread :id]) thread-id)
 
+                            event
+                            (when-not (app-stale? current)
+                              (cond-> {:type :draft :node-id node-id}
+                                thread-id
+                                (assoc :thread-id thread-id)))
+
                             seq-now
                             (if op
                               (:seq (binding [*host-patch* true]
-                                      (patch-live! view-id [op])))
+                                      (patch-with-event! view-id [op] event)))
                               (:seq view))]
-
-                        ;; The owner hears each draft that changed a thread, as it hears a press.
-                        (when (and op (not (app-stale? current)))
-                          (push-live-event! current
-                                            (cond-> {:type :draft :node-id node-id}
-                                              thread-id
-                                              (assoc :thread-id thread-id))))
                         (cond-> {:is-accepted true :node-id node-id :seq seq-now}
                           thread-id
                           (assoc :thread-id thread-id))))))))
@@ -4715,9 +4849,7 @@
 
                             patched
                             (binding [*host-patch* true]
-                              (patch-live! view-id patch))]
-
-                        (push-live-event! current (send-event receipt (:values outcome) comments))
+                              (patch-with-event! view-id patch (send-event receipt (:values outcome) comments)))]
                         (offer-send! current receipt)
                         (cond-> {:is-accepted true :submission receipt :seq (:seq patched)}
                           node-id
@@ -4926,12 +5058,11 @@
             :node-id node-id)
           (case action
             :move
-            (let [changed (moved-issues issues item-id column index)]
-              (when (seq changed)
-                (patch-live! view-id [{:op :append :node-id node-id :issues changed}]))
-              (push-live-event!
-                entry
-                {:type :move :node-id node-id :item-id item-id :column column :index index})
+            (let [changed (moved-issues issues item-id column index)
+                  event {:type :move :node-id node-id :item-id item-id :column column :index index}]
+              (if (seq changed)
+                (patch-with-event! view-id [{:op :append :node-id node-id :issues changed}] event)
+                (push-live-event! entry event))
               (assoc base
                 :is-accepted true
                 :node-id node-id
@@ -5147,8 +5278,8 @@
               (assoc base
                 :is-accepted false
                 :reason "closed")
-              (do (patch-live! view-id [{:op :set :node-id node-id :is-open false}])
-                  (push-live-event! entry {:type :activate :node-id node-id})
+              (do (patch-with-event! view-id [{:op :set :node-id node-id :is-open false}]
+                                     {:type :activate :node-id node-id})
                   (assoc base
                     :is-accepted true
                     :node-id node-id)))
@@ -5159,10 +5290,10 @@
               :reason "disabled")
 
             :else
-            (do (patch-live!
+            (do (patch-with-event!
                   view-id
-                  [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}])
-                (push-live-event! entry {:type :activate :node-id node-id})
+                  [{:op :set :node-id node-id :clicks (inc (long (or (:clicks node) 0)))}]
+                  {:type :activate :node-id node-id})
                 (assoc base
                   :is-accepted true
                   :node-id node-id))))))))
@@ -5303,17 +5434,12 @@
                                   :shortcut (:action shortcut)))))))
 
           :select
-          (let [patched
-                (select-live! view-id node-id item-ids)
-
-                selected
-                (vec (:selected-ids (first (filter #(= node-id (:id %))
-                                                   (tree-seq #(seq (:children %))
-                                                             :children
-                                                             {:children (:nodes patched)})))))]
-
-            ;; The owner hears each accepted selection, as it hears a press.
-            (push-live-event! entry {:type :select :node-id node-id :item-ids selected})
+          (let [selected-ids #(vec (:selected-ids (view-node (:nodes %) node-id)))
+                patched (patch-with-event!
+                          view-id
+                          [{:op :set :node-id node-id :selected-ids item-ids}]
+                          (fn [view] {:type :select :node-id node-id :item-ids (selected-ids view)}))
+                selected (selected-ids patched)]
             (assoc base
               :is-accepted true
               :node-id node-id
@@ -5593,7 +5719,8 @@
   "Operations implemented by the live view host door."
   {:default "open"
    :spawn #{"open"}
-   :handle #{"patch" "state" "events" "close" "reply" "submission" "archive" "validated"}})
+   :handle #{"patch" "state" "events" "close" "reply" "submission" "archive" "validated"
+             "watch" "watch-result" "unwatch" "validations"}})
 
 (defn- live-op-name
   "The op `opts` asks for, refused BY NAME when it is in neither list. An options
@@ -5903,6 +6030,15 @@
       "state"
       (live-state (live-handle-id opts op) opts)
 
+      "watch"
+      (wire-watch! (live-handle-id opts op) opts)
+
+      ("watch-result" "unwatch")
+      (wire-watch-op! (live-handle-id opts op) opts op)
+
+      "validations"
+      (pull-validations! (live-handle-id opts op))
+
       "events"
       (let [view-id (live-handle-id opts op)
             after (get opts "after" 0)
@@ -5918,7 +6054,7 @@
           (if (app-stale? entry)
             ;; A restart dropped the owner: it opens the app again with its key.
             {:view-id view-id :is-open true :is-stale true :events [] :cursor 0}
-            (let [answer (live-events view-id after timeout)]
+            (let [answer (live-events view-id after timeout (true? (get opts "public_only")))]
               (when (and (:is-app entry) (nil? (:listener entry)))
                 (read-sends! view-id (:events answer)))
               (assoc answer :view-id view-id)))
@@ -6008,6 +6144,16 @@
            (dissoc "channel_id" "channel_ids" "hooks")
            live-dispatch
            wire/json-str)))))
+
+(defn app-watch!
+  "Register a sandbox app watch with the same ownership checks as [[app-json!]]."
+  [envelope-json]
+  (let [opts (json/read-json (str envelope-json) :key-fn identity)
+        view-id (live-handle-id opts "watch")]
+    (binding [*live-owner* nil]
+      (recorded-app! view-id)
+      (app-only! view-id "watch")
+      (watch-live! view-id opts))))
 
 (defn app-json!
   "The app seam of the `py3` sandbox: [[live-json!]] without an owner.

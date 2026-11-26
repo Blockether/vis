@@ -1106,6 +1106,11 @@
 
     (boolean (and want have (not= want have)))))
 
+(defn- stopping-entry? [session {:keys [stopped? task]}]
+  (or (some-> stopped? deref)
+      (when-let [id (:id task)]
+        (pos? (long (task/cancelling session id))))))
+
 (defn- reissue-live-entry
   "The live entry `id` may be RE-ATTACHED to, or nil when the id is free.
 
@@ -1118,6 +1123,9 @@
   (when-let [e (let [entry (bg-entry session id)]
                  (when (or (get-in entry [:proc :destroy]) (live-entry? entry)) entry))]
     (authorize-origin! env session id)
+    (when (stopping-entry? session e)
+      (throw (ex-info (str "Shell '" id "' is stopping. Wait for it to finish or use a different id.")
+                      {:type ::id-stopping :id id})))
     (let [want-cmd (some-> command
                            str
                            not-empty)
@@ -1257,7 +1265,8 @@
                        (and (= wanted (:command entry))
                             (= origin (str (or (:origin entry) origin)))
                             (not (dir-conflict? cwd (:dir entry)))
-                            (live-entry? entry))))
+                            (live-entry? entry)
+                            (not (stopping-entry? session entry)))))
              ffirst)
 
         base
@@ -1467,7 +1476,19 @@
                                         (.pid h))
                                       handles))))))
 
-(defn- cached-process-usage [{:keys [usage proc]} defer?]
+(defn- quiet-mark
+  "The point since which the tree has used less than 1 s of CPU, after a sample of `cpu`
+   ms at `now`. Not the `%CPU` of `ps`: on Linux it is a lifetime average, so startup CPU
+   hides a later quiet time, and Linux gives CPU time in whole seconds. The sum counts
+   only live processes, so a smaller sum means a child changed, which is activity. The
+   first mark is the start."
+  [mark started-at cpu now]
+  (let [{:keys [cpu-ms] :as mark} (or mark {:at started-at :cpu-ms 0})
+        grown (when cpu (- (long cpu) (long cpu-ms)))]
+    (when cpu
+      (if (< -1 grown 1000) mark {:at now :cpu-ms cpu}))))
+
+(defn- cached-process-usage [{:keys [usage proc started-at]} defer?]
   (if-not usage
     (when-not defer? (process-usage (:pid proc)))
     (let [{:keys [until sample refreshing?] :as cached} @usage]
@@ -1476,12 +1497,19 @@
         (if-not (compare-and-set! usage cached (assoc cached :refreshing? true))
           (:sample @usage)
           (let [refresh! (fn []
-                           (let [measured (volatile! sample)]
+                           (let [measured (volatile! sample)
+                                 mark (volatile! (:quiet-mark cached))]
                              (try
                                (vreset! measured (process-usage (:pid proc)))
+                               (vreset! mark (quiet-mark @mark started-at
+                                                         (get @measured "cpu_ms")
+                                                         (util/now-ms)))
+                               @measured
                                (finally
                                  (reset! usage {:until (+ (System/nanoTime) 2000000000)
-                                                :sample @measured})))))]
+                                                :sample @measured
+                                                :quiet-mark @mark
+                                                :quiet-ms (some->> @mark :at (- (util/now-ms)))})))))]
             (if defer?
               ;; A refused submission (executor shut down) must not leave the cache
               ;; marked as refreshing forever, and a field read must not throw.
@@ -1605,7 +1633,8 @@
         chunk (shell-log/read-chunk id file {:limit shell-log/max-chunk-bytes})
         out (normalize-terminal-output (:text chunk))
         live? (live-entry? entry)
-        uptime (get result "uptime_ms")]
+        uptime (get result "uptime_ms")
+        quiet-ms (some-> (:usage entry) deref :quiet-ms)]
     (cond-> (assoc result "out" out
                           "duration_ms" uptime
                           "offset" (:offset chunk)
@@ -1613,10 +1642,8 @@
                           "waiting_for_input" (boolean (and live? (:stdin-tty? entry)
                                                             (terminal-reader (:pid (:proc entry))))))
       (= "running" (get result "status")) (dissoc "timed_out" "timeout_secs")
-      (and live? (>= (long uptime) (long quiet-note-ms))
-           (str/blank? out)
-           (some-> (get result "cpu_percent") double (< 1.0)))
-      (assoc "note" (str "No output and almost no CPU for " (quot uptime 1000)
+      (and live? quiet-ms (>= (long quiet-ms) (long quiet-note-ms)) (str/blank? out))
+      (assoc "note" (str "No output and almost no CPU for " (quot (long quiet-ms) 1000)
                          " s. Check the log with sh.logs(-20).")))))
 
 (defn- register-process!
@@ -1782,7 +1809,7 @@
   [env id]
   (let [entry (bg-entry (:session-id env) id)]
     (authorize-origin! env id entry nil)
-    (when-not (and (live-entry? entry) (not @(:stopped? entry)))
+    (when-not (and (live-entry? entry) (not (stopping-entry? (:session-id env) entry)))
       (throw (ex-info (str "No running background shell '" id "' in this session.")
                       {:type ::unknown-bg-id :id id})))
     (reattached-process "run" id entry)))
@@ -1870,6 +1897,22 @@
                                                (:exit entry) (io/file (:path sink))))
       (doto watcher (.setName (str "vis-shell-run-" id)) (.setDaemon true) (.start))))
   nil)
+
+(defn- start-shell! [env id command cwd opts]
+  (let [session (:session-id env)]
+    (if id
+      (shell-bg-impl env id command opts)
+      (loop []
+        (let [id (auto-bg-id env session command cwd)
+              result (releasing-claim
+                       session id
+                       (fn [id]
+                         (try (shell-bg-impl env id command opts)
+                              (catch clojure.lang.ExceptionInfo e
+                                (if (= ::id-stopping (:type (ex-data e)))
+                                  ::id-stopping
+                                  (throw e))))))]
+          (if (= ::id-stopping result) (recur) result))))))
 
 (defn- run-of-background
   "A background start answered in the RUN shape. Waiting is the ONLY difference
@@ -2340,33 +2383,14 @@
       ;; leaves behind is the FEATURE: "what did that build print" stays answerable
       ;; by id for as long as the session lives.
       (do (reject-text)
-          (let [cmd
-                (need-command)
-
-                session
-                (:session-id env)
-
-                run-id
-                (or id (auto-bg-id env session cmd (opt opts :cwd)))]
-
-            (releasing-claim
-              session
-              run-id
-              (fn [run-id]
-                (run-of-background (shell-bg-impl env run-id cmd (assoc opts "id" run-id)))))))
+          (run-of-background (start-shell! env id (need-command) (opt opts :cwd) opts)))
 
       "background"
       ;; A start is the one background stage with no prior handle: derive the id from
       ;; the command rather than fail a well-formed start over a missing name. Every
       ;; other stage (no command) still names the shell it acts on.
       (do (reject-text)
-          (let [bg-id (if (and (nil? id) valid-command)
-                        (auto-bg-id env (:session-id env) valid-command (opt opts :cwd))
-                        (need-id))]
-            (releasing-claim (:session-id env)
-                             bg-id
-                             (fn [bg-id]
-                               (shell-bg-impl env bg-id valid-command opts)))))
+          (start-shell! env (or id (when-not valid-command (need-id))) valid-command (opt opts :cwd) opts))
 
       "attach"
       (do (reject-command) (reject-text) (shell-attach env (need-id)))

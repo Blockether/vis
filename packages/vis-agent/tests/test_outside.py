@@ -742,6 +742,28 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
     )
 
 
+@pytest.mark.parametrize("read", ["events", "changed"])
+def test_a_live_view_with_a_validator_has_no_questions_without_a_surface(monkeypatch, read):
+    monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
+    port = vis.ui.plaintext(
+        "port", validate=lambda value: None if value.isdigit() else "must be digits"
+    )
+    with vis.live("Ports", [port, vis.ui.status("now", "Ready")], flush_ms=0) as view:
+        if read == "events":
+            assert view.events() == []
+        else:
+            from concurrent.futures import wait
+
+            watch = view.changed()
+            assert wait([watch], timeout=0.05).not_done == {watch}
+            view["now"].set("Listening")
+            assert watch.result(timeout=1) == "changed"
+
+    # The standalone form is where a value can arrive, and its host still judges it.
+    vis.outside.answer_with({"port": "eighty"})
+    assert not vis.ask("Ports", [port])
+
+
 def test_an_outside_form_returns_multiple_toggle_choices(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     form = [
@@ -1147,14 +1169,13 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
     )
 
     # A change before the host starts waiting must not be lost.
-    before = len(recorder.said)
-    assert view.sleep(0) is False
-    assert len(recorder.said) == before
     recorder.select("jobs", ["b"])
-    assert view.sleep(3.0) is True
-    assert recorder.node("jobs")["selected_ids"] == ["b"]
-    assert len(recorder.said) == before + 1
-    assert view.sleep(0.01) is False
+    assert view.changed().result(timeout=1) in ("event", "changed")
+    assert view.state()["nodes"][0]["selected_ids"] == ["b"]
+    view.events()
+    watch = view.changed()
+    assert not watch.done()
+    watch.cancel()
     view.close()
 
 

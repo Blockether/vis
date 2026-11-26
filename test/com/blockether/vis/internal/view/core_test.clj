@@ -4144,6 +4144,44 @@
   [view-id]
   (swap! (var-get #'hi/pending) dissoc view-id))
 
+(defdescribe sdk-live-watch-test
+  (it "observes state and public events, cancels, and does not follow a restarted app"
+    (recorded
+      (fn []
+        (let [sid (str (random-uuid))
+              call #(sdk-door! sid "journey" %)
+              request (assoc-in (keyed-app sid) ["view" "shortcuts"]
+                                [{"key" "r" "label" "Refresh" "action" "refresh"}])
+              opened (call request)
+              id (get opened "view_id")
+              seq0 (get-in opened ["view" "seq"])
+              watch #(get (call {"op" "watch" "view_id" id "after_seq" %1 "after" %2}) "watch_id")
+              op #(call {"op" %1 "view_id" id "watch_id" %2})
+              change (watch seq0 0)]
+          (try
+            (expect (string? change))
+            (expect (empty? (op "watch-result" change)))
+            (let [patch (call {"op" "patch" "view_id" id
+                               "patch" {"ops" [{"op" "set" "node_id" "go" "label" "New"}]}})
+                  seq1 (get patch "seq")
+                  event (watch seq1 0)]
+              (expect (= "changed" (get (op "watch-result" change) "readiness")))
+              (dotimes [_ 20] (expect (:is-accepted (hi/action! id {:action :shortcut :key "r"}))))
+              (expect (= "event" (get (op "watch-result" event) "readiness")))
+              (let [drain #(call {"op" "events" "view_id" id "after" % "public_only" true})
+                    events (drain 0)
+                    cursor (get events "cursor")
+                    cancelled (watch seq1 cursor)
+                    old (watch seq1 cursor)]
+                (expect (= (vec (range 1 21)) (mapv #(get % "seq") (get events "events"))))
+                (expect (empty? (get (drain cursor) "events")))
+                (expect (= "cancelled" (get (op "unwatch" cancelled) "readiness")))
+                (expect (get (call {"op" "state" "view_id" id}) "is_open"))
+                (restart-app! id)
+                (expect (= id (get (call request) "view_id")))
+                (expect (= "closed" (get (op "watch-result" old) "readiness")))))
+            (finally (hi/close-live! id))))))))
+
 (defn- legacy-canvas
   []
   {:id "board"

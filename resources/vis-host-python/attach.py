@@ -213,6 +213,46 @@ def __vis_install_attach__():
         show_attachment=__vis_bridge("__vis_reinspect_attachment__", "show_attachment"),
     )
 
+    __vis_app_door = __vis_bridge("__vis_live_app__", "attach")
+    __vis_app_start_watch = __vis_bridge("__vis_live_app_changed__", "attach")
+
+    def __vis_app_changed(view, envelope):
+        import json
+
+        # Use the real loop to service private questions during an observation,
+        # including while asyncio.wait is not waiting on this particular handle.
+        task = __vis_task_handle__(json.loads(__vis_app_start_watch(json.dumps(envelope))))
+
+        def decode(reply):
+            ready = reply["readiness"]
+            view._change_ready(ready, reply.get("result"))
+            return ready
+
+        task._decode = decode
+
+        # The runtime's aggregate wait observes completion without reading the value.
+        # Read it before reporting completion so callers see the settled view.
+        async def wait_for_readiness(handle, *, read, observe=False):
+            answer = await type(handle)._wait(handle, read=read, observe=observe)
+            if not read and answer == "done":
+                handle.result()
+            return answer
+
+        task._wait = _types.MethodType(wait_for_readiness, task)
+        if view._validators:
+            loop = _importlib.import_module("asyncio").get_running_loop()
+
+            async def judge():
+                while not task.done():
+                    view._pull_validations()
+                    await _importlib.import_module("asyncio").sleep(0.02)
+
+            poller = loop.create_task(judge())
+            task.add_done_callback(lambda _: poller.cancel())
+        return task
+
+    __vis_app_door.changed = __vis_app_changed
+
     (
         attach,
         list_attachments,
@@ -222,7 +262,7 @@ def __vis_install_attach__():
     ) = __vis_sdk._attachment_verbs(
         lambda: __vis_door,
         present=__vis_present,
-        app_door=__vis_bridge("__vis_live_app__", "attach"),
+        app_door=__vis_app_door,
     )
 
     # ONE page per callable, in the shape every documented Vis verb wears: the

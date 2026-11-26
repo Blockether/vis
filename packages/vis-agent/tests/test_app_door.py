@@ -4,6 +4,7 @@ The engine side is `_LiveRecorder`, the in-memory live host, behind a fake
 `POST /v1/sessions/:sid/apps` route. So no gateway and no model run here.
 """
 
+import asyncio
 import json
 import threading
 import time
@@ -225,21 +226,41 @@ def test_run_serves_events_until_the_callback_returns_false():
     threading.Timer(0.05, gateway.engine.press_shortcut, ["r"]).start()
     seen = []
     started = time.monotonic()
-    served = handle.run(lambda event: seen.append(event.action) or False, timeout=5)
+    served = handle.run(lambda event: seen.append(event.action) or False)
     assert time.monotonic() - started < 2
     assert (served, seen) == (1, ["refresh"])
-    assert handle.run(lambda event: None, timeout=0.05) == 0
     handle.close()
     assert handle.run(lambda event: None) == 0
 
 
-def test_door_events_split_a_long_wait_into_capped_polls():
-    gateway = Gateway()
-    handle = Session(gateway, "s-1").attach(app(), owner="bot")
-    gateway.engine.press_shortcut("r")
-    assert [e.action for e in handle.events(timeout=60)] == ["refresh"]
-    assert gateway.envelopes("events")[-1]["timeout_ms"] == 25000
-    handle.close()
+def test_gateway_readiness_reuses_a_pending_handle_and_keeps_event_delivery():
+    async def exercise():
+        gateway = Gateway()
+        handle = Session(gateway, "s-1").attach(app(), owner="bot")
+        seen = []
+        handle.on_event(seen.append)
+        with pytest.raises(RuntimeError, match=r"asyncio\.wait.*app\.events"):
+            handle.run(seen.append)
+        watch = handle.changed()
+        assert (await asyncio.wait([watch], timeout=0.02))[1] == {watch}
+        for _ in range(50):
+            gateway.engine.press_shortcut("r")
+        assert await asyncio.wait_for(watch, timeout=1) == "event"
+        assert seen == []
+        events = handle.events()
+        assert len(events) == 50
+        assert len({e.seq for e in events}) == 50
+        assert events == seen and handle.events() == []
+        assert gateway.envelopes("watch-result")[-1]["timeout_ms"] == 25000
+        assert "timeout_ms" not in gateway.envelopes("events")[-1]
+        watch = handle.changed()
+        assert watch.cancel()
+        assert gateway.envelopes("unwatch") and handle.state()
+        watch = handle.changed()
+        handle.close()
+        assert await watch == "closed"
+
+    asyncio.run(exercise())
 
 
 def test_a_client_extension_callback_opens_its_app_over_the_session_door():

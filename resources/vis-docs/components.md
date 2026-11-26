@@ -33,7 +33,8 @@ with vis.live("Deploy", [vis.ui.status("state", "Waiting", tone="idle"),
 ```
 
 - A form returns the input values when the person submits it.
-- In a live view, read the values with `view.values()`, and read each change with `view.events()`.
+- In a live view, read the values with `view.values()`. To wait for input and read events, see
+  [Collect input in a view](live-views.md#collect-input-in-a-view).
 - The engine validates each component against the `component` schema in
   `packages/vis-contract/resources/vis-contract/schema/view.json`. It refuses an unknown key.
 - Each client draws a component in its own style, with the same text, values, and state.

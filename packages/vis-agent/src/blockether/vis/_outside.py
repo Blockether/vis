@@ -1594,7 +1594,9 @@ def _check_request(request):
 # same rules as the engine, from the shared `_contracts.apply_live_ops`, so an
 # extension polling its own view reads the truth either side of the boundary.
 _LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
-_LIVE_HANDLE_OPS = ("patch", "state", "events", "close")
+_LIVE_HANDLE_OPS = (
+    "patch", "state", "events", "validations", "close", "watch", "watch-result", "unwatch"
+)
 _LIVE_VIEWS = {}
 
 
@@ -1811,7 +1813,17 @@ def live(envelope_json, listener=None):
         kept = _live_checked(view)
         view_id = str(uuid.uuid4())
         held = {"view_id": view_id, "view": kept, "seq": 0}
+        from blockether.vis.extension import _LocalLiveWatches
+
+        def readiness(after_seq, _after):
+            if "result" in held:
+                return "closed"
+            if held["seq"] > after_seq:
+                return "changed"
+            return None
+
         held["condition"] = threading.Condition()
+        held["watches"] = _LocalLiveWatches(held["condition"], readiness, lambda: held.get("result"))
         held["view"]["seq"] = 0
         held["view"]["id"] = view_id
         _LIVE_VIEWS[view_id] = held
@@ -1829,22 +1841,18 @@ def live(envelope_json, listener=None):
             f"no live view {view_id} is open — it was closed, interrupted, or never opened"
         )
     with held["condition"]:
-        if op == "state" and envelope.get("timeout_ms", 0) > 0:
-            changed = held["condition"].wait_for(
-                lambda: "result" in held or held["seq"] != envelope.get("after_seq"),
-                timeout=envelope["timeout_ms"] / 1000,
-            )
-            if not changed:
-                return json.dumps(
-                    {"view_id": view_id, "is_open": True, "timed_out": True}
-                )
+        if op in {"watch", "watch-result", "unwatch"}:
+            return json.dumps(held["watches"].call(envelope))
         answer = _live_handle(held, envelope, op, view_id)
         if op in {"patch", "close"}:
-            held["condition"].notify_all()
+            held["watches"].notify()
         return answer
 
 
 def _live_handle(held, envelope, op, view_id):
+    if op == "validations":
+        # The transcript has no input surface that could submit a form.
+        return json.dumps({"validations": []})
     if held.get("result"):
         # The engine answers an ended view from its record rather than refusing;
         # the loop pushing into it learns WHY it stopped, in one shape.
@@ -1857,7 +1865,7 @@ def _live_handle(held, envelope, op, view_id):
         # Outside Vis nobody can act on the view, so no event ever arrives.
         after = envelope.get("after", 0)
         return json.dumps(
-            {"view_id": view_id, "is_open": True, "cursor": after, "events": []}
+            {"view_id": view_id, "is_open": True, "cursor": after, "seq": held["seq"], "events": []}
         )
     if op == "patch":
         refusal = _contracts.live_patch_refusal(

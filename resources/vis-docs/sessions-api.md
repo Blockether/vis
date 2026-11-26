@@ -1615,7 +1615,8 @@ app.run(lambda event: print(event.type, event.node_id))
 `session.attach(app, *, owner, on_event=None)` returns a `LiveAttachment`. `owner` has 1 to 64
 characters of `a-z`, `0-9`, `.`, `_`, and `-`. With `key`, a second call returns the open app of
 the same owner and key. `on_event=callback` reads the events on a background thread until the app
-closes. `client.routes.post_session_apps(session_id, body=...)` sends one raw envelope.
+closes. For async code, see [Get the events of an app](live-views.md#get-the-events-of-an-app).
+`client.routes.post_session_apps(session_id, body=...)` sends one raw envelope.
 
 </div>
 

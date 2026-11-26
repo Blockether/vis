@@ -1,8 +1,11 @@
 """The shell handle of an extension answers the calls of the sandbox handle."""
 
+import asyncio
+import gc
 import json
 import threading
 import time
+import weakref
 from concurrent.futures import CancelledError, Future, as_completed, wait
 
 import blockether.vis.extension as vis
@@ -62,7 +65,7 @@ def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
 def test_field_reads_follow_the_process_before_and_after_completion():
     sh = vis.shell("printf start; read word; printf '%s' \"$word\"", stdin="tty")
     try:
-        with pytest.raises(AttributeError, match=r"concurrent\.futures\.wait"):
+        with pytest.raises(AttributeError, match=r"asyncio\.wait.*concurrent\.futures\.wait"):
             _ = sh.wait
         assert wait([sh], timeout=0.02).not_done == {sh}
         deadline = time.monotonic() + 5
@@ -78,6 +81,117 @@ def test_field_reads_follow_the_process_before_and_after_completion():
         assert sh.status == "exited"
         assert sh["out"] == "startfinish"
         assert sh.get("exit") == 0
+    finally:
+        sh.cancel()
+
+
+def test_asyncio_wait_reads_the_live_shell_without_cancelling():
+    async def run():
+        sh = vis.shell("printf start; read word; printf '%s' \"$word\"", stdin="tty")
+        try:
+            done, pending = await asyncio.wait([sh], timeout=0.02)
+            assert not done and pending == {sh}
+            deadline = time.monotonic() + 5
+            while "start" not in sh.out and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            assert sh.status == "running"
+            assert sh["out"] == "start"
+            assert sh.get("exit") is None
+            sh.type("finish")
+            done, pending = await asyncio.wait([sh], timeout=5)
+            assert done == {sh} and not pending
+            assert sh.status == "exited"
+            assert sh.out == "startfinish"
+            assert sh.exit == 0
+        finally:
+            sh.cancel()
+
+    asyncio.run(run())
+
+
+def test_await_shell_result_and_callbacks_in_the_callers_loop():
+    async def run():
+        sh = vis.shell("read word; printf '%s' \"$word\"", stdin="tty")
+        loop = asyncio.get_running_loop()
+        loop.set_debug(True)
+        try:
+            sh.type("value")
+            assert (await sh).out == "value"
+            callback = loop.create_future()
+            sh.add_done_callback(callback.set_result)
+            assert not callback.done()
+            assert await asyncio.wait_for(callback, 5) is sh
+            assert await sh is sh.result(0)
+        finally:
+            sh.cancel()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("timeout", [0, 0.02])
+def test_asyncio_wait_for_cancels_the_process(timeout):
+    async def run():
+        sh = vis.shell("read word", stdin="tty")
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(sh, timeout)
+            assert sh.cancelled()
+            assert sh.status == "stopped"
+            with pytest.raises(asyncio.CancelledError):
+                await sh
+        finally:
+            sh.cancel()
+
+    asyncio.run(run())
+
+
+def test_shell_completion_reaches_two_loops_after_another_loop_closes(caplog):
+    sh = vis.shell("read word", stdin="tty")
+    registered = threading.Barrier(2)
+    answered = Future()
+    callback_called = threading.Event()
+
+    async def register_closed_loop():
+        sh.add_done_callback(lambda _: callback_called.set())
+
+    async def observe(send=False):
+        asyncio.get_running_loop().set_debug(True)
+        pending = asyncio.create_task(asyncio.wait([sh], timeout=5))
+        await asyncio.sleep(0)
+        await asyncio.to_thread(registered.wait, 5)
+        if send:
+            sh.type("finish")
+        return await pending
+
+    def other_thread():
+        try:
+            answered.set_result(asyncio.run(observe()))
+        except Exception as error:
+            answered.set_exception(error)
+
+    worker = threading.Thread(target=other_thread, daemon=True)
+    try:
+        asyncio.run(register_closed_loop())
+        worker.start()
+        assert asyncio.run(observe(send=True)) == ({sh}, set())
+        assert answered.result(5) == ({sh}, set())
+        assert not callback_called.is_set()
+        assert "Event loop is closed" not in caplog.text
+    finally:
+        sh.cancel()
+
+
+def test_timed_out_wait_does_not_keep_the_event_loop_alive():
+    sh = vis.shell("read word", stdin="tty")
+
+    async def observe():
+        assert await asyncio.wait([sh], timeout=0) == (set(), {sh})
+        return weakref.ref(asyncio.get_running_loop())
+
+    try:
+        loop = asyncio.run(observe())
+        gc.collect()
+        assert sh.running() and loop() is None
     finally:
         sh.cancel()
 

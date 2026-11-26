@@ -1,13 +1,17 @@
 (ns com.blockether.vis.internal.python.live-primitives-test
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.shell-test :as shell-fixture]
+            [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.python.extensions :as pyx]
             [com.blockether.vis.internal.python.extensions-test :as fixture]
             [com.blockether.vis.internal.view.core :as engine]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def source
-  "import blockether.vis.extension as vis\n\n\ndef show_primitives():\n    \"\"\"Show every new primitive through the real host boundary.\"\"\"\n    with vis.live(\"Primitives\", [\n        vis.ui.heading(\"h\", \"Heading\", level=1),\n        vis.ui.paragraph(\"p\", \"A paragraph\"),\n        vis.ui.code(\"c\", \"  <button>\\n\", language=\"html\"),\n        vis.ui.spinner(\"s\", \"Waiting\", variant=\"line\"),\n        vis.ui.collapsible(\"details\", \"Details\", vis.ui.output(\"a\", label=\"A\"), vis.ui.output(\"b\", label=\"B\")),\n        vis.ui.button(\"go\", \"Continue\"),\n        vis.ui.canvas(\"board\", [vis.ui.canvas.frame(\"release\", \"Release\"), vis.ui.canvas.shape(\"ready\", \"Ready?\", shape=\"diamond\", parent=\"release\")]),\n        vis.ui.divider(\"section-break\"),\n    ], flush_ms=0) as view:\n        while not view.is_interrupted:\n            state = view.state()\n            button = next(n for n in state[\"nodes\"] if n[\"id\"] == \"go\")\n            if button[\"clicks\"]:\n                view[\"s\"].set(\"Done\", is_active=False, variant=\"pulse\")\n                view[\"c\"].set(\"\")\n                view[\"a\"].write(\"ERROR retained\", tone=\"error\")\n                view[\"board\"].set(flow=\"down\", pattern=\"grid\")\n                return {\"clicks\": button[\"clicks\"], \"view\": view.state()}\n            if not view.sleep(5):\n                raise TimeoutError(\"test action did not arrive\")\n    raise AssertionError(\"test view was interrupted\")\n\nvis.register_extension(vis.Extension(name=\"primitives\", description=\"Live primitives fixture\", version=\"0.1.0\", kind=\"integration\", alias=\"primitives\", symbols=[vis.Symbol(show_primitives, tag=\"observation\")]))\n")
+  "import blockether.vis.extension as vis\nfrom concurrent.futures import wait\n\n\ndef show_primitives():\n    \"\"\"Show every new primitive through the real host boundary.\"\"\"\n    with vis.live(\"Primitives\", [\n        vis.ui.heading(\"h\", \"Heading\", level=1),\n        vis.ui.paragraph(\"p\", \"A paragraph\"),\n        vis.ui.code(\"c\", \"  <button>\\n\", language=\"html\"),\n        vis.ui.spinner(\"s\", \"Waiting\", variant=\"line\"),\n        vis.ui.collapsible(\"details\", \"Details\", vis.ui.output(\"a\", label=\"A\"), vis.ui.output(\"b\", label=\"B\")),\n        vis.ui.button(\"go\", \"Continue\"),\n        vis.ui.canvas(\"board\", [vis.ui.canvas.frame(\"release\", \"Release\"), vis.ui.canvas.shape(\"ready\", \"Ready?\", shape=\"diamond\", parent=\"release\")]),\n        vis.ui.divider(\"section-break\"),\n    ], flush_ms=0) as view:\n        while not view.is_interrupted:\n            state = view.state()\n            button = next(n for n in state[\"nodes\"] if n[\"id\"] == \"go\")\n            if button[\"clicks\"]:\n                view[\"s\"].set(\"Done\", is_active=False, variant=\"pulse\")\n                view[\"c\"].set(\"\")\n                view[\"a\"].write(\"ERROR retained\", tone=\"error\")\n                view[\"board\"].set(flow=\"down\", pattern=\"grid\")\n                return {\"clicks\": button[\"clicks\"], \"view\": view.state()}\n            watch = view.changed()\n            if not wait([watch], timeout=5).done:\n                watch.cancel()\n                raise TimeoutError(\"test action did not arrive\")\n    raise AssertionError(\"test view was interrupted\")\n\nvis.register_extension(vis.Extension(name=\"primitives\", description=\"Live primitives fixture\", version=\"0.1.0\", kind=\"integration\", alias=\"primitives\", symbols=[vis.Symbol(show_primitives, tag=\"observation\")]))\n")
 
 (defdescribe
   sdk-crosses-live-host-boundary-test
@@ -71,5 +75,55 @@
                                     (get-in result ["view" "nodes" 4 "children" 0 "line_tones"]))))
                        (finally (when view (engine/close-live! (:id view)))
                                 (future-cancel work))))))))))
+        (finally (doseq [file (reverse (file-seq dir))]
+                   (io/delete-file file true)))))))
+
+
+(defdescribe sandbox-live-watch-test
+  (it "lets another host task complete during a timed wait and answers private validation"
+    (foundation/register!)
+    (let [dir (io/file "target" (str "sandbox-live-watch-" (random-uuid)))
+          first-watch (promise)
+          next-watch (promise)
+          close-watch (promise)
+          registrations (atom 0)
+          watch! engine/app-watch!]
+      (try
+        (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
+                         (constantly dir)
+                         #'engine/app-watch! (fn [envelope]
+                                               (let [watch (watch! envelope)
+                                                     id (get (json/read-json envelope) "view_id")]
+                                                 (case (swap! registrations inc)
+                                                   1 (deliver first-watch id)
+                                                   2 (deliver next-watch id)
+                                                   3 (deliver close-watch id)
+                                                   nil)
+                                                 watch))}
+          (fn []
+            (#'shell-fixture/with-shell-task-context
+             (fn [sid ctx]
+               (binding [extension/*current-environment* {:session-id sid}]
+                 (let [work (future (env-python/run-python-block ctx "import asyncio\nfrom blockether.vis.extension import ui\napp = attach(ui.app('Pull validation', ui.plaintext('port', label='Port', validate=lambda value: None if value.isdigit() else 'need digits'), ui.button('send', 'Send', action='submit'), ui.button('go', 'Go')))\nwatch = app.changed()\nassert isinstance(watch, asyncio.Task)\ncompleted = []\nasync def run_shell():\n    sh = await shell('printf ready')\n    await sh\n    completed.append(sh.out)\nasync with asyncio.TaskGroup() as group:\n    group.create_task(run_shell())\n    done, pending = await asyncio.wait([watch], timeout=.5)\n    assert not done and pending == {watch}, (done, pending)\n    assert completed == ['ready'], completed\nassert app.events() == []\nassert watch.cancel()\ntry:\n    await watch\nexcept asyncio.CancelledError:\n    pass\nelse:\n    raise AssertionError('cancel did not cancel the watch')\nwatch = app.changed()\nassert await asyncio.wait_for(watch, 5) == 'event'\nassert [(e.type, e.node_id) for e in app.events()] == [('activate', 'go')]\nassert app.events() == []\nassert not app.is_interrupted\nwatch = app.changed()\ndone, pending = await asyncio.wait([watch], timeout=5)\nassert done == {watch} and not pending\nassert app.is_interrupted and app.reason == 'completed'\nassert await watch == 'closed'\nprint('live watch ready')\n"))]
+                   (try
+                     (let [id (deref first-watch 6000 nil)]
+                       (expect (some? id))
+                       (when id
+                         (expect (= {"port" "need digits"}
+                                    (:errors (engine/action! id {:action :submit :node-id "send"
+                                                                 :values {"port" "abc"}
+                                                                 :idempotency-key "pull-validation"}))))))
+                     (let [id (deref next-watch 6000 nil)]
+                       (expect (some? id))
+                       (when id
+                         (expect (:is-accepted (engine/action! id {:action :activate :node-id "go"})))))
+                     (let [id (deref close-watch 6000 nil)]
+                       (when id (engine/close-live! id)))
+                     (let [result (deref work 6000 {:error :timeout})]
+                       (expect (nil? (:error result)) (pr-str result))
+                       (expect (= "live watch ready\n" (:stdout result))))
+                     (finally
+                       (when-let [id (deref first-watch 0 nil)] (engine/close-live! id))
+                       (future-cancel work)))))))))
         (finally (doseq [file (reverse (file-seq dir))]
                    (io/delete-file file true)))))))

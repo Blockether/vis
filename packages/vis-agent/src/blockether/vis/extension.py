@@ -9,6 +9,7 @@ from __future__ import annotations
 import __future__
 
 import ast
+import asyncio
 import base64
 import builtins
 import inspect
@@ -25,9 +26,12 @@ import time
 from asyncio import CancelledError as _CancelledError
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
-from concurrent.futures import Future
+from concurrent.futures import CancelledError as _FutureCancelledError
+from concurrent.futures import Future, InvalidStateError
+from concurrent.futures import wait as _wait_futures
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
+from contextvars import copy_context
 from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 from functools import cached_property
 from os import PathLike
@@ -51,6 +55,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
     overload,
@@ -4887,8 +4892,93 @@ class ShellResult(dict):
             page = next(page, None)
 
 
-class ShellFuture(Future[ShellResult]):
-    """The synchronous Future for a shell process owned by the host."""
+class _HostFutureCancelledError(_FutureCancelledError, _CancelledError):
+    pass
+
+
+_FutureValue = TypeVar("_FutureValue")
+
+
+class _HostFuture(Future[_FutureValue]):
+    """Host-owned work that both Python wait functions can observe."""
+
+    _asyncio_future_blocking = False
+
+    def __init__(self):
+        super().__init__()
+        # Notify aggregate waiters before any user cancellation callback.
+        super().add_done_callback(self._notify_cancelled)
+        self._vis_async_callbacks = []
+        super().add_done_callback(self._publish_async_callbacks)
+
+    def cancel(self, msg=None):
+        return super().cancel()
+
+    @staticmethod
+    def _notify_cancelled(future):
+        if future.cancelled():
+            future.set_running_or_notify_cancel()
+
+    def get_loop(self):
+        # The host work belongs to none of its callers' event loops.
+        return asyncio.get_running_loop()
+
+    def add_done_callback(self, fn, *, context=None):
+        try:
+            loop = self.get_loop()
+        except RuntimeError:
+            return super().add_done_callback(fn)
+        context = copy_context() if context is None else context
+        with self._condition:
+            if not self.done():
+                self._vis_async_callbacks.append((fn, loop, context))
+                return
+        self._schedule_async_callback(fn, loop, context)
+
+    def remove_done_callback(self, fn):
+        with self._condition:
+            callbacks = self._vis_async_callbacks
+            self._vis_async_callbacks = [entry for entry in callbacks if entry[0] != fn]
+            return len(callbacks) - len(self._vis_async_callbacks)
+
+    def _schedule_async_callback(self, fn, loop, context):
+        try:
+            loop.call_soon_threadsafe(fn, self, context=context)
+        except RuntimeError:
+            if not loop.is_closed():
+                raise
+
+    def _publish_async_callbacks(self, _future):
+        with self._condition:
+            callbacks = self._vis_async_callbacks
+            self._vis_async_callbacks = []
+        for fn, loop, context in callbacks:
+            self._schedule_async_callback(fn, loop, context)
+
+    def __await__(self):
+        return self._await_result().__await__()
+
+    async def _await_result(self):
+        # asyncio.wait accepts this Future by its asyncio surface; typeshed asks
+        # for an asyncio.Future, so the type says what the runtime already does.
+        waitable = cast("asyncio.Future[Any]", self)
+        try:
+            if not self.done():
+                await asyncio.wait([waitable])
+        except _CancelledError:
+            await asyncio.to_thread(self.cancel)
+            await asyncio.wait([waitable])
+            raise
+        return self.result()
+
+    def result(self, timeout=None):
+        try:
+            return super().result(timeout)
+        except _FutureCancelledError:
+            raise _HostFutureCancelledError() from None
+
+class ShellFuture(_HostFuture[ShellResult]):
+    """The Future for a shell process owned by the host."""
 
     def __init__(self, descriptor, call, *, is_tool=False):
         super().__init__()
@@ -4896,9 +4986,6 @@ class ShellFuture(Future[ShellResult]):
         self._vis_call = call
         self._vis_token = descriptor["token"]
         self._vis_snapshot = self._result_from(descriptor["snapshot"])
-        # Future.cancel() fires callbacks before an executor would notify its
-        # aggregate waiters. Notify those waiters before any user callback.
-        super().add_done_callback(self._notify_cancelled)
         observer = threading.Thread(
             target=self._watch, name="vis-shell-result", daemon=True
         )
@@ -4907,11 +4994,6 @@ class ShellFuture(Future[ShellResult]):
         except RuntimeError:
             self.cancel()
             raise
-
-    @staticmethod
-    def _notify_cancelled(future):
-        if future.cancelled():
-            future.set_running_or_notify_cancel()
 
     def _op(self, op, **options):
         return self._vis_call(self._vis_token, op, options)
@@ -4951,8 +5033,9 @@ class ShellFuture(Future[ShellResult]):
     def __getattr__(self, name):
         if name == "wait":
             raise AttributeError(
-                "Use concurrent.futures.wait([task], timeout=seconds), "
-                "then read the fields on task."
+                "Use await asyncio.wait([task], timeout=seconds), "
+                "or concurrent.futures.wait([task], timeout=seconds) in a plain def. "
+                "Then read the fields on task."
             )
         if name.startswith("_"):
             raise AttributeError(name)
@@ -4961,7 +5044,7 @@ class ShellFuture(Future[ShellResult]):
     def running(self):
         return not self.done()
 
-    def cancel(self):
+    def cancel(self, msg=None):
         if self.done():
             return False
         return bool(self._op("cancel"))
@@ -5012,11 +5095,11 @@ def _sdk_shell_call(name, args, options):
 def shell(*args, **options):
     """Start a command and return a ShellFuture.
 
-    Read the fields on the Future for the current process state, or call
-    `result()` for the final ShellResult. Use `concurrent.futures.wait([sh],
-    timeout=seconds)` to wait without cancelling the process. `cancel()` requests
-    cancellation. `logs()` reads process output, and `type()` sends input.
-    The sandbox's `shell` uses a Task instead.
+    Read the fields on the Future for the current process state. Use `await sh`
+    or `sh.result()` for the final ShellResult. In async code, wait without
+    cancelling with `await asyncio.wait([sh], timeout=seconds)`. In a plain
+    `def`, use `concurrent.futures.wait([sh], timeout=seconds)`. `cancel()`
+    requests cancellation. `logs()` reads output, and `type()` sends input.
 
     Give the command as text with keyword options, or give one options map:
     `shell("ls", cwd="src")` is `shell({"command": "ls", "cwd": "src"})`.
@@ -6874,6 +6957,143 @@ def _batch_size(op):
     return max((len(v) for k, v in op.items() if isinstance(v, list)), default=1)
 
 
+_LIVE_WAIT_HINT = "Use await asyncio.wait([view.changed()], timeout=seconds)."
+
+
+class _LocalLiveWatches:
+    """Readiness for hosts whose view is already in this Python process."""
+
+    def __init__(self, condition, readiness, closed_result):
+        self._condition = condition
+        self._readiness = readiness
+        self._closed_result = closed_result
+        self._watches = {}
+        self._next_id = 0
+
+    def call(self, envelope):
+        op = envelope["op"]
+        if op == "watch":
+            baseline = (envelope["after_seq"], envelope["after"])
+            if ready := self._readiness(*baseline):
+                return self._reply(ready)
+            self._next_id += 1
+            watch_id = str(self._next_id)
+            self._watches[watch_id] = (baseline, None)
+            return {"watch_id": watch_id}
+        watch_id = envelope["watch_id"]
+        if op == "unwatch":
+            self._watches.pop(watch_id, None)
+            self._condition.notify_all()
+            return {"readiness": "cancelled"}
+
+        def ready():
+            return self._watches.get(watch_id, ((), {"readiness": "closed"}))[1]
+
+        if result := self._condition.wait_for(ready, envelope["timeout_ms"] / 1000):
+            self._watches.pop(watch_id, None)
+            return result
+        return {}
+
+    def _reply(self, ready):
+        answer = {"readiness": ready}
+        if ready == "closed":
+            answer["result"] = self._closed_result()
+        return answer
+
+    def notify(self, *, closed=False):
+        for watch_id, (baseline, result) in self._watches.items():
+            if result is None:
+                ready = "closed" if closed else self._readiness(*baseline)
+                if ready:
+                    self._watches[watch_id] = (baseline, self._reply(ready))
+        self._condition.notify_all()
+
+
+class _ChangeFuture(_HostFuture[str]):
+    """A one-shot observation of a view, not ownership of the view itself."""
+
+    def __init__(self, call, envelope, ready, validate=None):
+        super().__init__()
+        self._call = call
+        self._validate = validate
+        self._ready = ready
+        self._view_id = envelope["view_id"]
+        reply = call(envelope)
+        self._watch_id = reply.get("watch_id")
+        if self._watch_id is None:
+            self._complete(reply)
+        else:
+            observer = threading.Thread(
+                target=copy_context().run,
+                args=(self._observe,),
+                name="vis-view-changed",
+                daemon=True,
+            )
+            try:
+                observer.start()
+            except RuntimeError:
+                self._unwatch()
+                raise
+
+    def _complete(self, answer):
+        with self._condition:
+            if self.cancelled():
+                return
+            ready = answer["readiness"]
+            if ready == "closed":
+                self._ready(ready, answer.get("result"))
+            self.set_result("closed" if ready == "cancelled" else ready)
+
+    def _op(self, name, **options):
+        return self._call(
+            dict(op=name, view_id=self._view_id, watch_id=self._watch_id, **options)
+        )
+
+    def _observe(self):
+        try:
+            while not self.done():
+                wait_ms = _DOOR_WAIT_MS
+                if self._validate is not None:
+                    self._validate()
+                    wait_ms = 250
+                answer = self._op("watch-result", timeout_ms=wait_ms)
+                if answer.get("readiness"):
+                    self._complete(answer)
+                    return
+        except InvalidStateError:
+            # Cancellation won against a completed host response.
+            if not self.cancelled():
+                raise
+        except Exception as error:
+            try:
+                self.set_exception(error)
+                self._unwatch()
+            except InvalidStateError:
+                if not self.cancelled():
+                    raise
+
+    def _unwatch(self):
+        try:
+            self._op("unwatch")
+        except Exception:
+            # The host lease releases a watch after a disconnected client stops polling.
+            pass
+
+    def cancel(self, msg=None):
+        if self.done() or not super().cancel(msg):
+            return False
+        try:
+            threading.Thread(
+                target=copy_context().run,
+                args=(self._unwatch,),
+                name="vis-view-unwatch",
+                daemon=True,
+            ).start()
+        except RuntimeError:
+            pass  # No new thread can start during process shutdown; the lease expires.
+        return True
+
+
 class LiveView:
     """A live view the human WATCHES, driven by the extension that opened it.
 
@@ -6918,6 +7138,7 @@ class LiveView:
         else:
             answer = self._call(envelope)
         self.view_id = str(answer.get("view_id") or "")
+        self._cursor = int(answer.get("events_cursor") or 0)
         self._settle(answer)
 
     def _open_envelope(self, request):
@@ -6945,7 +7166,9 @@ class LiveView:
         self._last_flush = None
         self._last_read = None
         self._seq = 0
+        self._watch_seq = 0
         self._cursor = 0
+        self._event_lock = threading.RLock()
         self._listeners = []
         self._validators = {}
         self._is_declaring = False
@@ -7007,13 +7230,20 @@ class LiveView:
         self._is_open = bool(answer.get("is_open"))
         view = answer.get("view")
         if isinstance(view, dict):
-            self._seq = view.get("seq", 0)
+            self._seq = self._watch_seq = view.get("seq", 0)
             self._learn(view.get("nodes"))
-        elif answer.get("seq") == self._seq + 1:
-            self._seq = answer["seq"]
+        else:
+            self._observe_patch(answer)
         if not self._is_open and answer.get("result"):
             self._result = answer["result"]
         return answer
+
+    def _observe_patch(self, answer):
+        seq = answer.get("seq")
+        if seq == self._seq + 1:
+            self._seq = seq
+        if seq == self._watch_seq + 1:
+            self._watch_seq = seq
 
     def _learn(self, nodes):
         if not isinstance(nodes, list):
@@ -7142,37 +7372,40 @@ class LiveView:
         self._last_read = time.monotonic()
         return answer.get("view")
 
-    def sleep(self, seconds):
-        """Block until the view changes, ends, or `seconds` elapse.
+    def changed(self):
+        """Return a handle for the next unread view change, event, or close.
 
-        One host wait replaces periodic state reads. An unchanged timeout returns
-        no view payload. Returns True on change or close, False on timeout.
-        Nonpositive durations do not flush or call the host.
+        Use `await asyncio.wait([watch], timeout=seconds)` to wait without
+        cancelling. The result is `"changed"`, `"event"`, or `"closed"`.
+        Read `state()` for the current picture or `events()` for human actions.
+        Cancelling the handle leaves the view open.
         """
-        import math
+        try:
+            self.flush()
+        except Interrupted:
+            pass
+        envelope = {
+            "op": "watch",
+            "view_id": self.view_id,
+            "after_seq": self._watch_seq,
+            "after": self._cursor,
+        }
+        start = getattr(self._door, "changed", None)
+        if start is not None:
+            return start(self, envelope)
+        judge = self._pull_validations if self._validators and not self._is_pushed else None
+        return _ChangeFuture(self._call, envelope, self._change_ready, judge)
 
-        seconds = float(seconds)
-        if not math.isfinite(seconds) or seconds > 86400:
-            raise ValueError("sleep duration must be finite and at most 86400 seconds")
-        if seconds <= 0:
-            return False
-        self.flush()
-        if not self._is_open:
-            return True
-        answer = self._settle(
-            self._call(
-                {
-                    "op": "state",
-                    "view_id": self.view_id,
-                    "after_seq": self._seq,
-                    "timeout_ms": math.ceil(seconds * 1000),
-                }
-            )
-        )
-        self._last_read = time.monotonic()
-        if self._listeners and self._is_open:
-            self.events()
-        return not answer.get("timed_out", False)
+    def _change_ready(self, ready, result=None):
+        if ready == "closed":
+            self._is_open = False
+            if result is not None:
+                self._result = result
+
+    def __getattr__(self, name):
+        if name == "sleep":
+            raise AttributeError(_LIVE_WAIT_HINT)
+        raise AttributeError(name)
 
     @property
     def is_interrupted(self):
@@ -7248,47 +7481,41 @@ class LiveView:
                 found[str(node.get("id") or node.get("name"))] = node.get("value")
         return found
 
-    def events(self, timeout=None):
-        """Return the human actions that arrived since the last call.
+    def _pull_validations(self):
+        answer = self._call({"op": "validations", "view_id": self.view_id})
+        for raw in answer.get("validations", ()):
+            self._judge(raw)
 
-        Without `timeout` this never waits. With `timeout` seconds it waits up
-        to that long for the first new event. Each event also goes to every
-        callback that `on_event` registered, in arrival order.
-        """
-        wait_ms = 0
-        if timeout is not None:
-            seconds = float(timeout)
-            if not math.isfinite(seconds) or not 0 <= seconds <= 86400:
-                raise ValueError("timeout must be between 0 and 86400 seconds")
-            wait_ms = math.ceil(seconds * 1000)
-        self.flush()
-        answer = self._call(
-            {
-                "op": "events",
-                "view_id": self.view_id,
-                "after": self._cursor,
-                "timeout_ms": wait_ms,
-            }
-        )
-        if not answer.get("is_open", True):
-            self._settle(answer)
-        self._cursor = int(answer.get("cursor") or self._cursor)
-        fresh = []
-        for raw in answer.get("events") or []:
-            # A validate question is for this process, never for a callback.
-            if raw.get("type") == "validate":
-                if not self._is_pushed:
-                    self._judge(raw)
-                continue
-            fresh.append(LiveEvent._from_wire(raw))
-        if not self._is_pushed:
-            for event in fresh:
-                for callback in list(self._listeners):
-                    callback(event)
-        return fresh
+    def events(self, **options):
+        """Drain human actions since the last read and run their callbacks."""
+        if "timeout" in options:
+            raise TypeError(_LIVE_WAIT_HINT)
+        if options:
+            raise TypeError(f"events() got an unexpected keyword argument {next(iter(options))!r}")
+        with self._event_lock:
+            self.flush()
+            if self._validators and not self._is_pushed:
+                self._pull_validations()
+            answer = self._call(
+                {"op": "events", "view_id": self.view_id, "after": self._cursor, "public_only": True}
+            )
+            if not answer.get("is_open", True):
+                self._settle(answer)
+            self._cursor = int(answer.get("cursor", self._cursor))
+            self._watch_seq = int(answer.get("seq", self._watch_seq))
+            fresh = []
+            for raw in answer.get("events") or []:
+                if raw.get("type") == "validate":
+                    continue
+                fresh.append(LiveEvent._from_wire(raw))
+            if not self._is_pushed:
+                for event in fresh:
+                    for callback in list(self._listeners):
+                        callback(event)
+            return fresh
 
     def on_event(self, callback):
-        """Call `callback(event)` for each event that `events` or `sleep` reads.
+        """Call `callback(event)` for each event that `events()` reads.
 
         A panel view opened with `vis.live(..., on_event=...)` gets its
         events from the host instead. Each one runs as an extension callback with
@@ -7496,8 +7723,7 @@ def _app_media_type() -> str:
     return _contracts.definition("view", "app_attachment")["contentMediaType"]
 
 
-# One events wait of `LiveAttachment.run`, below the 30 s cap of the SDK door.
-_RUN_WAIT_S = 25.0
+# A wire wait stays below the 30 s cap of the SDK door.
 _DOOR_WAIT_MS = 25000
 _DOOR_RETRIES = 5
 _OWNER_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
@@ -7569,10 +7795,8 @@ class _AppDoor:
     def __call__(self, text, listener=None):
         envelope = json.loads(text)
         op = envelope.get("op")
-        if op == "events":
-            answer = self._events(envelope)
-        else:
-            answer = self._post(envelope)
+        wait_ms = int(envelope.get("timeout_ms") or 0) if op == "watch-result" else 0
+        answer = self._post(envelope, wait_ms)
         if op == "patch" and "validators" in envelope:
             # A restart opens the app again with the validators that it has now.
             with self._guard:
@@ -7589,17 +7813,6 @@ class _AppDoor:
             if listener is not None:
                 self.follow(view_id, listener, int(answer.get("events_cursor") or 0))
         return json.dumps(answer)
-
-    def _events(self, envelope):
-        """Wait in parts of at most 25 s: the SDK door caps one wait at 30 s."""
-        left = int(envelope.get("timeout_ms") or 0)
-        deadline = time.monotonic() + left / 1000
-        while True:
-            wait = max(0, min(left, _DOOR_WAIT_MS))
-            answer = self._post(dict(envelope, timeout_ms=wait), wait)
-            left = int((deadline - time.monotonic()) * 1000)
-            if answer.get("events") or not answer.get("is_open", True) or left <= 0:
-                return answer
 
     def follow(self, view_id, listener, cursor=0):
         """Give each event of app `view_id` after `cursor` to `listener` on a daemon thread."""
@@ -7907,8 +8120,7 @@ class LiveAttachment(LiveView):
         answer = self._call({k: v for k, v in envelope.items() if v is not None})
         if "is_open" in answer:
             self._is_open = bool(answer["is_open"])
-        if answer.get("seq") == self._seq + 1:
-            self._seq = answer["seq"]
+        self._observe_patch(answer)
         return answer
 
     def reply(
@@ -8070,35 +8282,37 @@ class LiveAttachment(LiveView):
             }
         )
 
-    def run(self, callback, *, timeout=None):
-        """Serve the events of this app with `callback(event)` and block.
+    def run(self, callback):
+        """Serve events with `callback(event)` in a synchronous program.
 
-        It returns when the app closes, when `callback` returns `False`, after
-        `timeout` seconds or on KeyboardInterrupt. Answers the number of events
-        that it served. Callbacks of `on_event` still get each event too.
+        Return the number of events served when the app closes, the callback
+        returns `False`, or the program receives KeyboardInterrupt.
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "Use an await asyncio.wait([app.changed()]) loop, then call app.events()."
+            )
         if not callable(callback):
             raise TypeError("run takes a function of one LiveEvent")
-        deadline = None
-        if timeout is not None:
-            seconds = float(timeout)
-            if not math.isfinite(seconds) or seconds < 0:
-                raise ValueError("timeout must be a finite number of seconds")
-            deadline = time.monotonic() + seconds
         served = 0
+        watch = None
         try:
             while self._is_open:
-                wait = _RUN_WAIT_S
-                if deadline is not None:
-                    wait = min(wait, deadline - time.monotonic())
-                    if wait <= 0:
-                        return served
-                for event in self.events(timeout=wait):
+                watch = self.changed()
+                _wait_futures([watch])
+                for event in self.events():
                     served += 1
                     if callback(event) is False:
                         return served
+                if watch.result() == "closed":
+                    break
         except KeyboardInterrupt:
-            return served
+            if watch is not None:
+                watch.cancel()
         return served
 
     def archive(self):
@@ -8271,6 +8485,7 @@ class _LiveRecorder:
         # thread frees the lock, so each event reaches the listener on its own thread.
         self._outbox = threading.local()
         self._condition = threading.Condition(_DeliveringLock(self._deliver))  # type: ignore[arg-type]
+        self._change_watches = _LocalLiveWatches(self._condition, self._ready, lambda: self._result)
         self._inner = inner
         # Vis writes the owner extension, or the agent, on each message of the owner.
         self._author = _contracts.owner_author(extension)
@@ -8419,33 +8634,35 @@ class _LiveRecorder:
         picture["nodes"] = leaves
         return picture
 
+    def _ready(self, after_seq, after):
+        if self._result is not None:
+            return "closed"
+        if any(e["seq"] > after and e["type"] != "validate" for e in self._events):
+            return "event"
+        if self._seq > after_seq:
+            return "changed"
+        return None
+
     def host_live(self, envelope_json):
         """Apply an envelope without recording it as extension output."""
         import json
 
         envelope = json.loads(envelope_json)
+        op = envelope.get("op")
         with self._condition:
-            if envelope.get("op") == "state" and envelope.get("timeout_ms", 0) > 0:
-                changed = self._condition.wait_for(
-                    lambda: (
-                        self._result is not None
-                        or self._seq != envelope.get("after_seq")
-                    ),
-                    timeout=envelope["timeout_ms"] / 1000,
-                )
-                if not changed:
-                    return json.dumps(
-                        {"view_id": self.view_id, "is_open": True, "timed_out": True}
-                    )
-            if envelope.get("op") == "events" and envelope.get("timeout_ms", 0) > 0:
+            if op in {"watch", "watch-result", "unwatch"}:
+                return json.dumps(self._change_watches.call(envelope))
+            if op == "events" and envelope.get("timeout_ms", 0) > 0:
                 after = envelope.get("after", 0)
                 self._condition.wait_for(
                     lambda: self._result is not None or self._cursor > after,
                     timeout=envelope["timeout_ms"] / 1000,
                 )
+            if op == "open":
+                self._change_watches.notify(closed=True)
             answer = self._dispatch_live(envelope)
-            if envelope.get("op") in {"patch", "close", "validated"}:
-                self._condition.notify_all()
+            if op in {"patch", "close", "validated"}:
+                self._change_watches.notify()
             return answer
 
     def _dispatch_live(self, envelope):
@@ -8514,8 +8731,17 @@ class _LiveRecorder:
                 "view_id": self.view_id,
                 "is_open": True,
                 "cursor": self._cursor,
-                "events": [e for e in self._events if e["seq"] > after],
+                "seq": self._seq,
+                "events": [
+                    e for e in self._events
+                    if e["seq"] > after
+                    and (not envelope.get("public_only") or e["type"] != "validate")
+                ],
             }
+        elif action == "validations":
+            questions = [e for e in self._events if e["type"] == "validate"]
+            self._events = [e for e in self._events if e["type"] != "validate"]
+            answer = {"validations": questions}
         elif action == "validated":
             request_id = str(envelope.get("request_id") or "")
             is_waiting = (
@@ -8641,7 +8867,7 @@ class _LiveRecorder:
             self._events.append(event)
             if self._listener is not None:
                 self._queue(self._listener, self._copy(event))
-            self._condition.notify_all()
+            self._change_watches.notify()
             return {"is_accepted": True, "key": key, "shortcut": bound["action"]}
 
     def _ask_owner(self, node_id, judged, values):
@@ -8734,13 +8960,13 @@ class _LiveRecorder:
                 raise AssertionError("only an input in an open view can change")
             if node.get("is_secret"):
                 self._event("change", node_id, is_set=value is not None)
-                self._condition.notify_all()
+                self._change_watches.notify()
                 return {"is_accepted": True, "node_id": str(node_id)}
             self._patch_ops(
                 [{"op": "set-value", "node_id": str(node_id), "value": value}]
             )
             self._event("change", node_id, value=self._copy(value))
-            self._condition.notify_all()
+            self._change_watches.notify()
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def submit(self, node_id, values=None):
@@ -8807,7 +9033,7 @@ class _LiveRecorder:
                 ]
             )
             self._event("submit", node_id, values=collected)
-            self._condition.notify_all()
+            self._change_watches.notify()
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def _scope(self, node_id):
@@ -8862,7 +9088,7 @@ class _LiveRecorder:
                 self._event(
                     "select", node_id, item_ids=[str(one) for one in selected_ids]
                 )
-                self._condition.notify_all()
+                self._change_watches.notify()
         return answer
 
     def _board_refusal(self, node_id, item_id, column=None):
@@ -8929,7 +9155,7 @@ class _LiveRecorder:
             self._event(
                 "move", node_id, item_id=item_id, column=column, index=int(index)
             )
-            self._condition.notify_all()
+            self._change_watches.notify()
         return {"is_accepted": True}
 
     def edit(self, node_id, values, item_id=None, is_removed=False):
@@ -8952,7 +9178,7 @@ class _LiveRecorder:
             payload["is_removed"] = True
         with self._condition:
             self._event("edit", node_id, **payload)
-            self._condition.notify_all()
+            self._change_watches.notify()
         return {"is_accepted": True}
 
     def close(self, reason="interrupted", **ending):

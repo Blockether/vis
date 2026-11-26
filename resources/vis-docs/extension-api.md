@@ -1636,10 +1636,10 @@ Live views has a section for each of these calls:
   People save drafts and send them. [Apps](live-views.md#apps) shows how you answer them.
 - `vis.ui.app(..., header=[search, create])` puts controls in the [compact app header](live-views.md#apps).
 - `vis.ui.app(..., shortcuts=[vis.ui.app.shortcut("n", "next")])` gives an app single-key shortcuts.
-  `vis.attach(app, on_event=callback)` and `app.run(callback)` handle its events. [Add shortcuts
-  to an app](live-views.md#add-shortcuts-to-an-app) shows them.
-- `view.values()`, `view.events(timeout=None)`, and `view.on_event(callback)` read the inputs
-  and the actions of a person. [Collect input in a view](live-views.md#collect-input-in-a-view)
+  `vis.attach(app, on_event=callback)` handles its events. [Add shortcuts to an
+  app](live-views.md#add-shortcuts-to-an-app) shows them.
+- `view.changed()` signals readiness. `view.values()` reads inputs, and `view.events()` drains
+  events. [Collect input in a view](live-views.md#collect-input-in-a-view)
   shows them.
 
 ## Environment
@@ -2067,18 +2067,22 @@ configuration on disk, read again at every spawn, with or without a session.
 `vis.shell("npm test", cwd="app")` and `vis.shell({"command": "npm test", "cwd": "app"})` start
 the same process. The child runs under a terminal, and Vis keeps its output in a log.
 
-`vis.shell` and `vis.jailed_shell` return a `concurrent.futures.Future` for the process. Each
-read of a field such as `sh.status` or `sh.out` gives the current value. After the process ends,
-the fields give the final values. Use `concurrent.futures.wait([sh], timeout=30)` to wait up to
-30 seconds without cancelling the process. The wait returns the sets of done and pending Futures.
+`vis.shell` and `vis.jailed_shell` return a `ShellFuture` for the process. Each read of `sh.status`
+or `sh.out` gives the current value. After the process ends, the fields give the final values.
 
-Use `sh.result()` for the final result. If you pass a timeout to `sh.result()` and it expires,
-`sh.result()` raises `TimeoutError` and leaves the process running. A nonzero exit code is part
-of the result, not an exception.
+In an `async def`, use `await asyncio.wait([sh], timeout=30)` to wait up to 30 seconds. In a
+plain `def`, use `concurrent.futures.wait([sh], timeout=30)` on the same `ShellFuture`. Both calls
+return the sets of done and pending handles. Neither cancels the process.
+A timeout in `asyncio.wait_for(sh, timeout=30)` cancels the process.
+
+Use `await sh` in an `async def` or `sh.result()` in a plain `def` for the final result. If a
+timeout on `sh.result()` expires, it raises `TimeoutError` and leaves the process running.
+A nonzero exit code is part of the result, not an exception.
 
 Use `sh.done()` to check completion and `sh.exception(timeout=30)` to read a process error.
-Use `sh.add_done_callback(fn)` to receive the Future when the process ends. A callback can run
-on a background thread. Use `sh.cancel()` to request cancellation of the process and its
+Use `sh.add_done_callback(fn)` to receive the `ShellFuture` when the process ends. If you add
+the callback in an active event loop, the callback runs on that loop. Otherwise, the callback
+can run on a background thread. Use `sh.cancel()` to request cancellation of the process and its
 children. If the process was cancelled, `sh.result()` raises `concurrent.futures.CancelledError`.
 
 By default, a read from the child's stdin gives end of input. To send a line with
@@ -2086,13 +2090,14 @@ By default, a read from the child's stdin gives end of input. To send a line wit
 gives, use [`sh.logs()`](#read-the-shell-log).
 
 ```python
-from concurrent.futures import wait
+import asyncio
 
-sh = vis.shell("npm test", cwd="app")
-done, pending = wait([sh], timeout=30)
-print(sh.status, sh.out)
-if sh in done:
-    print(sh.result().exit)
+async def run_tests():
+    sh = vis.shell("npm test", cwd="app")
+    done, pending = await asyncio.wait([sh], timeout=30)
+    print(sh.status, sh.out)
+    if sh in done:
+        print(sh.exit)
 ```
 
 A jailed child sees the session's roots and the egress proxy. A language runtime may need more.

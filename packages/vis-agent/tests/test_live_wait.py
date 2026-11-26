@@ -1,115 +1,137 @@
-"""Blocking live waits cross the host seam once and wake on changes."""
+"""Live readiness is one-shot, reusable after a wait timeout, and cancellable."""
 
+import asyncio
 import json
-from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+import threading
+from concurrent.futures import wait
 
 import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _outside
 
 
-@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
-def test_idle_wait_is_one_small_host_response(monkeypatch, host_kind):
+@pytest.fixture(params=["outside", "recorder"])
+def live_host(monkeypatch, request):
     host = (
-        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
+        _outside.host
+        if request.param == "outside"
+        else vis.testing.LiveRecorder(vis._host)
     )
-    calls = []
-    original = host.live
-
-    def live(envelope):
-        answer = original(envelope)
-        calls.append((json.loads(envelope), json.loads(answer)))
-        return answer
-
-    monkeypatch.setattr(host, "live", live)
     monkeypatch.setattr(vis, "_host", host)
-    with vis.live("Idle", [vis.ui.status("now", "Ready")]) as view:
-        calls.clear()
-        assert view.sleep(0) is False
-        assert calls == []
-        assert view.sleep(0.03) is False
-        assert len(calls) == 1
-        request, answer = calls[0]
-        assert request["timeout_ms"] == 30
-        assert answer["timed_out"] is True
-        assert "view" not in answer
+    return host
 
 
-@pytest.mark.parametrize("action", ["patch", "close"])
-@pytest.mark.parametrize("host_kind", ["outside", "recorder"])
-def test_wait_wakes_on_change_or_stop(monkeypatch, action, host_kind):
-    recorder = (
-        _outside.host if host_kind == "outside" else vis.testing.LiveRecorder(vis._host)
-    )
-    monkeypatch.setattr(vis, "_host", recorder)
-    entered = Event()
-    original = recorder.live
+def test_changed_waits_without_cancelling_and_keeps_the_first_transition(live_host):
+    async def exercise(view):
+        watch = view.changed()
+        done, pending = await asyncio.wait([watch], timeout=0.02)
+        assert (done, pending) == (set(), {watch})
+        assert not watch.cancelled()
+        view["now"].set("Changed")
+        view.flush()
+        view.close()
+        assert await asyncio.wait_for(watch, timeout=1) == "changed"
+        assert await view.changed() == "closed"
 
-    def live(envelope):
-        if json.loads(envelope).get("timeout_ms"):
-            entered.set()
-        return original(envelope)
+    with vis.live("Idle", [vis.ui.status("now", "Ready")], flush_ms=0) as view:
+        asyncio.run(exercise(view))
 
-    monkeypatch.setattr(recorder, "live", live)
+
+def test_cancelling_unsubscribes_and_does_not_close(live_host):
     with vis.live("Waiting", [vis.ui.status("now", "Ready")]) as view:
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            waiter = pool.submit(view.sleep, 1)
-            assert entered.wait(0.5)
-            if action == "close":
-                original(
-                    json.dumps(
-                        {
-                            "op": "close",
-                            "view_id": view.view_id,
-                            "ending": {"reason": "interrupted"},
-                        }
-                    )
-                )
-            else:
-                original(
-                    json.dumps(
-                        {
-                            "op": "patch",
-                            "view_id": view.view_id,
-                            "patch": {
-                                "ops": [
-                                    {"op": "set", "node_id": "now", "text": "Changed"}
-                                ]
-                            },
-                        }
-                    )
-                )
-            assert waiter.result(timeout=0.5) is True
-        assert view.is_interrupted is (action == "close")
+        watch = view.changed()
+        assert wait([watch], timeout=0.01).not_done == {watch}
+        assert watch.cancel()
+        assert wait([watch], timeout=1).done == {watch}
+        assert watch.cancelled()
+        assert view.state()["nodes"][0]["text"] == "Ready"
+        next_watch = view.changed()
+        view.close()
+        assert wait([next_watch], timeout=1).done == {next_watch}
+        assert next_watch.result() == "closed"
 
 
-def test_own_patch_does_not_wake_but_interleaved_human_change_does(monkeypatch):
+def test_unread_patch_is_not_hidden_by_an_owner_patch(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
     with vis.live("Changes", [vis.ui.status("now", "Ready")], flush_ms=0) as view:
         view["now"].set(text="Running")
-        assert view.sleep(0.01) is False
+        watch = view.changed()
+        assert not watch.done()
+        watch.cancel()
         recorder.host_live(
-            json.dumps(
-                {
-                    "op": "patch",
-                    "view_id": view.view_id,
-                    "patch": {"ops": [{"op": "set", "node_id": "now", "tone": "ok"}]},
-                }
-            )
+            json.dumps({
+                "op": "patch",
+                "view_id": view.view_id,
+                "patch": {"ops": [{"op": "set", "node_id": "now", "tone": "ok"}]},
+            })
         )
         view["now"].set(text="Done")
-        assert view.sleep(1) is True
-        assert view.sleep(0.01) is False
+        assert view.changed().result(timeout=1) == "changed"
+        view.state()
+        watch = view.changed()
+        assert not watch.done()
+        watch.cancel()
 
 
-@pytest.mark.parametrize("seconds", [float("nan"), float("inf"), 86401])
-def test_invalid_wait_duration_is_refused_before_host_call(monkeypatch, seconds):
+def test_removed_live_wait_methods_name_the_async_replacement(live_host):
+    with vis.live("Wait", [vis.ui.status("now", "Ready")]) as view:
+        with pytest.raises(AttributeError, match=r"asyncio\.wait\(\[view\.changed"):
+            getattr(view, "sleep")  # noqa: B009
+        with pytest.raises(TypeError, match=r"asyncio\.wait\(\[view\.changed"):
+            view.events(timeout=1)
+
+
+
+def test_sdk_cancel_does_not_wait_for_unwatch(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
-    with vis.live("Invalid", [vis.ui.status("now", "Ready")]) as view:
-        before = len(recorder.said)
-        with pytest.raises(ValueError, match="duration"):
-            view.sleep(seconds)
-        assert len(recorder.said) == before
+    send = recorder.live
+    unwatch_sent = threading.Event()
+    release_unwatch = threading.Event()
+    unwatch_timed_out = threading.Event()
+
+    def delayed_door(raw, listener=None):
+        if json.loads(raw).get("op") == "unwatch":
+            unwatch_sent.set()
+            if not release_unwatch.wait(2):
+                unwatch_timed_out.set()
+        return send(raw, listener)
+
+    monkeypatch.setattr(recorder, "live", delayed_door)
+
+    async def exercise(view):
+        watch = view.changed()
+        watch.cancel()
+        assert watch.cancelled()
+        # Let the event loop release the door. A synchronous cancellation would
+        # hold this thread until the door's timeout instead.
+        assert await asyncio.to_thread(unwatch_sent.wait, 1)
+        assert not unwatch_timed_out.is_set()
+        release_unwatch.set()
+        done, pending = await asyncio.wait([watch], timeout=0)
+        assert (done, pending) == ({watch}, set())
+
+    with vis.live("Wait", [vis.ui.status("now", "Ready")]) as view:
+        # A second wait timeout guards the test while the fake door is blocked.
+        async def check():
+            async with asyncio.timeout(1):
+                await exercise(view)
+
+        try:
+            asyncio.run(check())
+        finally:
+            release_unwatch.set()
+
+
+def test_closed_watch_updates_interrupted_before_the_next_read(monkeypatch):
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    with vis.live("Wait", [vis.ui.status("now", "Ready")], flush_ms=60_000) as view:
+        assert view.is_interrupted is False
+        watch = view.changed()
+        recorder.close(reason="interrupted")
+        assert watch.result(timeout=1) == "closed"
+        assert view.is_interrupted is True
+        assert view.reason == "interrupted"
+        assert view.reason == "interrupted"

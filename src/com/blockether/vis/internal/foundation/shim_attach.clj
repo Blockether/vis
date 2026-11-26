@@ -31,6 +31,7 @@
             [com.blockether.vis.internal.attachment.storage :as storage]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.extension.core :as extension]
+            [com.blockether.vis.internal.python.host :as python-host]
             [com.blockether.vis.internal.view.core :as view]
             [com.blockether.vis.internal.workspace.read-gate :as read-gate]
             [charred.api :as json]
@@ -490,6 +491,9 @@
    "__vis_attachment_limit__" (fn []
                                 (long mpl-capture/*attachment-limit-bytes*))
    "__vis_live_app__" (attachment-tool 'attach :mutation view/app-json!)
+   "__vis_live_app_changed__"
+   (attachment-tool 'attach :observation
+                    #(json/write-json-str (python-host/start-readiness-task! (view/app-watch! %))))
    "__vis_list_attachments__" (attachment-tool 'list_attachments
                                                :observation
                                                #(json/write-json-str (into (attachment-descriptors)

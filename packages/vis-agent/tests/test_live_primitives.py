@@ -117,7 +117,7 @@ def test_operator_presses_wake_the_producer_and_are_counted(monkeypatch):
     with vis.live("Actions", [vis.ui.button("go", "Go")], flush_ms=0) as view:
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda _: recorder.activate("go"), range(20)))
-        assert view.sleep(0.1) is True
+        assert view.changed().result(timeout=1) in ("changed", "event")
         assert view.state()["nodes"][0]["clicks"] == 20
         view["go"].set(is_disabled=True)
         with pytest.raises(AssertionError):
@@ -168,11 +168,16 @@ def test_documented_review_example_accepts_a_real_operator_press(monkeypatch):
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
 
-    def press_while_waiting(view, seconds):
-        recorder.activate("continue")
-        return True
+    changed = vis.LiveView.changed
 
-    monkeypatch.setattr(vis.LiveView, "sleep", press_while_waiting)
+    def press_while_waiting(view):
+        watch = changed(view)
+        if not recorder.node("continue")["clicks"]:
+            recorder.activate("continue")
+        return watch
+
+    monkeypatch.setattr(vis.LiveView, "changed", press_while_waiting)
+    # Extension code has no top-level await: compile it as a plain module.
     exec(compile(example, str(document), "exec"), {"vis": vis})
     assert recorder.node("waiting")["is_active"] is False
     assert recorder.node("continue")["is_disabled"] is True
@@ -1045,7 +1050,7 @@ def test_a_full_form_runs_inside_a_live_view(monkeypatch):
         assert view["plan-small"].clicks == 1
         view["target"].set("db-3")
         assert view.values()["target"] == "db-3"
-        assert view.events(timeout=0.01) == []
+        assert view.events() == []
         assert "fixture-live-secret" not in json.dumps(recorder.picture())
     assert view.result["is_completed"] is True
 

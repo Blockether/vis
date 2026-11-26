@@ -249,6 +249,27 @@
     (:error result) (assoc "error" (:error result))
     (:error-data result) (assoc "error_data" (:error-data result))))
 
+(defn start-readiness-task!
+  "Expose a host readiness observation as a sandbox Task. Cancellation ends only the observation."
+  [{:keys [result cancel! end-result]}]
+  (let [sid (task-session (first *caller*))]
+    (try
+      (let [row (task/start! sid {:name "view.changed()" :origin *task-origin*
+                                 :detachable? false :cancel-on-request? true}
+                             (fn []
+                               (task/install-interrupt! (fn [_] (cancel!)))
+                               (let [ready @result]
+                                 (if (= "cancelled" ready)
+                                   {:state :cancelled}
+                                   {:state :done
+                                     :value (cond-> {:readiness ready}
+                                              (and (= "closed" ready) end-result (realized? end-result))
+                                              (assoc :result @end-result))}))))]
+        (select-keys row [:id :name]))
+      (catch Throwable e
+        (cancel!)
+        (throw e)))))
+
 (defn- task-call [session call tool f request]
   (let [[arg x] (get request "args")
         sid (task-session session)]

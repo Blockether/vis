@@ -26,12 +26,14 @@ def recipe(monkeypatch):
     monkeypatch.setattr(vis, "_host", recorder)
     closed = Event()
     original = recorder.live
-    host_threads = []
+    write_threads = []
 
     def live(envelope):
-        host_threads.append(current_thread())
+        op = json.loads(envelope)["op"]
+        if op in {"open", "patch", "close"}:
+            write_threads.append(current_thread())
         result = original(envelope)
-        if json.loads(envelope)["op"] == "close":
+        if op == "close":
             closed.set()
         return result
 
@@ -78,7 +80,7 @@ def recipe(monkeypatch):
         run=run,
         counts=counts,
         closed=closed,
-        host_threads=host_threads,
+        write_threads=write_threads,
         source=source,
     )
 
@@ -111,7 +113,7 @@ def test_fast_failure_closes_before_slow_reader_cleanup_without_starting_next(re
         for n, state in [(40, "unobserved"), (41, "failed"), (42, "unobserved")]
     ]
     assert recipe.counts[builds[2]] == 0
-    assert all(thread is current_thread() for thread in recipe.host_threads)
+    assert recipe.write_threads and all(thread is current_thread() for thread in recipe.write_threads)
 
 
 def test_success_polls_the_entire_fixed_set_with_only_two_readers(recipe):

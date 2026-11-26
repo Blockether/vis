@@ -1494,34 +1494,35 @@
         (expect (nil? (read-fd "61 0x3 0x0 0x0 0x0 0x0 0x0 0xffffd280 0xffff8a1c" 63)))
         (expect (nil? (read-fd "-1 0x7ffd5c1b3c28 0x7f3a1c2e4992" 0)))
         (expect (nil? (read-fd "running" 0)))))
-  (it "says when a running command printed nothing and used no CPU through a wait"
+  (it "notes a quiet shell by CPU growth, not by the lifetime CPU share of ps"
       (binding [workspace/*workspace-root* (workspace/trunk-root)]
         (let [sid "shell-stdin-quiet"
-              env {:session-id sid}]
-
-          ;; Linux `ps` gives `pcpu` as an average over the life of the process, so
-          ;; the CPU that the command used before the wait hid the note there.
-          (doseq [[command ^java.io.File worked]
-                  [["sleep 30" nil]
-                   (let [marker (io/file (System/getProperty "java.io.tmpdir")
-                                         (str "vis-shell-quiet-" (System/nanoTime)))]
-                     [(str "i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; : > '"
-                           marker
-                           "'; sleep 30") marker])]]
-            (let [id (if worked "quiet-after-work" "quiet")]
-              (try (with-redefs-fn (cond-> {#'shell/quiet-note-ms 500}
-                                   worked
-                                   ;; Linux ps reports lifetime CPU percent. Simulate it on macOS too.
-                                   (assoc #'shell/process-usage (constantly {"cpu_ms" 500 "cpu_percent" 25.0})))
-                   (fn []
-                     (shell* env {"command" command "id" id "timeout_secs" 1})
-                     (when worked (poll #(.isFile worked) true? 100))
-                     (let [r (wait* env id 2)]
-                       (expect (true? (get r "timed_out")))
-                       (expect (= (nil? worked) (str/includes? (str (get r "note")) "No output")) command))))
-                 (finally (resources/stop-all! sid)
-                          (some-> worked
-                                  .delete)))))))))
+              env {:session-id sid}
+              samples (atom 0)
+              cpu-ms (atom 400)]
+          (try (with-redefs-fn
+                 {#'shell/quiet-note-ms 500
+                  ;; Linux `ps`: startup CPU gives a high lifetime share, and CPU time in seconds.
+                  #'shell/process-usage (fn [_]
+                                           (swap! samples inc)
+                                           {"cpu_percent" 25.0 "cpu_ms" @cpu-ms})}
+                 (fn []
+                   (shell* env {"command" "sleep 30" "id" "quiet"})
+                   (let [r (poll #(wait* env "quiet" 0) #(get % "note"))]
+                     (expect (= 25.0 (get r "cpu_percent")))
+                     (expect (str/includes? (get r "note") "No output")))
+                   ;; Work after a long quiet time ends the note.
+                   (swap! cpu-ms + 3000)
+                   (expect (nil? (get (poll #(wait* env "quiet" 0) #(nil? (get % "note"))) "note")))
+                   (shell* env {"command" "sleep 30" "id" "busy"})
+                   (let [start @samples
+                         results (doall (for [_ (range 40)]
+                                          (do (swap! cpu-ms + 3000)
+                                              (Thread/sleep 100)
+                                              (wait* env "busy" 0))))]
+                     (expect (> (- @samples start) 1))
+                     (expect (not-any? #(get % "note") results)))))
+               (finally (resources/stop-all! sid)))))))
 
 (defdescribe
   shell-bg-lifecycle-op-test
@@ -2188,6 +2189,24 @@
                  (finally (deliver gate true))))))))
 
 (defdescribe shell-live-snapshot-test
+  (it "starts a new automatic alias while cancellation of the same command is pending"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (let [stop! @#'shell/stop-bg-generation!
+                entered (promise)
+                release (promise)]
+            (try (with-redefs-fn
+                   {#'shell/stop-bg-generation! (fn [& args]
+                                                  (deliver entered true)
+                                                  @release
+                                                  (apply stop! args))}
+                   (fn []
+                     (expect (true? (py ctx "old = await shell('sleep 30')\nold.cancel()")))
+                     (expect (true? (deref entered 3000 nil)))
+                     (expect (= [true "running" false]
+                                (py ctx (str "new = await shell('sleep 30')\n"
+                                             "[new.id != old.id, new.status, new.already_running]"))))))
+                 (finally (deliver release true)))))))
   (it "reads a stale sample without waiting for the only refresh in a burst"
       (let [calls (atom 0)
             entered (promise)

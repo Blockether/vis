@@ -62,6 +62,7 @@ import re
 import shlex
 import tempfile
 import time
+from concurrent.futures import FIRST_COMPLETED, wait
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -852,6 +853,16 @@ def _closing_commands():
         _watch_view.reset(token)
 
 
+def _wait_for_view(view, seconds, process=None):
+    watch = view.changed()
+    try:
+        handles = [watch] if process is None else [watch, process]
+        done, _ = wait(handles, timeout=seconds, return_when=FIRST_COMPLETED)
+        return watch.result() if watch in done else None
+    finally:
+        watch.cancel()
+
+
 def _shell(command, seconds=120):
     """Wait for a terminal CLI result, stopping the owned process on timeout or Stop."""
     view = _watch_view.get()
@@ -881,7 +892,13 @@ def _shell(command, seconds=120):
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         break
-                    view.sleep(min(0.2, remaining))
+                    ready = _wait_for_view(view, remaining, handle)
+                    if ready == "closed":
+                        view.state()
+                        raise vis.Interrupted(view.view_id, reason=view.reason, note=view.note)
+                    if ready:
+                        view.events()
+                        view.state()
                 done = handle.result(timeout=0)
         except TimeoutError as error:
             raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s") from error
@@ -1576,7 +1593,12 @@ def _nap(
         remaining = deadline - time.monotonic()
         if remaining <= 0 or view.is_interrupted:
             return shape, manual_selection, shown_selection
-        if view.sleep(remaining):
+        ready = _wait_for_view(view, remaining)
+        if ready == "closed":
+            view.state()
+            return shape, manual_selection, shown_selection
+        if ready:
+            view.events()
             shape, manual_selection, shown_selection = _sync_surface_selection(
                 view, payload, shape, manual_selection, log_of, cache, shown_selection
             )

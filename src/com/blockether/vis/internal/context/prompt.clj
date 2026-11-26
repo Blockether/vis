@@ -809,13 +809,13 @@
                   (str/join "`, `" shim-imports) "`. See `doc(name)`."))
            (when (seq shim-globals)
              (str "\nPrebound globals (do not import): `" (str/join "`, `" shim-globals) "`."))
-           "\nUse extension tools by their bound names. Do not import extensions."
-           ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
-           "\nDirectory walks cap at 10,000 entries per block. Use narrow `ls` or `grep`."
-           "\nTool Tasks run when called. Use `await asyncio.wait([task], timeout=seconds)` "
-           "to wait without cancelling. Read fields for current state. Await Tasks for results. "
-           "Do not wrap Tasks or retry calls. Find Tasks with `asyncio.all_tasks()`. "
-           "If a child question releases a wait, reply and await the same Task. See `doc(\"python-sandbox\")`."
+            "\nUse bound tool names. Do not import extensions."
+            ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
+            "\nDirectory walks cap at 10,000 entries. Narrow `ls` or `grep`."
+            "\nTasks start on call. `await asyncio.wait([task], timeout=seconds)` does not cancel. "
+            "Read live fields. Await results. Do not wrap or retry Tasks. See `asyncio.all_tasks()`. "
+            "If a child asks, reply and await the same Task. See `doc(\"python-sandbox\")`."
+            "\nFor app input, `await asyncio.wait([app.changed()])`, then call `app.events()`."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block

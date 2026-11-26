@@ -14,6 +14,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import wait
 from typing import Any
 
 import blockether.vis.extension as vis
@@ -278,10 +279,20 @@ class Workflows(threading.Thread):
         )
         try:
             app = self.client().attach_app(app, owner="durable")
-            while True:
-                # The wait is also the pause between two looks at the runs.
-                for event in app.events(timeout=LOOK_S):
-                    self.handle(app, event)
-                self.paint(app)
+            watch = app.changed()
+            try:
+                while True:
+                    # The wait is also the pause between two looks at the runs.
+                    done, _ = wait([watch], timeout=LOOK_S)
+                    if done:
+                        for event in app.events():
+                            self.handle(app, event)
+                        if watch.result() == "closed":
+                            break
+                    self.paint(app)
+                    if done:
+                        watch = app.changed()
+            finally:
+                watch.cancel()
         except (GatewayError, TransportError, vis.Interrupted) as failure:  # the gateway stops with the worker
             log("the workflows app stops", repr(failure))

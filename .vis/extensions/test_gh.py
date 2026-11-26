@@ -13,6 +13,7 @@ that the engine would refuse turns a Clojure test red rather than failing in fro
 import json
 import pathlib
 import re
+from concurrent.futures import Future
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
@@ -1267,24 +1268,23 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
 ):
     operations = []
     requested_logs = []
-    waits = []
-    original_live = recorder.live
+    process = Future()
+    original_cancel = process.cancel
 
-    def live(envelope_json):
-        envelope = json.loads(envelope_json)
-        if envelope.get("timeout_ms"):
-            waits.append(envelope["timeout_ms"])
-            recorder.close(reason="interrupted", note="Stop watching")
-        return original_live(envelope_json)
+    def cancel():
+        operations.append("cancel")
+        return original_cancel()
 
-    def done():
-        operations.append("done")
-        return False
+    process.cancel = cancel
+    native_wait = gh.wait
 
-    monkeypatch.setattr(recorder, "live", live)
-    monkeypatch.setattr(vis, "shell", lambda _: SimpleNamespace(
-        done=done, cancel=lambda: operations.append("cancel"),
-    ))
+    def stop_during_wait(handles, **kwargs):
+        assert process in handles
+        recorder.close(reason="interrupted", note="Stop watching")
+        return native_wait(handles, **kwargs)
+
+    monkeypatch.setattr(gh, "wait", stop_during_wait)
+    monkeypatch.setattr(vis, "shell", lambda _: process)
     polls = []
 
     def poll():
@@ -1303,8 +1303,8 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
 
     assert outcome.ending == "interrupted"
     assert outcome.human_note == "Stop watching"
-    assert operations == ["done", "cancel"]
-    assert waits and max(waits) <= 200
+    assert operations == ["cancel"]
+    assert process.cancelled()
     # The stop releases the running CLI process; the job that had already failed is
     # still asked for, once, after the view is closed.
     assert requested_logs == ["95742028770"]
@@ -1336,15 +1336,14 @@ def test_stop_during_an_empty_run_nap_does_not_start_another_request(
     recorder, monkeypatch
 ):
     monkeypatch.setattr(gh, "FAST_TICK_S", 3.0)
-    original_live = recorder.live
+    native_wait = gh.wait
     calls = []
 
-    def live(envelope_json):
-        if json.loads(envelope_json).get("timeout_ms"):
-            recorder.close(reason="interrupted")
-        return original_live(envelope_json)
+    def stop_during_wait(handles, **kwargs):
+        recorder.close(reason="interrupted")
+        return native_wait(handles, **kwargs)
 
-    monkeypatch.setattr(recorder, "live", live)
+    monkeypatch.setattr(gh, "wait", stop_during_wait)
 
     def poll():
         calls.append("poll")
@@ -1387,33 +1386,25 @@ def test_cli_terminal_results_keep_the_exit_status(
 
 def test_cli_deadline_is_not_extended_by_view_events(recorder, monkeypatch):
     now = [0.0]
-    operations = []
-    original_live = recorder.live
+    native_wait = gh.wait
+    process = Future()
 
-    def live(envelope_json):
-        envelope = json.loads(envelope_json)
-        if envelope.get("timeout_ms"):
-            now[0] += 0.1
-            # Frequent surface events wake the wait but cannot renew the CLI deadline.
-            return json.dumps({"view_id": recorder.view_id, "is_open": True})
-        return original_live(envelope_json)
-
-    def result(timeout):
-        assert timeout == 0
-        raise TimeoutError
+    def wait_with_changes(handles, *, timeout, return_when):
+        now[0] += min(0.1, timeout)
+        # A surface change wakes each wait but must not renew the CLI deadline.
+        recorder.activate("go")
+        return native_wait(handles, timeout=1, return_when=return_when)
 
     monkeypatch.setattr(gh.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(recorder, "live", live)
-    monkeypatch.setattr(vis, "shell", lambda _: SimpleNamespace(
-        done=lambda: False, result=result, cancel=lambda: operations.append("cancel"),
-    ))
-    with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
+    monkeypatch.setattr(gh, "wait", wait_with_changes)
+    monkeypatch.setattr(vis, "shell", lambda _: process)
+    with vis.live("CLI test", [vis.ui.button("go", "Go")]) as view:
         with gh._watch_commands(view):
             exit_code, text = gh._capture("gh run view 42", seconds=0.3)
     assert exit_code == 124
     assert "timed out" in text
     assert now[0] == pytest.approx(0.3)
-    assert operations == ["cancel"]
+    assert process.cancelled()
     assert gh._watch_view.get() is None
 
 
@@ -1644,26 +1635,20 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
     now = [0.0]
     slept = []
 
-    original_live = recorder.live
+    native_wait = gh.wait
 
-    def live(envelope_json):
-        envelope = json.loads(envelope_json)
-        if envelope.get("timeout_ms"):
-            if not slept:
-                now[0] += 0.1
-                slept.append(0.1)
-                recorder.select("jobs", [selected])
-            else:
-                seconds = envelope["timeout_ms"] / 1000
-                now[0] += seconds
-                slept.append(seconds)
-                return json.dumps(
-                    {"view_id": recorder.view_id, "is_open": True, "timed_out": True}
-                )
-        return original_live(envelope_json)
+    def wait_with_selection(handles, *, timeout, return_when):
+        if not slept:
+            now[0] += 0.1
+            slept.append(0.1)
+            recorder.select("jobs", [selected])
+            return native_wait(handles, timeout=1, return_when=return_when)
+        now[0] += timeout
+        slept.append(timeout)
+        return native_wait(handles, timeout=0, return_when=return_when)
 
     monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
-    monkeypatch.setattr(recorder, "live", live)
+    monkeypatch.setattr(gh, "wait", wait_with_selection)
 
     def poll():
         events.append("poll")

@@ -140,6 +140,19 @@ def test_live_recorder_starts_a_cleared_log_record_over():
     assert recorder.node("log")["total_lines"] == 1
 
 
+class _Watch:
+    """A settled `view.changed()` double for the documented polling loop."""
+
+    def __init__(self, reason):
+        self.reason = reason
+
+    def result(self):
+        return self.reason
+
+    def cancel(self):
+        return True
+
+
 def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
     # The example previously omitted conclusion from the query and skipped final rows.
     import re
@@ -200,15 +213,19 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
             )
         )
 
-    def sleep(view, seconds):
+    def wait(handles, timeout):
         # A local event wakes early; the next GitHub request still waits five seconds.
-        waits.append(seconds)
-        now[0] += 0.1 if len(waits) == 1 else seconds
-        return len(waits) == 1
+        waits.append(timeout)
+        if len(waits) == 1:
+            now[0] += 0.1
+            return set(handles), set()
+        now[0] += timeout
+        return set(), set(handles)
 
     monkeypatch.setattr(vis, "shell", shell)
     monkeypatch.setattr(namespace["time"], "monotonic", lambda: now[0])
-    monkeypatch.setattr(vis.LiveView, "sleep", sleep)
+    monkeypatch.setattr(vis.LiveView, "changed", lambda view: _Watch("event"))
+    monkeypatch.setitem(namespace, "wait", wait)
     result = namespace["watch_run"](1)
     assert len(requests) == 2
     assert polled_at == [0.0, 5.0]
@@ -236,11 +253,12 @@ def test_live_view_documentation_handles_queued_and_growing_job_lists(
     now = [0.0]
     monkeypatch.setattr(namespace["time"], "monotonic", lambda: now[0])
 
-    def sleep(view, seconds):
-        now[0] += seconds
-        return False
+    def wait(handles, timeout):
+        now[0] += timeout
+        return set(), set(handles)
 
-    monkeypatch.setattr(vis.LiveView, "sleep", sleep)
+    monkeypatch.setattr(vis.LiveView, "changed", lambda view: _Watch("event"))
+    monkeypatch.setitem(namespace, "wait", wait)
     recorder = vis.testing.LiveRecorder(vis._host)
     monkeypatch.setattr(vis, "_host", recorder)
     snapshots = iter(
