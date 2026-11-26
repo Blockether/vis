@@ -427,6 +427,35 @@ describe('justified prose', () => {
     expect(view.getByRole('paragraph')).toHaveAttribute('data-justified-lines');
   });
 
+  it('checks a window resize at once, and a window drag once where it comes to rest', async () => {
+    const view = render(<Markdown>{coded}</Markdown>);
+    await settle();
+    const resized = () =>
+      act(() => {
+        window.dispatchEvent(new Event('resize'));
+      });
+    // A zoom changes the lines before the box observer reports anything.
+    width = 400;
+    let before = reads.mock.calls.length;
+    resized();
+    await frame();
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+    await frame(100);
+    // The drag starts as a single resize, then goes on.
+    width -= 10;
+    resized();
+    await frame(16);
+    before = reads.mock.calls.length;
+    for (let step = 0; step < 6; step++) {
+      width -= 10;
+      resized();
+      await frame(16);
+    }
+    expect(reads.mock.calls.length).toBe(before);
+    await frame(100);
+    expect(reads.mock.calls.length).toBeGreaterThan(before);
+  });
+
   it('releases its observer on unmount', async () => {
     const view = render(<Markdown>{coded}</Markdown>);
     await settle();

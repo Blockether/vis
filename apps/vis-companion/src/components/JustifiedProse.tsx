@@ -446,6 +446,8 @@ let placementQueued = false;
 let frame = 0;
 let compositions = 0;
 let sizes: ResizeObserver | null = null;
+let windowMovedAt = Number.NEGATIVE_INFINITY;
+let windowSettle = 0;
 
 /**
  * The nearest vertical scroller. Each ancestor that the walk passes remembers the answer,
@@ -640,8 +642,23 @@ function resizedAll(entries: ResizeObserverEntry[]) {
   compose(steps);
 }
 
-function windowResized() {
+function requestAll() {
   for (const paragraph of paragraphs.values()) request(paragraph);
+}
+
+/**
+ * A window resize can change fonts without a box size, as a zoom does. The first resize is
+ * read at once. A burst, such as a window drag, is read once where it comes to rest: each
+ * width change in it still reaches `resizedAll`, and a check of every paragraph in each
+ * frame of the drag found nothing new.
+ */
+function windowResized() {
+  const now = performance.now();
+  const burst = now - windowMovedAt < SETTLE_MS;
+  windowMovedAt = now;
+  window.clearTimeout(windowSettle);
+  if (burst) windowSettle = window.setTimeout(requestAll, SETTLE_MS);
+  else requestAll();
 }
 
 /** Only paragraphs a selection held are read again, once it no longer covers them. */
@@ -714,6 +731,7 @@ function unregister(paragraph: Paragraph) {
   awaitedFonts = null;
   cancelAnimationFrame(frame);
   frame = 0;
+  window.clearTimeout(windowSettle);
   sizes?.disconnect();
   sizes = null;
 }
