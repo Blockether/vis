@@ -730,6 +730,7 @@ RouterPatch: TypeAlias = RouterSelection | RouterFleet
 
 class SessionList(TypedDict):
     sessions: list[SessionRecord]
+    session_groups: NotRequired[list[SessionGroupRecord]]
 
 
 class SessionCreated(TypedDict):

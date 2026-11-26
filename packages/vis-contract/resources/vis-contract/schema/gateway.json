@@ -3332,6 +3332,13 @@
           "items": {
             "$ref": "#/$defs/session"
           }
+        },
+        "session_groups": {
+          "description": "Head of an uncut, active list only: the live groups of every project.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session_group"
+          }
         }
       },
       "required": [

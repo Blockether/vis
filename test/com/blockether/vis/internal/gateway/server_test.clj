@@ -5725,6 +5725,45 @@
           (expect (= 200 (:status response)))
           (expect (nil? (get (wire/parse-json (:body response)) "overview"))))))))
 
+;; Regression, user report in this Vis session: each fleet read was followed by one
+;; `/v1/session-groups` read for every project on the screen. The head carries the walls.
+(defdescribe
+  sessions-head-carries-every-live-group-wall
+  (it
+    "the uncut head carries every live group, and no cut, archive or tail does"
+    (let [groups
+          (atom [{"id" "g-1" "project_id" "p-1" "name" "Release" "color" "blue" "session_count" 2}])
+
+          answer
+          (fn [query]
+            (with-redefs [state/list-sessions-page
+                          (fn [_ _]
+                            {:sessions [] :awaiting [] :total 0 :limit 20 :next-cursor nil :has-more false})
+
+                          state/projects-overview
+                          (constantly {:projects []})
+
+                          state/live-session-groups
+                          (fn [] @groups)]
+
+              (#'sessions-api/list-sessions-handler {:query-params query})))
+
+          carried
+          (fn [response]
+            (get (wire/parse-json (:body response)) "session_groups"))
+
+          head
+          (answer {"limit" "20"})]
+
+      (expect (= @groups (carried head)))
+      (swap! groups assoc-in [0 "name"] "Shipped")
+      ;; a renamed group is a new head, never a 304 of the old one
+      (expect (not= (get-in head [:headers "ETag"])
+                    (get-in (answer {"limit" "20"}) [:headers "ETag"])))
+      (expect (nil? (carried (answer {"limit" "20" "root" "/workspace"}))))
+      (expect (nil? (carried (answer {"limit" "20" "archived" "only"}))))
+      (expect (nil? (carried (answer {"limit" "20" "after" "2:-4000:a"})))))))
+
 ;; Regression, user report (paraphrased: "the list keeps jumping while I read it"): the
 ;; navigator key used to LEAD with a band, so a run parked on a human was lifted into
 ;; the first window - moving every row under the reader and pushing another session out

@@ -32,25 +32,28 @@ function row(id: string): Session {
   };
 }
 
-function mount() {
+function mount({ carried = false } = {}) {
   const server = { rows: Array.from({ length: 12 }, (_, index) => row(`filed-${index}`)) };
   const group: SessionGroup = {
     id: GROUP, project_id: STORY_NEWER_PROJECT.projectId, name: 'Busy work', color: 'blue',
     session_count: server.rows.length,
   };
+  const wall = () => ({
+    project_id: STORY_NEWER_PROJECT.projectId, groups: [structuredClone(group)], total: 1,
+    session_total: server.rows.length, offset: 0, limit: null, has_more: false,
+  });
   // Each read answers with fresh copies, as the gateway does.
   const client = {
     base: conn.url,
     heldProjectPage: () => null,
     heldSessionGroups: () => null,
+    // The wall the last fleet head carried, or none, as from an older gateway.
+    headSessionGroups: vi.fn(() => (carried ? wall() : null)),
     isSessionDeleted: () => false,
     listProjectPage: vi.fn(async () => ({
       rows: [], total: 0, awaiting: [], grouped: structuredClone(server.rows), nextCursor: '',
     })),
-    listSessionGroups: vi.fn(async () => ({
-      groups: [structuredClone(group)], total: 1, session_total: server.rows.length,
-      offset: 0, limit: null, has_more: false,
-    })),
+    listSessionGroups: vi.fn(async () => wall()),
     prefetchTranscript: vi.fn(),
   };
   const context: SessionRowsContext = {
@@ -95,6 +98,14 @@ function mount() {
       });
       await act(async () => {});
     },
+    /** A fleet read moved this machine: wait for the page read only. */
+    async move() {
+      const pages = client.listProjectPage.mock.calls.length;
+      revision += 1;
+      view.rerender(project());
+      await waitFor(() => expect(client.listProjectPage.mock.calls.length).toBeGreaterThan(pages));
+      await act(async () => {});
+    },
   };
 }
 
@@ -133,5 +144,17 @@ describe('session group revalidation', () => {
 
     await refresh();
     expect(client.listSessionGroups).toHaveBeenCalledTimes(2);
+  });
+
+  // Regression, user report in this Vis session: each fleet read made every project on
+  // the screen read its own wall, one request for each project. The head carries them.
+  it('takes the live wall from the fleet head, without a read of its own', async () => {
+    const { client, move } = mount({ carried: true });
+    await waitFor(() => expect(document.querySelectorAll('[data-session-id]')).toHaveLength(12));
+    const asked = client.headSessionGroups.mock.calls.length;
+
+    await move();
+    expect(client.headSessionGroups.mock.calls.length).toBeGreaterThan(asked);
+    expect(client.listSessionGroups).not.toHaveBeenCalled();
   });
 });

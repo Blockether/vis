@@ -44,6 +44,7 @@ function mount(initialRows = statusRows()) {
     base: conn.url,
     heldProjectPage: () => null,
     heldSessionGroups: () => null,
+    headSessionGroups: () => null,
     isSessionDeleted: () => false,
     listProjectPage: vi.fn(async (_root: string, limit: number, after: string) => {
       const start = after ? Number(after.replace('after-', '')) : 0;

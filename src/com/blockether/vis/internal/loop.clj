@@ -296,6 +296,11 @@
   ([project-id] (session-groups project-id {}))
   ([project-id opts] (persistance/db-list-session-groups (db-info) project-id opts)))
 
+(defn live-session-groups
+  "The live groups of every project, in one read, each with a live :session-count."
+  []
+  (persistance/db-list-session-groups (db-info) :all {}))
+
 (defn archived-session-group-ids
   "The ids (strings) of every archived group, across every project. One read backs
    the whole sessions listing: a group's archive hides its sessions without

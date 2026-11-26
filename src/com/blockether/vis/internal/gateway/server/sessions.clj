@@ -268,7 +268,9 @@
                    (mapv #(dissoc % "server_time_ms") (:awaiting payload))
                    (mapv #(dissoc % "server_time_ms") (:grouped payload))
                    (some-> (:overview payload)
-                           (dissoc :server_time_ms))]))
+                           (dissoc :server_time_ms))
+                   ;; A renamed or filed group moves no row, but the head carries the walls.
+                   (:session-groups payload)]))
 
 (def ^:private default-session-window
   "Rows a list read is answered with when it named neither a window nor a cut. Nothing
@@ -311,7 +313,7 @@
           (update (http/json-response payload) :headers merge {"ETag" etag "Cache-Control" "no-cache"}))))))
 
 (defn- session-list-payload
-  [{:keys [root project-id grouped archived dirty after] :as opts} group-limit group-offset]
+  [{:keys [root project-id grouped archived dirty after group-id ids id-prefix] :as opts} group-limit group-offset]
   (let [;; The shelves follow the same page as the group list.
         group-ids
         (when (and (= "aside" grouped) (some? group-limit))
@@ -338,7 +340,12 @@
              :next-cursor (:next-cursor page)
              :has-more (:has-more page)}
       (seq grouped) (assoc :grouped (:grouped page))
-      (nil? after) (assoc :overview (state/projects-overview :all dirty (:facts page))))))
+      (nil? after) (assoc :overview (state/projects-overview :all dirty (:facts page)))
+      ;; The live wall of EVERY project rides the fleet head: one read instead of
+      ;; one `/v1/session-groups` read for each project on the screen.
+      (and (nil? after) (nil? root) (empty? (str project-id)) (nil? group-id) (empty? ids)
+           (nil? id-prefix) (= :exclude archived))
+      (assoc :session-groups (state/live-session-groups)))))
 
 (defn- list-sessions-handler
   "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=&grouped=&include_empty=] —

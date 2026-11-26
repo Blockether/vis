@@ -5967,6 +5967,24 @@
       (expect (= [] (persistance/db-list-session-groups s (:id p) {:archived :only})))
       (expect (= #{} (persistance/db-archived-session-group-ids s))))))
 
+(defdescribe
+  every-project-s-live-groups-in-one-read-test
+  "`:all` answers the live groups of every project in one read: the head of the session
+   list carries them instead of one wall read for each project on a screen."
+  (it
+    "lists each project's live groups and leaves the archive out"
+    (let [s (h/store)
+          vis (persistance/db-create-project! s {:name "vis"})
+          spel (persistance/db-create-project! s {:name "spel"})
+          release (persistance/db-create-session-group! s (:id vis) {:name "Release"})
+          _ (persistance/db-create-session-group! s (:id spel) {:name "Browser"})
+          _ (persistance/db-update-session-group! s (:id release) {:archived? true})
+          gateway (persistance/db-create-session-group! s (:id vis) {:name "Gateway"})
+          names (fn [] (set (map (juxt :project-id :name) (persistance/db-list-session-groups s :all {}))))]
+      (expect (= #{[(:id spel) "Browser"] [(:id vis) "Gateway"]} (names)))
+      (persistance/db-update-session-group! s (:id gateway) {:name "Gateway v2"})
+      (expect (= #{[(:id spel) "Browser"] [(:id vis) "Gateway v2"]} (names))))))
+
 ;; Regression, issue #155: session usage was summed from the rollup a turn writes
 ;; when it ENDS, so a stopped or still-running turn dropped its tokens and its
 ;; cost out of the total for good, and the two cache percentages were measured

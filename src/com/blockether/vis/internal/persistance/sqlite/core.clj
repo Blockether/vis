@@ -3734,23 +3734,30 @@
 
    `:archived` says which groups answer, in the ONE archive vocabulary sessions
    and projects also read: `:exclude` (the default) hides the archived ones,
-   `:include` returns both, `:only` returns the archive alone."
+   `:include` returns both, `:only` returns the archive alone.
+
+   `project-id` `:all` lists the groups of EVERY project in one read, each
+   project's groups in the same order. The head of the session list carries the
+   live ones, so a client paints every project's groups without one read for each
+   project; the answer is held while the store file is unchanged."
   [db-info project-id {:keys [archived]}]
   (if (and (ds db-info) project-id)
-    (mapv row->session-group
-          (query! db-info
-                  {:select session-group-select-cols
-                   :from [[:session_group :g]]
-                   :where (into [:and [:= :g.project_id (->id project-id)]]
-                                (case (or archived :exclude)
-                                  :include
-                                  nil
+    (let [all? (= :all project-id)
+          read #(mapv row->session-group
+                      (query! db-info
+                              {:select session-group-select-cols
+                               :from [[:session_group :g]]
+                               :where (into (if all? [:and] [:and [:= :g.project_id (->id project-id)]])
+                                            (case (or archived :exclude)
+                                              :include
+                                              nil
 
-                                  :only
-                                  [[:not= :g.archived_at nil]]
+                                              :only
+                                              [[:not= :g.archived_at nil]]
 
-                                  [[:= :g.archived_at nil]]))
-                   :order-by [[:active_at :desc] [:g.created_at :desc] [:g.rowid :desc]]}))
+                                              [[:= :g.archived_at nil]]))
+                               :order-by [[:active_at :desc] [:g.created_at :desc] [:g.rowid :desc]]}))]
+      (if all? (read-at-version db-info [:session-groups (or archived :exclude)] read) (read)))
     []))
 
 (defn db-archived-session-group-ids

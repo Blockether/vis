@@ -1414,6 +1414,8 @@ type SessionsWindow = {
   total: number;
   /** Stable project and fleet totals, present on the head window only. */
   overview: GatewayOverview | null;
+  /** The live groups of every project, on the head window only; `null` when not known. */
+  sessionGroups: SessionGroup[] | null;
 };
 
 /**
@@ -1944,6 +1946,10 @@ export class GatewayClient {
   >();
   /** Backing store refreshed by the head of every list read. */
   private overview: GatewayOverview | null;
+  /** The live groups of every project from the last head read, or `null`. */
+  private headGroups: SessionGroup[] | null = null;
+  /** The walls cut from `headGroups`, by root, so one head answers one page object. */
+  private readonly headWalls = new Map<string, SessionGroupPage>();
   constructor(conn: GatewayConn) {
     this.base = normalizeBase(conn.url);
     this.token = conn.token;
@@ -4498,9 +4504,12 @@ export class GatewayClient {
     // durable head ETag back onto those exact rows, so the first cold-start request
     // can be a 304 instead of re-downloading the window.
     if (!pinned && cached?.length) {
-      const persisted = readSnapshot<{ etag?: unknown; total?: unknown; digest?: unknown }>(
-        durablePin,
-      );
+      const persisted = readSnapshot<{
+        etag?: unknown;
+        total?: unknown;
+        digest?: unknown;
+        groups?: unknown;
+      }>(durablePin);
       // The rows on disk have to BE the window that validator was issued for: the
       // head of a list of `total`, which is the whole of a short list and
       // `SESSIONS_PAGE` of a long one. The digest also proves that they are the same
@@ -4523,6 +4532,10 @@ export class GatewayClient {
                 rows: cached,
                 total: persisted.total,
                 overview: this.overview,
+                // The validator covers the walls too, so a 304 confirms the saved ones.
+                sessionGroups: Array.isArray(persisted.groups)
+                  ? (persisted.groups as SessionGroup[])
+                  : null,
               },
             ],
           ]),
@@ -4541,6 +4554,7 @@ export class GatewayClient {
         sessions?: Session[];
         total?: number;
         overview?: GatewayOverview;
+        session_groups?: SessionGroup[];
       }>(
         'GET',
         `/v1/sessions?order=recent&limit=${SESSIONS_PAGE}${
@@ -4566,6 +4580,10 @@ export class GatewayClient {
         rows,
         total: res.data?.total ?? rows.length,
         overview,
+        sessionGroups:
+          after === HEAD_CURSOR && Array.isArray(res.data?.session_groups)
+            ? res.data.session_groups
+            : null,
       };
     };
 
@@ -4574,6 +4592,10 @@ export class GatewayClient {
     // The stable project totals ride BESIDE the window and are complete there,
     // whatever depth this device is holding.
     this.overview = head.overview;
+    if (head.sessionGroups !== this.headGroups) {
+      this.headGroups = head.sessionGroups;
+      this.headWalls.clear();
+    }
     // Active work warms in the background. A row that FINISHED while this run watched
     // is different: wait for its newest page before returning it, so NEW never outruns
     // its transcript. Rows seen for the first time, and rows saved by an earlier run,
@@ -4604,6 +4626,7 @@ export class GatewayClient {
         etag: head.etag,
         total: head.total,
         digest: listDigest(rows, this.overview),
+        groups: head.sessionGroups,
       });
     } else {
       GatewayClient.sessionsValidators.delete(pinKey);
@@ -5240,15 +5263,52 @@ export class GatewayClient {
       if (validators.size > GROUP_WALL_VALIDATOR_LIMIT)
         validators.delete(validators.keys().next().value!);
     }
-    // The page of the wall a project OPENS on is saved beside its head, so the next cold
-    // start names its bands before this read comes back (`heldSessionGroups`). A poll
-    // that finds the same wall does not write it again.
-    if (opens && Array.isArray(page?.groups)) {
-      const current = snapshots.get(durable) as SavedGroupWall | undefined;
-      if (current?.key !== wall || current.page !== page || current.etag !== (etag ?? undefined))
-        writeSnapshot(durable, etag ? { key: wall, etag, page } : { key: wall, page });
-    }
+    if (opens && Array.isArray(page?.groups)) this.saveOpeningWall(root, wall, page, etag);
     return page;
+  }
+
+  /**
+   * The live wall of `root` as the last head of the session list carried it, or `null`
+   * when that head carried no walls (an older gateway, or a head held from disk) or does
+   * not know the project. It is the page `listSessionGroups(root)` answers, so a project
+   * takes it on each fleet read instead of one `/v1/session-groups` read of its own.
+   */
+  headSessionGroups(root: string): SessionGroupPage | null {
+    const held = this.headWalls.get(root);
+    if (held) return held;
+    const project = this.overview?.projects.find((item) => item.root === root);
+    if (!this.headGroups || !project) return null;
+    const pid = project.project_id ?? null;
+    const groups = pid ? this.headGroups.filter((group) => group.project_id === pid) : [];
+    const page: SessionGroupPage = {
+      project_id: pid,
+      groups,
+      total: groups.length,
+      session_total: groups.reduce((sum, group) => sum + (group.session_count ?? 0), 0),
+      limit: null,
+      offset: 0,
+      has_more: false,
+    };
+    this.headWalls.set(root, page);
+    this.saveOpeningWall(root, this.groupWallKey(root, 'exclude'), page);
+    return page;
+  }
+
+  /**
+   * Save the page of the wall a project OPENS on beside its head, so the next cold start
+   * names its bands before a read comes back (`heldSessionGroups`). The same wall is not
+   * written again.
+   */
+  private saveOpeningWall(
+    root: string,
+    wall: string,
+    page: SessionGroupPage,
+    etag?: string | null,
+  ): void {
+    const durable = this.snapshotKey('project-groups', root);
+    const current = snapshots.get(durable) as SavedGroupWall | undefined;
+    if (current?.key !== wall || current.page !== page || current.etag !== (etag ?? undefined))
+      writeSnapshot(durable, etag ? { key: wall, etag, page } : { key: wall, page });
   }
 
   /**

@@ -108,6 +108,7 @@ function machine(overrides: Machine = {}) {
     base: 'https://story.example.com',
     heldProjectPage: () => page,
     heldSessionGroups: () => null,
+    headSessionGroups: () => null,
     listProjectPage: vi.fn(async () => page),
     isSessionDeleted: () => false,
     listSessionGroups: vi.fn(async () => wall([WALLET_GROUP])),

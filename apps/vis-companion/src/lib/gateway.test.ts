@@ -338,6 +338,71 @@ describe('GatewayClient session-list validators', () => {
     expect(cold.projectsOverview()).toEqual(overview);
     expect(fetches).toHaveBeenCalledOnce();
   });
+
+  // Regression, user report in this Vis session: each fleet read was followed by one
+  // `/v1/session-groups` read for every project on the screen. The head carries the walls.
+  it('answers every live wall from the head of the list, also after a 304', async () => {
+    const group = (id: string, project_id: string, session_count: number) => ({
+      id, project_id, name: id, color: 'blue', session_count, archived_at: null,
+    });
+    const overview = {
+      projects: [
+        { root: '/Users/dev/alpha', project_id: 'p-alpha', name: 'alpha', session_count: 9 },
+        { root: '/Users/dev/beta', project_id: 'p-beta', name: 'beta', session_count: 2 },
+        { root: '/Users/dev/loose', name: '', session_count: 1 },
+      ],
+      project_count: 3,
+      session_count: 12,
+      live_count: 0,
+      awaiting_count: 0,
+    };
+    const session_groups = [group('a1', 'p-alpha', 3), group('b1', 'p-beta', 1), group('a2', 'p-alpha', 2)];
+    const fetches = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            sessions: [{ id: 'a', title: 'A', workspace: { root: '/Users/dev/alpha' } }],
+            total: 1,
+            overview,
+            session_groups,
+          }),
+          {
+            headers: { ETag: '"head-v1"' },
+          },
+        ),
+      )
+      .mockResolvedValue(new Response(null, { status: 304 }));
+    vi.stubGlobal('fetch', fetches);
+    const client = new (await import('./gateway')).GatewayClient(conn);
+    expect(client.headSessionGroups('/Users/dev/alpha')).toBeNull();
+
+    await client.listSessions();
+    await client.listSessions();
+    expect(fetches).toHaveBeenCalledTimes(2);
+    const alpha = client.headSessionGroups('/Users/dev/alpha');
+    expect(alpha).toEqual({
+      project_id: 'p-alpha',
+      groups: [session_groups[0], session_groups[2]],
+      total: 2,
+      session_total: 5,
+      limit: null,
+      offset: 0,
+      has_more: false,
+    });
+    expect(client.headSessionGroups('/Users/dev/loose')?.groups).toEqual([]);
+    expect(client.headSessionGroups('/Users/dev/unknown')).toBeNull();
+    // The next cold start names the bands before any read comes back.
+    expect(client.heldSessionGroups('/Users/dev/alpha')).toEqual(alpha);
+
+    // A cold start revalidated with a 304 still answers the walls from its saved head.
+    (await import('./gateway')).persistGatewayCaches();
+    vi.resetModules();
+    const cold = new (await import('./gateway')).GatewayClient(conn);
+    await cold.listSessions();
+    expect(fetches).toHaveBeenCalledTimes(3);
+    expect(cold.headSessionGroups('/Users/dev/alpha')).toEqual(alpha);
+  });
 });
 
 describe('GatewayClient project-page snapshots', () => {

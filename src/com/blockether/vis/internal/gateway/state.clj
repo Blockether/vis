@@ -10483,6 +10483,12 @@
   ([pid] (list-session-groups pid {}))
   ([pid opts] (mapv session-group-wire (lp/session-groups pid opts))))
 
+(defn live-session-groups
+  "Wire groups that are not archived, of every project, freshest first inside each
+   project: every live wall the session-list head carries."
+  []
+  (mapv session-group-wire (lp/live-session-groups)))
+
 (defn list-session-groups-page
   "One WINDOW of a project's groups, with the facts a pager prints:
    `{:groups … :total … :session-total … :limit … :offset … :has-more …}`.

@@ -87,7 +87,14 @@ import {
   writeProjectFold,
 } from '../../lib/project-fold';
 import { SESSION_DRAG_MIME, useSessionDropTarget } from '../../lib/session-drag';
-import type { ArchiveView, BandWindow, GatewayConn, Session, SessionGroup } from '../../lib/types';
+import type {
+  ArchiveView,
+  BandWindow,
+  GatewayConn,
+  Session,
+  SessionGroup,
+  SessionGroupPage,
+} from '../../lib/types';
 import { unreadAfterVisit } from '../../lib/unread';
 import { isKeyboardInputElement } from '../../lib/viewport';
 import { SHELF_ROWS, nestAgentSessions, shelfRows, type NestedSession } from './agent-nesting';
@@ -1309,7 +1316,12 @@ export const ProjectGroup = memo(function ProjectGroup({
   // one whose head window did not move: that read is this wall's only safety net.
   // A wall comes back on screen without a read of its own: the list reads every machine
   // when it shows again, and that read moves `reads`. Only a new question reads the wall.
+  // The head of that fleet read carries the live wall of every project
+  // (`headSessionGroups`), so the live view takes it from there. The wall is read here
+  // for the archive, for a head without walls, and after a local edit until an answer
+  // that follows the edit lands: a head that left before the edit holds the old wall.
   const wallAsked = useRef('');
+  const wallRead = useRef(0);
   const wasVisible = useRef(isVisible);
   useEffect(() => {
     const isBack = isVisible && !wasVisible.current;
@@ -1317,23 +1329,30 @@ export const ProjectGroup = memo(function ProjectGroup({
     if (!isVisible || (isBack && wallAsked.current !== '')) return;
     const question = `${machineKey(conn)}\u0000${root}\u0000${groupArchived}\u0000${bandOffset}\u0000${groupsRead}\u0000${reads}`;
     if (question === wallAsked.current) return;
+    const api = getClient(conn);
+    const take = (answer: SessionGroupPage | null) => {
+      wallAsked.current = question;
+      wallRead.current = groupsRead;
+      setGroups((current) => keepUnchanged(current, answer?.groups ?? []));
+      setGroupTotal(answer?.total ?? 0);
+      setGroupSessionTotal(answer?.session_total ?? 0);
+      setGroupsReady({ view: groupArchived, offset: bandOffset, read: groupsRead });
+      noteRefresh('groups', groupsRead);
+    };
+    const carried =
+      groupArchived === 'exclude' && !bandWindow && wallRead.current === groupsRead
+        ? api.headSessionGroups(root)
+        : null;
+    if (carried) {
+      take(carried);
+      return;
+    }
     const control = new AbortController();
     let live = true;
     void (async () => {
       try {
-        const answer = await getClient(conn).listSessionGroups(
-          root,
-          control.signal,
-          groupArchived,
-          bandWindow,
-        );
-        if (!live) return;
-        wallAsked.current = question;
-        setGroups((current) => keepUnchanged(current, answer?.groups ?? []));
-        setGroupTotal(answer?.total ?? 0);
-        setGroupSessionTotal(answer?.session_total ?? 0);
-        setGroupsReady({ view: groupArchived, offset: bandOffset, read: groupsRead });
-        noteRefresh('groups', groupsRead);
+        const answer = await api.listSessionGroups(root, control.signal, groupArchived, bandWindow);
+        if (live) take(answer);
       } catch {
         // A project whose groups cannot be read paints as an ungrouped one. Nothing
         // else in this band depends on them, and an unreachable machine is said once,
