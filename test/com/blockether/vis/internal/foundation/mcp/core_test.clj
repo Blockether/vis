@@ -1413,6 +1413,48 @@
                        (expect (not-any? #(= ["resources/read" {"uri" "skill://pdf-processing/secret.md"}] %)
                                          @sent)))))))
 
+(defdescribe mcp-warm-discovery-test
+  (it "requires explicit discovery on a cold catalog and never lists on a warm lookup"
+      (let [sent (atom [])
+            listed (atom 0)]
+        (with-catalog
+          sent
+          (fn [_]
+            (with-redefs [client/list-tools (fn [conn]
+                                             (swap! listed inc)
+                                             (swap! (:tools conn)
+                                                    (fn [rows]
+                                                      (if (some #(= "app-only" (get % "name")) rows)
+                                                        rows
+                                                        (conj rows {"name" "app-only"
+                                                                    "_meta" {"ui" {"visibility" ["app"]}}})))))]
+              (tpc/with-own
+                [ctx {}]
+                (bind-verb! ctx)
+                (ep/bind-ctx! ctx (servers-ctx "alpha"))
+                (let [cold (ep/run-python-block
+                             ctx
+                             (str "import inspect\n"
+                                  "for lookup in (lambda: alpha.resolve_library_id, lambda: dir(alpha), lambda: dir(alpha.prompts)):\n"
+                                  "    try:\n        lookup()\n"
+                                  "    except RuntimeError as e:\n        assert 'discovery' in str(e)\n"
+                                  "    else:\n        raise AssertionError('cold lookup succeeded')\n"))]
+                  (expect (nil? (:error cold)))
+                  (expect (zero? @listed))
+                  (expect (empty? @sent)))
+                (expect (nil? (:error (ep/run-python-block ctx "doc(alpha)"))))
+                (let [before [@listed @sent]
+                      warm (ep/run-python-block
+                             ctx
+                             (str "assert dir(alpha) == ['prompts', 'resolve_library_id']\n"
+                                  "assert dir(alpha.prompts) == ['code_review', 'greet']\n"
+                                  "assert not hasattr(alpha, 'made_up') and not hasattr(alpha.prompts, 'made_up')\n"
+                                  "assert not hasattr(alpha, 'app_only')\n"
+                                  "assert inspect.signature(alpha['resolve-library-id']).parameters['query'].annotation is str\n"
+                                  "assert inspect.signature(alpha.prompts.greet).parameters['who'].annotation is str\n"))]
+                  (expect (nil? (:error warm)))
+                  (expect (= before [@listed @sent]))))))))))
+
 (defdescribe
   mcp-identifier-name-test
   (it "calls the tool and gets the prompt that an identifier names"
@@ -1444,7 +1486,7 @@
                  ctx
                  (str
                    "import asyncio\n"
-                   "work = alpha.resolve_library_id(query='x')\n"
+                   "_ = doc(alpha)\nwork = alpha.resolve_library_id(query='x')\n"
                    "assert isinstance(work, asyncio.Task), type(work)\n"
                    "assert work.get_name().endswith(' alpha.resolve_library_id'), work.get_name()\n"
                    "r = await work\n"
@@ -1493,7 +1535,8 @@
       (with-catalog
         (atom [])
         (fn [_call!]
-          (with-redefs [client/list-tools (constantly typed)]
+          (with-redefs [client/list-tools (fn [conn]
+                                              (reset! (:tools conn) typed))]
             (tpc/with-own
               [ctx {}]
               (bind-verb! ctx)
@@ -1501,7 +1544,7 @@
               (let [result (ep/run-python-block
                              ctx
                              (str
-                               "import inspect\n" "sig = inspect.signature(alpha.save_issue)\n"
+                               "import inspect\n_ = doc(alpha)\n" "sig = inspect.signature(alpha.save_issue)\n"
                                "for p in sig.parameters.values():\n"
                                "    print(str(p).replace(' = ...', '').replace('=...', ''))\n"
                                "print(sig.return_annotation.__name__,"
@@ -1531,7 +1574,7 @@
                 [ctx {}]
                 (bind-verb! ctx)
                 (ep/bind-ctx! ctx (servers-ctx "alpha"))
-                (expect (nil? (:error (ep/run-python-block ctx "slow = alpha.resolve_library_id(query='slow')"))))
+                (expect (nil? (:error (ep/run-python-block ctx "_ = doc(alpha)\nslow = alpha.resolve_library_id(query='slow')"))))
                 (expect (true? (deref started 3000 false)))
                 (let [result (ep/run-python-block
                                ctx
@@ -1565,7 +1608,7 @@
                   freed
                   (ep/run-python-block
                     ctx
-                    "print((await alpha.resolve_library_id(query='x'))['tool'])\n")]
+                    "_ = doc(alpha)\nprint((await alpha.resolve_library_id(query='x'))['tool'])\n")]
 
               (expect (nil? (:error taken)))
               (expect (= "5 module ['mcp_time'] <mcp_time: doc(mcp_time) prints its page>\n"

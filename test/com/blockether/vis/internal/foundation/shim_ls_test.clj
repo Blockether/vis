@@ -633,6 +633,17 @@
           (out ctx code))))))
 
 ;; `as_paths` answers the same walk as the flat list the next call actually needs.
+(defdescribe ls-as-paths-options-test
+  (it "rejects page options before walking when the result is a plain list"
+      (let [ctx (sandbox)]
+        (expect (= "page options refused\n"
+                   (out ctx
+                        (str "for options in ({'limit': 1}, {'limit': 250}, {'offset': 0}):\n"
+                             "    try:\n        ls('not-a-directory', as_paths=True, **options)\n"
+                             "    except ValueError as e:\n        assert 'as_paths' in str(e)\n"
+                             "    else:\n        raise AssertionError('page option accepted')\n"
+                             "print('page options refused')")))))))
+
 (defdescribe
   ls-shim-as-paths-test
   "`as_paths=True` answers a flat list of full paths instead of the tree."

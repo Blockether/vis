@@ -2431,6 +2431,20 @@
         (expect (nil? @f)))
       (expect (= 21 (raw-count s :session_soul)))
       (expect (= 1 (count (persistance/db-list-session-turn-iterations s tid))))))
+  (it "keeps a memory store writable after another connection prevents a transaction from starting"
+      (let [store (h/store)
+            attempt! (private-core-fn "sqlite-write-attempt!")]
+        (try
+          (with-open [blocker (jdbc/get-connection (:datasource store))]
+            (jdbc/execute! blocker ["BEGIN IMMEDIATE"])
+            (let [failure (try (attempt! store (constantly :unexpected))
+                               (catch java.sql.SQLException e e))]
+              (expect (instance? java.sql.SQLException failure))
+              (expect (str/includes? (ex-message failure) "SQLITE_LOCKED")))
+            (jdbc/execute! blocker ["ROLLBACK"])
+            (let [sid (h/store-session! store {:channel :cli :title "After contention"})]
+              (expect (= "After contention" (:title (persistance/db-get-session store sid))))))
+          (finally (persistance/db-dispose-connection! store)))))
   (it "retries a whole SQLite write operation after a busy snapshot failure"
       (let [attempts
             (atom 0)

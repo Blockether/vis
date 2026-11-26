@@ -60,77 +60,124 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 184
-    assert len(operations) == 223
+    assert len(routes) == 185
+    assert len(operations) == 224
+    assert all(
+        operation["tag"] in {"observation", "mutation"} for operation in operations
+    )
+    assert (
+        by_path["/v1/sessions/:sid/council/changed"]["operations"]["post"]["tag"]
+        == "observation"
+    )
     assert Counter(operation["request"] for operation in operations) == {
         "none": 135,
         "json": 82,
-        "binary": 6,
+        "binary": 7,
     }
-    assert by_path["/v1/decisions/models"]["operations"]["get"] == {
-        "request": "none",
-        "response": "json",
-        "response_schema": "decision_models",
-    }
-    assert by_path["/v1/decisions/models"]["operations"]["post"] == {
-        "request": "binary",
-        "response": "json",
-        "response_schema": "decision_model",
-    }
-    assert by_path["/v1/decisions/models/:model-ref"]["operations"]["get"] == {
-        "request": "none",
-        "response": "json",
-        "response_schema": "decision_model",
-    }
-    assert by_path["/v1/decisions/aliases/:alias"]["operations"]["put"] == {
-        "request": "json",
-        "response": "json",
-        "response_schema": "decision_alias",
-    }
-    assert by_path["/v1/decisions/training/jobs"]["operations"]["post"] == {
-        "request": "json",
-        "response": "json",
-        "response_schema": "decision_job",
-    }
-    assert by_path["/v1/decisions/training/jobs/:job-id"]["operations"]["delete"] == {
-        "request": "none",
-        "response": "json",
-        "response_schema": "decision_job",
-    }
-    assert by_path["/v1/systemone"]["operations"]["post"] == {
-        "request": "json",
-        "response": "json",
-        "response_schema": "decision_answer",
-    }
-    assert by_path["/v1/speech/voices"]["operations"]["post"] == {
-        "request": "binary",
-        "response": "json",
-        "response_schema": "speech_voice",
-        "extension": "callback",
-    }
-    assert by_path["/v1/speech/voices/:voice-id"]["operations"]["patch"] == {
-        "request": "json",
-        "response": "json",
-        "response_schema": "speech_voice",
-        "extension": "callback",
-    }
-    assert by_path["/v1/settings"]["operations"]["patch"] == {
-        "request": "json",
-        "response": "json",
-        "request_schema": "settings_batch",
-        "response_schema": "settings",
-    }
-    assert by_path["/v1/extensions/reload"]["operations"]["post"] == {
-        "request": "json",
-        "response": "json",
-        "request_schema": "settings_target",
-        "response_schema": "extension_reload",
-    }
+
+    def same_transport(actual, expected):
+        return {key: actual.get(key) for key in expected} == expected
+
+    assert same_transport(
+        by_path["/v1/decisions/models"]["operations"]["get"],
+        {
+            "request": "none",
+            "response": "json",
+            "response_schema": "decision_models",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/decisions/models"]["operations"]["post"],
+        {
+            "request": "binary",
+            "response": "json",
+            "response_schema": "decision_model",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/decisions/models/:model-ref"]["operations"]["get"],
+        {
+            "request": "none",
+            "response": "json",
+            "response_schema": "decision_model",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/decisions/aliases/:alias"]["operations"]["put"],
+        {
+            "request": "json",
+            "response": "json",
+            "response_schema": "decision_alias",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/decisions/training/jobs"]["operations"]["post"],
+        {
+            "request": "json",
+            "response": "json",
+            "response_schema": "decision_job",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/decisions/training/jobs/:job-id"]["operations"]["delete"],
+        {
+            "request": "none",
+            "response": "json",
+            "response_schema": "decision_job",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/systemone"]["operations"]["post"],
+        {
+            "request": "json",
+            "response": "json",
+            "response_schema": "decision_answer",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/speech/voices"]["operations"]["post"],
+        {
+            "request": "binary",
+            "response": "json",
+            "response_schema": "speech_voice",
+            "extension": "callback",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/speech/voices/:voice-id"]["operations"]["patch"],
+        {
+            "request": "json",
+            "response": "json",
+            "response_schema": "speech_voice",
+            "extension": "callback",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/settings"]["operations"]["patch"],
+        {
+            "request": "json",
+            "response": "json",
+            "request_schema": "settings_batch",
+            "response_schema": "settings",
+        },
+    )
+    assert same_transport(
+        by_path["/v1/extensions/reload"]["operations"]["post"],
+        {
+            "request": "json",
+            "response": "json",
+            "request_schema": "settings_target",
+            "response_schema": "extension_reload",
+        },
+    )
     assert by_path["/v1/events"]["operations"]["get"]["response"] == "sse"
-    assert by_path["/v1/sessions/:sid/voice/live/:vid/media"]["operations"]["get"] == {
-        "request": "none",
-        "response": "websocket",
-    }
+    assert same_transport(
+        by_path["/v1/sessions/:sid/voice/live/:vid/media"]["operations"]["get"],
+        {
+            "request": "none",
+            "response": "websocket",
+        },
+    )
 
 
 def test_gateway_envelopes_validate_real_payloads():
@@ -463,8 +510,16 @@ class _Renderer:
             return name
         self.blocks[title] = "pending"
         required = set(node.get("required", []))
+        properties = dict(node["properties"])
+        for member in node.get("allOf", ()):
+            if "$ref" in member and not member["$ref"].startswith("#/"):
+                continue
+            part = self.target(member["$ref"]) if "$ref" in member else member
+            required.update(part.get("required", ()))
+            for key, value in part.get("properties", {}).items():
+                properties.setdefault(key, value)
         rows = []
-        for key, value in node["properties"].items():
+        for key, value in properties.items():
             kind = self.type_of(value, title + _camel(key))
             rows.append((key, kind if key in required else f"NotRequired[{kind}]"))
         doc = node.get("description", "").strip()
@@ -497,11 +552,18 @@ def _wrapped(prefix, kind, indent):
     if len(line) <= 88:
         return line + "\n"
     if "Literal[" not in kind:
+        if kind.startswith("list[") and kind.endswith("]"):
+            rows = f"\n{indent}    | ".join(kind[5:-1].split(" | "))
+            return f"{indent}{prefix}list[\n{indent}    {rows}\n{indent}]\n"
         rows = f"\n{indent}    | ".join(kind.split(" | "))
         return f"{indent}{prefix}(\n{indent}    {rows}\n{indent})\n"
     head, _, rest = kind.partition("Literal[")
     values, _, tail = rest.partition("]")
     inner = indent + "    "
+    if head.endswith(" | ") and not tail:
+        rows = "".join(f"{inner}    {value},\n" for value in values.split(", "))
+        alternatives = f"\n{inner}| ".join(head[:-3].split(" | "))
+        return f"{indent}{prefix}(\n{inner}{alternatives}\n{inner}| Literal[\n{rows}{inner}]\n{indent})\n"
     if head.startswith("NotRequired[") and tail == "]":
         inner += "    "
         rows = "".join(f"{inner}{value},\n" for value in values.split(", "))
@@ -690,3 +752,76 @@ def test_each_json_route_has_a_response_type():
 
 if __name__ == "__main__":
     _TYPES.write_text(_rendered_types(), encoding="utf-8")
+
+
+def test_sdk_route_answers_follow_the_wire_contract():
+    from blockether.vis.engine import _routes, _types
+
+    operations = {
+        f"{method.upper()} {route['path']}": operation
+        for route in _contracts.schema("gateway")["x-vis-routes"]
+        for method, operation in route["operations"].items()
+    }
+    for name, method in vars(_routes.Routes).items():
+        doc = inspect.getdoc(method) or ""
+        match = re.match(r"(GET|POST|PUT|PATCH|DELETE) (/\S+)", doc)
+        if not match:
+            continue
+        key = " ".join(match.groups())
+        declaration = operations[key]
+        if declaration["response"] != "json":
+            continue
+        annotation = inspect.signature(method).return_annotation
+        expected = "_types." + _types.RESPONSE_TYPES[key]
+        if any(
+            "media" in variant for variant in declaration.get("statuses", {}).values()
+        ):
+            expected = "Response | " + expected
+        assert annotation == expected, name
+
+
+@pytest.mark.parametrize(
+    "route,args", [("post_speech", ()), ("post_session_speech", ("sid",))]
+)
+def test_speech_route_decodes_only_a_job_as_json(route, args):
+    from blockether.vis.engine._client import Response
+    from blockether.vis.engine._routes import Routes
+
+    class Client:
+        def _request(self, *args, **kwargs):
+            return self.response
+
+    client = Client()
+    speak = getattr(Routes(client), route)
+    client.response = Response(200, b"RIFF", {"content-type": "audio/wav"})
+    assert speak(*args, body={"text": "Short"}) is client.response
+    client.response = Response(
+        202, b'{"status":"running"}', {"content-type": "application/json"}
+    )
+    assert speak(*args, body={"text": "Long"}) == {"status": "running"}
+
+
+def test_session_alert_sends_question_filter():
+    from blockether.vis.engine._routes import Routes
+
+    class Client:
+        def _request(self, method, route, **kwargs):
+            assert method == "GET"
+            assert route == "/v1/sessions/:sid/alert"
+            assert kwargs["query"] == {"reason": "question"}
+            return self
+
+        def json(self):
+            return {"reason": "question"}
+
+    assert Routes(Client()).get_session_alert("session", reason="question") == {
+        "reason": "question",
+    }
+
+
+def test_raw_sdk_rejects_none_query_before_transport():
+    from blockether.vis.engine import GatewayClient
+
+    client = GatewayClient("http://127.0.0.1:7890")
+    with pytest.raises(TypeError, match="query must be a mapping"):
+        client.routes.get_sessions(query=None)

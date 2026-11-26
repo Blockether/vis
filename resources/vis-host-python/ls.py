@@ -251,6 +251,11 @@ def __vis_install_ls__():
             )
         return value
 
+    class _Default(int):
+        pass
+
+    default_limit, default_offset = _Default(250), _Default(0)
+
     def ls(
         paths=".",
         depth=1,
@@ -260,10 +265,12 @@ def __vis_install_ls__():
         is_ignored=False,
         pattern=None,
         as_paths=False,
-        limit=250,
-        offset=0,
+        limit=default_limit,
+        offset=default_offset,
     ):
         """List directories as a compact tree STRING. `docs["ls"]` below replaces this text."""
+        if as_paths and (limit is not default_limit or offset is not default_offset):
+            raise ValueError("ls: limit and offset require a text page, not as_paths=True")
         if hidden is not None:
             is_hidden = hidden
         limit = _count("limit", limit, 1, True)
@@ -333,7 +340,7 @@ def __vis_install_ls__():
         "the tree, in the same order. Each path is the requested path joined with the "
         "entry name, and directories end in '/'. A relative request gives relative "
         "paths, and an absolute or `~` request gives absolute paths. "
-        "as_paths ignores limit and offset: `ls(dir, depth=3, as_paths=True)` is the "
+        "as_paths does not accept limit or offset. `ls(dir, depth=3, as_paths=True)` gives the "
         "whole file list, ready for grep or Path()."
     )
 

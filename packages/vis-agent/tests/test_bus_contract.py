@@ -11,6 +11,19 @@ import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _contracts
 
+
+def test_bus_rejects_a_coroutine_function_before_subscribing(monkeypatch):
+    def unexpected(*args):
+        pytest.fail("an invalid handler must not be registered")
+
+    async def handler(signal):
+        pass
+
+    monkeypatch.setattr(vis._host, "bus_subscribe", unexpected)
+    with pytest.raises(TypeError, match="synchronous"):
+        vis.bus.subscribe("readiness.test", handler)
+
+
 TABLE = json.loads(
     (_contracts._DATA / "fixtures" / "bus-delivery.json").read_text(encoding="utf-8")
 )

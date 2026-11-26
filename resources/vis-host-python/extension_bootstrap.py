@@ -125,7 +125,8 @@ def __vis_app_hook__(app):
     app = dict(app)
     # The host runs the extension file as the module `<this namespace>__extension`.
     entry = __import__("sys").modules[__name__ + "__extension"]
-    return _vis_mod._app_hook_function(app.pop("hook"), vars(entry))(app)
+    hook = _vis_mod._app_hook_function(app.pop("hook"), vars(entry))
+    return _vis_mod._call_sync(hook, "app hook", app)
 
 
 def __vis_unseal_host__(value):
@@ -213,18 +214,12 @@ def __vis_tool_route__(call_tool):
     return route
 
 
-# Every `__vis_host_*__` name the host injected becomes a member of `_host`,
-# under that name with the marker trimmed: `__vis_host_jailed_shell__` is
-# `_host.jailed_shell`. The list is NOT written out here on purpose — it lived in
-# this file once, so a door added in the host meant a release of this library
-# before the host could use it, for a name this file only ever passed through.
+# The Python runtime also has internal functions that use the host prefix.
+# Only the doors declared by Vis belong to the extension host interface.
 _vis_host = _vis_types.SimpleNamespace(
     **{
-        _vis_name[len("__vis_host_") : -len("__")]: __vis_member__(_vis_door)
-        for _vis_name, _vis_door in list(globals().items())
-        if _vis_name.startswith("__vis_host_")
-        and _vis_name.endswith("__")
-        and callable(_vis_door)
+        name[len("__vis_host_") : -len("__")]: __vis_member__(globals()[name])
+        for name in _vis_door_names  # noqa: F821 — supplied by the host.
     }
 )
 _vis_host.call_tool = __vis_typed__(_vis_host.call_tool)

@@ -410,6 +410,8 @@
 
     (when (or (seq queued) hold) [queued hold])))
 
+(declare sent-turn-receipt)
+
 ;; sid -> the queue slice that the database holds. The lock also orders the writes.
 (defonce ^:private persisted-queues (atom {}))
 
@@ -419,8 +421,10 @@
    latest state. A failed write logs and keeps the old stored slice."
   [sid]
   (locking persisted-queues
-    (let [slice (queue-slice (get @registry sid))]
-      (when (not= slice (get @persisted-queues sid))
+    (let [entry (get @registry sid)
+          slice (queue-slice entry)
+          receipts (::sent-receipts entry)]
+      (when (or (seq receipts) (not= slice (get @persisted-queues sid)))
         (try (persistance/db-replace-session-queue! (lp/db-info)
                                                     sid
                                                     {:turns (mapv (fn [turn]
@@ -428,7 +432,14 @@
                                                                      :payload (turn-payload turn)})
                                                                   (first slice))
                                                      :hold (durable-value (second slice))
+                                                     :sent-receipts (mapv sent-turn-receipt (vals receipts))
                                                      :owner (journal/process-stamp)})
+             (when (seq receipts)
+               (swap! registry
+                      (fn [entries]
+                        (if (contains? entries sid)
+                          (update-in entries [sid ::sent-receipts] #(apply dissoc % (keys receipts)))
+                          entries))))
              (swap! persisted-queues #(if slice (assoc % sid slice) (dissoc % sid)))
              (catch Throwable t
                (tel/log! :warn ["gateway: queued turns not persisted" sid (ex-message t)])))))))
@@ -436,7 +447,10 @@
 (defn- sync-queue!
   "Persist the queue of `sid` when the registry write changed it."
   [sid before after]
-  (when (not= (queue-slice (get before sid)) (queue-slice (get after sid))) (persist-queue! sid)))
+  (let [entry (get after sid)]
+    (when (or (seq (::sent-receipts entry))
+              (not= (queue-slice (get before sid)) (queue-slice entry)))
+      (persist-queue! sid))))
 
 (defn- update-session!
   "Publish initialized activations atomically; retire removed input after the registry write."
@@ -1009,9 +1023,11 @@
    high-water so a RESTARTED daemon keeps numbering ABOVE a client's stale
    monotonic replay cursor instead of resetting to 0 (which the client's
    `seq > cursor` filter would silently drop — dropping a whole reconnect turn,
-   the orphan-reap terminal included)."
+   the orphan-reap terminal included). The ring cannot replay positions below
+   that high-water, so a request below it resets."
   [sid]
-  {:next-seq (journal/journal-high-water-seq sid)})
+  (let [high-water (journal/journal-high-water-seq sid)]
+    {:next-seq high-water :evicted-through high-water}))
 
 (defonce ^:private event-taps
   ;; key -> (fn [sid event]) run AFTER an event is stored, fanned out and
@@ -1596,6 +1612,21 @@
   ([sid cursor replay]
    (let [lock (event-store/lock-for sid)]
      (locking lock (read-replay! sid cursor replay)))))
+
+(defn task-events-since
+  "Read Task ends only. Return nil when the caller needs a new Task snapshot."
+  [sid cursor]
+  (let [lock (event-store/lock-for sid)]
+    (locking lock
+      (let [entry (session-entry sid)
+            current (:next-seq entry 0)]
+        (when (<= (:evicted-through entry 0) cursor current)
+          (try {:cursor current
+                :events (into [] (comp (filter #(and (= "task.ended" (get % "type"))
+                                                       (> (long (get % "seq")) cursor)))
+                                       (map event-store/read-event))
+                              (:events entry))}
+               (catch Exception _ nil)))))))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the
@@ -2655,9 +2686,6 @@
                  :created_at started-at)
           (update :status #(if (= "running" %) "streaming" %))))))
 
-(def ^:private terminal-turn-statuses
-  #{"completed" "failed" "cancelled" "suspended" "error" "sent"})
-
 (defn- date->ms [d] (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))
 
 (defn get-turn
@@ -2898,9 +2926,15 @@
    does not know it. This view answers for such a turn after a restart."
   [sid tid]
   (try
-    (some->> (persistance/db-read-session-turn (lp/db-info) sid tid)
-             (persisted-turn->wire sid)
-             wire/canonical)
+    (let [db (lp/db-info)]
+      (or (some->> (persistance/db-read-session-turn db sid tid)
+                   (persisted-turn->wire sid)
+                   wire/canonical)
+          (:content (persistance/db-get-extension-aggregate
+                      db {:extension-id 'com.blockether.vis.internal.gateway.state
+                          :kind :sent-turn
+                          :session-soul-id sid
+                          :aggregate-key tid}))))
     (catch Throwable t (tel/log! :warn ["gateway: stored turn read failed" (ex-message t)]) nil)))
 
 (defn list-queued-turns
@@ -5429,6 +5463,26 @@
     (seq (:attachment_previews turn))
     (assoc :attachment-previews (vec (:attachment_previews turn)))))
 
+(defn- sent-turn
+  [turn into-tid iteration sent-at]
+  (-> (apply dissoc turn :attachments :deliver turn-execution-keys)
+      (assoc :status "sent" :into_turn_id into-tid :iteration iteration :sent_at sent-at)))
+
+(defn- sent-turn-receipt
+  [turn]
+  {:extension-id 'com.blockether.vis.internal.gateway.state
+   :kind :sent-turn
+   :session-soul-id (:session_id turn)
+   :aggregate-key (:turn_id turn)
+   :content (wire/canonical
+              (assoc (select-keys turn [:turn_id :session_id :status :request :display_request
+                                        :attachment_previews :idempotency_key :into_turn_id
+                                        :iteration :sent_at :queued_at])
+                :created_at (or (:created_at turn) (:queued_at turn))
+                :request_kind (or (:request_kind turn) "user")
+                :role "assistant"
+                :content []))})
+
 (defn- take-marked-queued!
   "Atomically remove every queued turn of `sid` marked `next_iteration`, in queue
    order, for delivery into running turn `into-tid` at step `iteration`. Returns the
@@ -5443,9 +5497,11 @@
    A taken row leaves `:turn-order` (no queue view or turn list shows it again) but
    stays in `:turns` as a terminal `sent` record with its idempotency keys: a replayed
    submit answers that receipt instead of a second delivery, and `get-turn` or an
-   attach that missed the live `turn.queued.sent` still learns where the message went."
+   attach that missed `turn.queued.sent` still learns where the message went. The
+   durable queue write stores the receipt and removes the queued row together."
   [sid into-tid iteration]
-  (let [taken (volatile! [])]
+  (let [taken (volatile! [])
+        sent-at (util/now-ms)]
     (update-session! sid
                      (fn [entry]
                        (let [tids (filterv (fn [tid]
@@ -5455,27 +5511,14 @@
                                     (:turn-order entry))]
                          (vreset! taken (mapv #(get-in entry [:turns %]) tids))
                          (if (seq tids)
-                           (-> entry
-                               (update :turns
-                                       (fn [turns]
-                                         (reduce (fn [m tid]
-                                                   (update m
-                                                           tid
-                                                           #(-> %
-                                                                (dissoc :deliver
-                                                                        :messages
-                                                                        :attachments
-                                                                        :cancel-token
-                                                                        ::cancel-disposer)
-                                                                (assoc :status "sent"
-                                                                       :into_turn_id into-tid
-                                                                       :iteration iteration
-                                                                       :sent_at (util/now-ms)))))
-                                                 turns
-                                                 tids)))
-                               (update :turn-order
-                                       (fn [order]
-                                         (vec (remove (set tids) order)))))
+                           (let [sent (into {} (map (fn [turn]
+                                                     [(:turn_id turn)
+                                                      (sent-turn turn into-tid iteration sent-at)]))
+                                            @taken)]
+                             (-> entry
+                                 (update :turns merge sent)
+                                 (update ::sent-receipts merge sent)
+                                 (update :turn-order #(into [] (remove (set tids)) %))))
                            entry))))
     (when (seq @taken)
       (doseq [turn @taken]
@@ -5487,8 +5530,7 @@
       (try (doseq [turn @taken]
              (append-event! sid
                             "turn.queued.sent"
-                            {:turn_id (:turn_id turn) :into_turn_id into-tid :iteration iteration}
-                            {:store? false}))
+                            {:turn_id (:turn_id turn) :into_turn_id into-tid :iteration iteration}))
            (append-event!
              sid
              "turn.input"
@@ -7425,12 +7467,12 @@
                       ;; Our own queued record deleted before it ever ran
                       ;; (pulled back into a sibling's editor): synthesize a
                       ;; cancelled terminal so the blocking submit never hangs.
-                      (when (= "turn.queued.deleted" type)
+                      (when (= "turn-deleted" (gateway-contract/turn-wait-event-reasons type))
                         (deliver terminal
                                  {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"}))
                       ;; Delivered into the running turn (send now): the queued
                       ;; turn never starts, so its waiter ends with status `sent`.
-                      (when (= "turn.queued.sent" type)
+                      (when (= "sent" (gateway-contract/turn-wait-event-reasons type))
                         (deliver terminal
                                  {"type" "turn.completed"
                                   "turn_id" turn_id
@@ -7482,7 +7524,7 @@
            ;; Recover it from the stored record so we never block forever.
            (when-not (realized? terminal)
              (let [turn (get-turn sid turn-id)]
-               (when (contains? terminal-turn-statuses (get turn "status"))
+               (when (contains? gateway-contract/turn-settled-statuses (get turn "status"))
                  (deliver terminal
                           (assoc turn
                             "type" (if (= "failed" (get turn "status"))
@@ -7535,12 +7577,12 @@
                       ;; The queued record was deleted before it ever ran
                       ;; (pulled back into a sibling's editor): synthesize a
                       ;; cancelled terminal so the attach never hangs.
-                      (when (= "turn.queued.deleted" type)
+                      (when (= "turn-deleted" (gateway-contract/turn-wait-event-reasons type))
                         (deliver terminal
                                  {"type" "turn.completed" "turn_id" tid "status" "cancelled"}))
                       ;; Delivered into the running turn (send now): the queued
                       ;; turn never starts, so its waiter ends with status `sent`.
-                      (when (= "turn.queued.sent" type)
+                      (when (= "sent" (gateway-contract/turn-wait-event-reasons type))
                         (deliver terminal
                                  {"type" "turn.completed"
                                   "turn_id" tid
@@ -7560,7 +7602,7 @@
            ;; Recover it from the stored record so we never block forever.
            (when-not (realized? terminal)
              (let [turn (get-turn sid tid)]
-               (when (contains? terminal-turn-statuses (get turn "status"))
+               (when (contains? gateway-contract/turn-settled-statuses (get turn "status"))
                  (deliver terminal
                           (assoc turn
                             "type" (if (= "failed" (get turn "status"))

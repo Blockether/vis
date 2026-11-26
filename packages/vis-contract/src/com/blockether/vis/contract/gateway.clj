@@ -40,14 +40,23 @@
 
 (def route-table
   "Complete built-in gateway route table, one record per path."
-  (mapv (fn [{:keys [path audience operations]}]
+  (mapv (fn [{:strs [path audience operations]}]
           {:path path
            :audience (keyword audience)
            :operations (into {}
                              (map (fn [[method operation]]
-                                    [method (update-vals operation keyword)]))
+                                    [(keyword method)
+                                     (reduce (fn [result field]
+                                               (if-let [value (get operation field)]
+                                                 (-> result (dissoc field)
+                                                     (assoc (keyword (str/replace field "_" "-"))
+                                                       (if (str/includes? value ".json") value (keyword value))))
+                                                 result))
+                                             operation
+                                             ["request" "response" "request_schema"
+                                              "response_schema" "extension" "tag"])]))
                              operations)})
-        (wire/->engine (get @source "x-vis-routes"))))
+        (get @source "x-vis-routes")))
 
 (def ^:private route-matchers
   "Route records by segment count, compiled once. Within a count, a route with
@@ -93,6 +102,11 @@
   "Request/response transport declaration for built-in `method` and `path`, or nil."
   [method path]
   (get route-operations [method path]))
+
+(defn observation?
+  "True when the operation records no Activity. This does not grant access."
+  [_method operation]
+  (= :observation (:tag operation)))
 
 (def session-goal-labels
   "Display titles of the canonical goal status schema alternatives."
@@ -218,6 +232,23 @@
         (comp (filter #(get % "x-vis-turn-terminal")) (map #(get % "const")))
         session-event-variants))
 
+(def turn-execution-terminal-statuses
+  "Turn record statuses that end model execution."
+  (set (get-in @source ["$defs" "turn_execution_terminal_status" "enum"])))
+
+(def turn-settled-statuses
+  "Turn record statuses that end a wait, including delivery into another turn."
+  (into turn-execution-terminal-statuses
+        (mapcat #(get % "enum"))
+        (get-in @source ["$defs" "turn_settled_status" "oneOf"])))
+
+(def turn-wait-event-reasons
+  "Wait end reasons for events that do not end model execution."
+  (into {}
+        (keep (fn [{event "const" reason "x-vis-turn-wait-end"}]
+                (when reason [event reason])))
+        session-event-variants))
+
 (def turn-stream-event-types
   "Built-in event types that stream a running turn's body. The turn's transcript
    supersedes them once it settles."
@@ -274,6 +305,15 @@
   "Wire fields copied from a settled turn into blocking submit/attach results."
   (vec (keys (get-in @source ["$defs" "turn_metadata" "properties"]))))
 
+(defn settled-turn-event
+  "Recover the end of a wait from its stored row when the event is not in the replay."
+  [turn turn-id]
+  (when (contains? turn-settled-statuses (get turn "status"))
+    (with-meta (assoc (select-keys turn ["status" "into_turn_id" "iteration"])
+                 "type" "turn.completed"
+                 "turn_id" (str turn-id))
+      {::settled-turn turn})))
+
 (defn terminal-turn-result
   "Build the blocking submit/attach result for one terminal session event.
 
@@ -284,42 +324,44 @@
    so a failure still renders when the lookup races the terminal event. A suspended
    turn reports `needs_input`; a failed one carries `error` from its first error
    block, the event, or a generic message. A queued turn that was sent into the
-   running turn reports `sent` with `into_turn_id` and `iteration`."
+   running turn reports `sent` with `into_turn_id` and `iteration`. A deleted
+   queued turn has no row; it reports `deleted` instead."
   [event fallback-turn-id lookup-turn]
-  (let [turn-id
-        (or (get event "turn_id") fallback-turn-id)
+  (let [turn-id (or (get event "turn_id") fallback-turn-id)]
+    (if (= "turn-deleted" (get turn-wait-event-reasons (get event "type")))
+      {"status" "deleted" "session_turn_id" turn-id}
+      (let [message
+            (or (::settled-turn (meta event))
+                (lookup-turn (get event "session_id") turn-id))
 
-        message
-        (lookup-turn (get event "session_id") turn-id)
+            status
+            (get event "status")
 
-        status
-        (get event "status")
+            blocks
+            (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
 
-        blocks
-        (or (not-empty (get message "content")) (not-empty (get event "content")) [])]
+        (cond-> (-> (merge (select-keys message turn-meta-keys)
+                           (into {} (filter (comp some? val)) (select-keys event turn-meta-keys)))
+                    (assoc "content" blocks
+                           "iteration_count" (or (get message "iteration_count") 1)
+                           "session_turn_id" turn-id))
+          (= "suspended" status)
+          (assoc "status" "needs_input")
 
-    (cond-> (-> (merge (select-keys message turn-meta-keys)
-                       (into {} (filter (comp some? val)) (select-keys event turn-meta-keys)))
-                (assoc "content" blocks
-                       "iteration_count" (or (get message "iteration_count") 1)
-                       "session_turn_id" turn-id))
-      (= "suspended" status)
-      (assoc "status" "needs_input")
+          (= "cancelled" status)
+          (assoc "status" "cancelled")
 
-      (= "cancelled" status)
-      (assoc "status" "cancelled")
+          ;; A queued turn delivered into the running turn (send now) never starts.
+          (= "sent" status)
+          (merge {"status" "sent"
+                  "into_turn_id" (get event "into_turn_id")
+                  "iteration" (get event "iteration")})
 
-      ;; A queued turn delivered into the running turn (send now) never starts.
-      (= "sent" status)
-      (merge {"status" "sent"
-              "into_turn_id" (get event "into_turn_id")
-              "iteration" (get event "iteration")})
-
-      (or (= "turn.failed" (get event "type")) (= "failed" status))
-      (assoc "error"
-        (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
-            (get event "error")
-            "turn failed")))))
+          (or (= "turn.failed" (get event "type")) (= "failed" status))
+          (assoc "error"
+            (or (some #(when (= "error" (get % "type")) (get % "message")) blocks)
+                (get event "error")
+                "turn failed")))))))
 
 (defn handshake
   "Build the engine handshake from schema protocol numbers and runtime release identity."

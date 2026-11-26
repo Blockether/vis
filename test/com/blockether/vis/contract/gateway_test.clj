@@ -53,14 +53,22 @@
         (expect (nil? (io/resource "vis-contract/gateway.json")))
         (expect (= "#/$defs/session" (get gateway "$ref")))
         (expect (= {"request" "none" "response" "json" "response_schema" "devices"}
-                   (get-in devices ["operations" "get"])))
+                   (select-keys (get-in devices ["operations" "get"])
+                                ["request" "response" "response_schema"])))
+        (doseq [{:keys [path operations]} contract/route-table
+                [method {:keys [tag]}] operations]
+          (expect (#{:observation :mutation} tag) (pr-str [method path])))
+        (expect (contract/observation? :post
+                                       (contract/operation :post "/v1/sessions/:sid/council/changed")))
         (expect (= {"request" "json" "response" "json" "response_schema" "device_registered"}
-                   (get-in devices ["operations" "post"])))
+                   (select-keys (get-in devices ["operations" "post"])
+                                ["request" "response" "response_schema"])))
         (expect (= {"request" "json"
                     "response" "json"
                     "request_schema" "settings_batch"
                     "response_schema" "settings"}
-                   (get-in settings ["operations" "patch"])))
+                   (select-keys (get-in settings ["operations" "patch"])
+                                ["request" "response" "request_schema" "response_schema"])))
         (expect (= (sort events) events))
         (expect (= "subscription.ready"
                    (get-in gateway ["$defs" "subscription_ready" "properties" "type" "const"])))
@@ -72,7 +80,9 @@
                        (sort-by :path contract/route-table))
                  (runtime-route-table))))
   (it "declares each request and successful response transport"
-      (let [operation contract/operation]
+      (let [operation (fn [method path]
+                        (select-keys (contract/operation method path)
+                                     [:request :response :extension :response-schema]))]
         (expect (= {:request :none :response :resource} (operation :get "/docs")))
         (expect (= {:request :none :response :negotiated} (operation :get "/metrics")))
         (expect
@@ -317,6 +327,9 @@
       (expect (= "cancelled" (get (first (terminal-result {"status" "cancelled"} nil)) "status")))
       (expect (= [] (get (first (terminal-result {"status" "cancelled"} nil)) "content")))
       (expect (not (contains? (first (terminal-result {"status" "cancelled"} nil)) "error"))))
+  (it "reports deletion without looking up a turn row"
+      (expect (= [{"status" "deleted" "session_turn_id" "t1"} []]
+                 (terminal-result {"type" "turn.queued.deleted" "turn_id" "t1"} nil))))
   (it "takes a failure message from an error block, then the event, then a default"
       (let [error-of (fn [event row]
                        (get (first (terminal-result event row)) "error"))]

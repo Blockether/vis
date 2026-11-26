@@ -63,6 +63,7 @@ import type {
   GatewayStatus,
   SessionArtifactRow,
   Session,
+  SessionCreated,
   SessionGoal,
   SessionGroup,
   SessionTeam,
@@ -1347,10 +1348,12 @@ function readSnapshot<T>(key: string): T | null {
   return value;
 }
 
-type TerminalTurnStatus = 'completed' | 'failed' | 'cancelled';
+const executionTerminalTurnStatuses = new Set(
+  gatewaySchema.$defs.turn_execution_terminal_status.enum,
+);
 
-export function isTerminalTurnStatus(status: string): status is TerminalTurnStatus {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
+export function isTerminalTurnStatus(status: string): boolean {
+  return executionTerminalTurnStatuses.has(status);
 }
 
 function terminalTurnKey(base: string, sid: string, tid: string): string {
@@ -1358,8 +1361,8 @@ function terminalTurnKey(base: string, sid: string, tid: string): string {
 }
 
 /** The exact terminal status read from the registry, shared across screen visits. */
-export function cachedTerminalTurn(base: string, sid: string, tid: string): TerminalTurnStatus | null {
-  return readSnapshot<TerminalTurnStatus>(terminalTurnKey(base, sid, tid));
+export function cachedTerminalTurn(base: string, sid: string, tid: string): string | null {
+  return readSnapshot<string>(terminalTurnKey(base, sid, tid));
 }
 
 function writeSnapshot(key: string, value: unknown): void {
@@ -4917,8 +4920,8 @@ export class GatewayClient {
     root?: string;
     groupId?: string;
     idempotencyKey?: string;
-  }): Promise<Session> {
-    return this.request<Session>('POST', '/v1/sessions', {
+  }): Promise<SessionCreated> {
+    return this.request<SessionCreated>('POST', '/v1/sessions', {
       title: opts.title,
       channel: opts.channel ?? 'web',
       root: opts.root,

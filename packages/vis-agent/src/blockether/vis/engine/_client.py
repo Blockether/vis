@@ -26,6 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import PurePosixPath
+from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -82,11 +83,17 @@ _MIN_GATEWAY = definition("gateway", "handshake")["properties"]["min_gateway"]["
 _ROUTES = schema("gateway")["x-vis-routes"]
 _LEASE_POLICY = schema("gateway")["x-vis-client-lease"]
 _MAX_DECISION_ARCHIVE = definition("gateway", "decision_archive_bytes")["maximum"]
+_SESSION_EVENT_VARIANTS = definition("gateway", "session_event_type")["oneOf"]
 _TURN_TERMINAL_EVENTS = frozenset(
     branch["const"]
-    for branch in definition("gateway", "session_event_type")["oneOf"]
+    for branch in _SESSION_EVENT_VARIANTS
     if branch.get("x-vis-turn-terminal")
 )
+_TURN_WAIT_EVENT_REASONS = {
+    branch["const"]: branch["x-vis-turn-wait-end"]
+    for branch in _SESSION_EVENT_VARIANTS
+    if "x-vis-turn-wait-end" in branch
+}
 _JOB_EVENTS = {
     branch["x-vis-direction"]: branch["const"]
     for branch in definition("gateway", "job_event_type")["oneOf"]
@@ -96,10 +103,12 @@ _JOB_EVENTS = {
 _POLL_MIN_SECONDS = 0.1
 _POLL_MAX_SECONDS = 1.0
 _TURN_SETTLED_STATUSES = frozenset(
-    {"completed", "failed", "cancelled", "suspended", "error"}
+    definition("gateway", "turn_execution_terminal_status")["enum"]
+) | frozenset(
+    status
+    for variant in definition("gateway", "turn_settled_status")["oneOf"]
+    for status in variant.get("enum", ())
 )
-# Events after which a turn record cannot change again, or no longer exists.
-_TURN_END_EVENTS = _TURN_TERMINAL_EVENTS | {"turn.queued.deleted", "session.deleted"}
 
 
 class TransportError(RuntimeError):
@@ -545,7 +554,7 @@ class EngineClient(ABC):
         route: str,
         *,
         path=None,
-        query=None,
+        query: Mapping[str, str | int | float | bool | None] = MappingProxyType({}),
         body=None,
         content: bytes | BinaryIO | None = None,
         timeout: float | None = None,
@@ -565,6 +574,8 @@ class EngineClient(ABC):
         ):
             raise ValueError("not a canonical SDK operation")
         operation = entry["operations"][method.lower()]
+        if not isinstance(query, Mapping):
+            raise TypeError("query must be a mapping; omit it when no query is needed")
         if operation["response"] == "sse":
             raise ValueError("SSE requires a streaming API")
         if operation["response"] == "websocket":
@@ -683,7 +694,7 @@ class EngineClient(ABC):
         The list is empty while the person turns global apps off. This is a
         snapshot; the owner gets the events of its app from `attach_app`.
         """
-        answer = self.routes.get_apps(query={"archived": "true"} if archived else None)
+        answer = self.routes.get_apps(query={"archived": "true"} if archived else {})
         try:
             return [LiveView.from_wire(item) for item in _field(answer, "views", list)]
         except ValueError:
@@ -1852,9 +1863,7 @@ class Session:
         query = {} if placement is None else {"placement": str(placement)}
         if archived:
             query["archived"] = "true"
-        data = _field(
-            self._call("GET", "/views/live", query=query or None), "views", list
-        )
+        data = _field(self._call("GET", "/views/live", query=query), "views", list)
         try:
             return [LiveView.from_wire(item) for item in data]
         except ValueError:
@@ -2032,27 +2041,28 @@ class Turn:
         return self.session.attachments(self)
 
     def wait(self, *, timeout: float = 300) -> _types.TurnRecord:
-        """Wait until this turn finishes or suspends, returning its record.
+        """Wait for this turn to finish, suspend or go into a running turn.
 
         Args:
             timeout: Positive finite overall wait deadline in seconds.
 
         Returns:
             A dictionary in contract form. Its `status` is `completed`,
-            `failed`, `cancelled`, `suspended` or `error`. A failure status is
-            data, not a raised model-work exception. Inspect it before you use
-            the result.
+            `failed`, `cancelled`, `suspended`, `error` or `sent`. `sent` means
+            this request went into `into_turn_id`. A failure status is data,
+            not a raised model-work exception. Inspect it before you use the result.
 
         Raises:
             VisTimeout: The deadline expired. This method does not request
                 cancellation. You can wait again or explicitly call `cancel`.
+            GatewayError: The stream reports `turn-deleted` or `session-deleted`.
 
         Transport and HTTP errors also propagate. For a local engine, a timeout
         of the underlying pipe operation closes that process. This keeps replies
         in order. It is different from only ending the wait.
 
-        The record is read once, and again after the session event stream
-        reports the end of the turn. Application-owned callbacks are serviced
+        Read the record before subscribing, after a settlement event, or when
+        the stream cannot prove replay continuity. Application-owned callbacks run
         while the stream waits. The reconnect budget of the stream counts only
         connections that bring no new event, so a proxy that ends long streams
         does not end the wait.
@@ -2072,6 +2082,7 @@ class Turn:
         data = self.read(timeout=remaining())
         if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
             return data
+        is_first_ready = True
         while True:
             events = self.session.events(cursor=cursor)
             events._deadline = end
@@ -2079,10 +2090,24 @@ class Turn:
             try:
                 with events:
                     for event in events:
-                        is_progress = is_progress or event.type != "subscription.ready"
-                        if event.type == "session.deleted" or (
-                            event.turn_id == self.id and event.type in _TURN_END_EVENTS
-                        ):
+                        if event.type == "subscription.ready":
+                            # The first matching cursor follows the /seq barrier.
+                            # After a reconnect the same number can come from a new gateway.
+                            repair = not is_first_ready or event.cursor != cursor
+                            is_first_ready = False
+                        else:
+                            is_progress = True
+                            reason = _TURN_WAIT_EVENT_REASONS.get(event.type)
+                            own = event.turn_id == self.id
+                            if reason == "session-deleted" or (
+                                own and reason == "turn-deleted"
+                            ):
+                                raise GatewayError(404, reason)
+                            repair = own and (
+                                reason == "sent" or event.type in _TURN_TERMINAL_EVENTS
+                            )
+                        cursor = events.cursor
+                        if repair:
                             data = self.read(timeout=remaining())
                             if _field(data, "status", str) in _TURN_SETTLED_STATUSES:
                                 return data
@@ -2090,6 +2115,8 @@ class Turn:
                 raise VisTimeout(
                     "turn wait timed out; turn was not cancelled"
                 ) from None
+            except ProtocolError:
+                raise
             except TransportError:
                 # A proxy can end each connection. Streams that brought new events
                 # are not failures: follow again from the cursor, until the deadline.
@@ -2457,8 +2484,12 @@ class _EventStream(Generic[_T]):
 class _PollingEvents(_EventStream[_T]):
     """Poll finite event pages so callback code runs on the SDK calling thread."""
 
+    def _poll_idle_timeout(self) -> float | None:
+        return self.client.timeout
+
     def _iterate(self) -> Generator[_T, None, None]:
-        idle = time.monotonic() + self.client.timeout
+        idle_timeout = self._poll_idle_timeout()
+        idle = None if idle_timeout is None else time.monotonic() + idle_timeout
         delay = _POLL_MIN_SECONDS
         try:
             while True:
@@ -2466,7 +2497,11 @@ class _PollingEvents(_EventStream[_T]):
                     raise VisTimeout("event wait timed out")
                 if self._should_stop():
                     return
-                if self._limit() is None and time.monotonic() >= idle:
+                if (
+                    idle is not None
+                    and self._limit() is None
+                    and time.monotonic() >= idle
+                ):
                     raise VisTimeout("event stream idle timeout")
                 self._pump()
                 for name, value in self._page():
@@ -2476,12 +2511,20 @@ class _PollingEvents(_EventStream[_T]):
                         self._touch()
                         if self._terminal(event):
                             return
-                        idle = time.monotonic() + self.client.timeout
+                        idle = (
+                            None
+                            if idle_timeout is None
+                            else time.monotonic() + idle_timeout
+                        )
                         delay = _POLL_MIN_SECONDS
                 limit = self._limit()
                 limit = idle if limit is None else limit
                 # A close wakes the delay at once.
-                self._closing.wait(min(delay, max(0, limit - time.monotonic())))
+                self._closing.wait(
+                    delay
+                    if limit is None
+                    else min(delay, max(0, limit - time.monotonic()))
+                )
                 # A quiet stream costs at most one page each second.
                 delay = min(delay * 2, _POLL_MAX_SECONDS)
         finally:
@@ -2557,7 +2600,7 @@ class _SessionPollingEvents(_PollingEvents["StreamEvent"], Events):
     def _pump(self):
         self.client._pump_client_extensions(self.session.id)
 
-    def _page(self):
+    def _page(self) -> Iterable[tuple[None, Any]]:
         data = self.client.routes.get_session_events_since(
             self.session.id, query={"cursor": self.cursor, "replay": "full"}
         )

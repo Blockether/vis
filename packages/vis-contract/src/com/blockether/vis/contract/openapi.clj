@@ -70,47 +70,83 @@
        (cons (name method))
        (str/join "_")))
 
+(defn- schema-ref
+  [ref]
+  {"$ref" (if (str/includes? ref ".json")
+            ref
+            (str "#/$defs/" ref))})
+
+(defn- content-with-schema
+  [content schema]
+  (cond-> content
+    (and schema (contains? content "application/json"))
+    (assoc-in ["application/json" "schema"] (schema-ref schema))))
+
+(defn- header-fields
+  [names]
+  (into (sorted-map) (map (fn [header] [header {"schema" text-schema}])) names))
+
 (defn- responses
-  [response]
-  (array-map (case response
-               :empty
-               "204"
+  [{:keys [response response-schema] :strs [statuses]}]
+  (let [statuses (or statuses
+                     {(case response :empty "204" :websocket "101" "200") {}})]
+    (into (sorted-map
+            "4XX" {"$ref" "#/components/responses/error"}
+            "5XX" {"$ref" "#/components/responses/error"}
+            "default" {"$ref" "#/components/responses/error"})
+          (map (fn [[status {:strs [transport media schema headers description]}]]
+                 (let [transport (if transport (keyword transport) response)
+                       schema (or schema (some-> response-schema name))
+                       content (if media
+                                 (into (sorted-map)
+                                       (map (fn [media-type]
+                                              [media-type {"schema" (if (str/starts-with? media-type "text/")
+                                                                        text-schema
+                                                                        binary-schema)}]))
+                                       media)
+                                 (response-content transport))]
+                   [status (cond-> {"description" (or description "The result of the call.")}
+                             content
+                             (assoc "content" (content-with-schema content schema))
 
-               :websocket
-               "101"
+                             (seq headers)
+                             (assoc "headers" (header-fields headers)))])))
+          statuses)))
 
-               "200")
-             (case response
-               :empty
-               (array-map "description" "Accepted; no body.")
-
-               :websocket
-               (array-map "description" "Authenticated live voice WebSocket upgrade.")
-
-               (array-map "description" "Success." "content" (response-content response)))
-             "4XX" (array-map "$ref" "#/components/responses/error")
-             "5XX" (array-map "$ref" "#/components/responses/error")
-             "default" (array-map "$ref" "#/components/responses/error")))
+(def ^:private gateway-security [{"bearer" []} {"gateway_secret" []}])
 
 (defn- operation
-  [method {:keys [path audience]} {:keys [request response response-schema]}]
-  (let [body (when-let [content (request-content request)]
-               (array-map "required" true "content" content))]
-    (cond-> (array-map "operationId" (operation-id method path) "tags" [(name audience)])
+  [method {:keys [path audience]}
+   {:keys [request response request-schema] :strs [parameters body_required request_media protocol_exempt security]
+    :as declaration}]
+  (let [content (if request_media
+                  (into (sorted-map)
+                        (map (fn [media-type] [media-type {"schema" binary-schema}]))
+                        request_media)
+                  (request-content request))
+        body (when content
+               (array-map "required" (not= false body_required)
+                          "content" (content-with-schema content (some-> request-schema name))))]
+    (cond-> (array-map "operationId" (operation-id method path)
+                       "tags" [(name audience)]
+                       "responses" (cond-> (responses declaration)
+                                     (not protocol_exempt)
+                                     (assoc "426" {"$ref" "#/components/responses/incompatible_protocol"})))
       body
       (assoc "requestBody" body)
 
-      true
-      (assoc "responses" (responses response))
+      (seq parameters)
+      (assoc "parameters" parameters)
 
-      response-schema
-      (assoc-in ["responses" "200" "content" "application/json" "schema"]
-        {"$ref" (str "#/components/schemas/" (name response-schema))})
-
-      ;; The document's default security covers the gated audiences; a public
-      ;; route is answered without a token even when the gateway requires one.
-      (= :public audience)
+      ;; The document's default security covers the gated audiences.
+      (or (= :public audience) (= "public" security))
       (assoc "security" [])
+
+      (= "content_ticket" security)
+      (assoc "security" [{"content_ticket" []}])
+
+      (= "gateway_or_content_ticket" security)
+      (assoc "security" (conj gateway-security {"content_ticket" []}))
 
       (= :websocket response)
       (assoc "security" [{"voice_ticket" []}]))))
@@ -124,6 +160,43 @@
     (if-let [parameters (seq (path-parameters path))]
       (assoc item "parameters" (vec parameters))
       item)))
+
+(defn- rewrite-refs
+  "Make canonical schema references local to an OpenAPI document."
+  [schema source-name dependencies]
+  (walk/postwalk
+    (fn [value]
+      (if-let [ref (and (map? value) (get value "$ref"))]
+        (if (str/starts-with? ref "#/components/")
+          value
+          (let [[file fragment] (str/split ref #"#" 2)
+                target (if (str/blank? file)
+                         source-name
+                         (or (document/ref-document (str file "#"))
+                             (throw (ex-info "Unknown contract reference" {:ref ref}))))
+                pointer (or fragment "")]
+            (when-not (= "gateway" target)
+              (vswap! dependencies conj target))
+            (assoc value "$ref"
+                         (if (= "gateway" target)
+                           (str "#/components/schemas/" (subs pointer (count "/$defs/")))
+                           (str "#/components/schemas/schema." target pointer)))))
+        value))
+    schema))
+
+(defn- bundle-schemas
+  [paths]
+  (let [dependencies (volatile! #{})
+        paths (rewrite-refs paths "gateway" dependencies)
+        gateway (rewrite-refs (get (document/schema-document "gateway") "$defs")
+                              "gateway" dependencies)]
+    (loop [schemas gateway
+           seen #{}]
+      (if-let [target (first (sort (remove seen @dependencies)))]
+        (let [schema (dissoc (document/schema-document target) "$id" "$schema")]
+          (recur (assoc schemas (str "schema." target) (rewrite-refs schema target dependencies))
+                 (conj seen target)))
+        [paths schemas]))))
 
 (def ^:private components
   (array-map
@@ -143,6 +216,9 @@
                          "name" "x-vis-gateway-secret"
                          "description"
                          "The same secret, as the header a same-machine client already sends.")
+      "content_ticket"
+      (array-map "type" "apiKey" "in" "query" "name" "ticket"
+                 "description" "Use the signed ticket and expiry from the link response.")
       "voice_ticket"
       (array-map
         "type" "apiKey"
@@ -152,23 +228,23 @@
         (str
           "Send vis-voice.v1 and vis-ticket.<ticket> as subprotocols. "
           "Use the one-use ticket from the start response. Keep the Origin from the start request.")))
-    "schemas" (walk/postwalk
-                (fn [value]
-                  (if (and (map? value) (string? (get value "$ref")))
-                    (update value "$ref" str/replace "#/$defs/" "#/components/schemas/")
-                    value))
-                (get (document/schema-document "gateway") "$defs"))
     "responses"
     (array-map "error"
                (array-map "description" "The call was refused; the body names the reason."
                           "content" {"application/json"
-                                     {"schema" {"$ref" "#/components/schemas/error_response"}}}))))
+                                     {"schema" {"$ref" "#/components/schemas/error_response"}}})
+               "incompatible_protocol"
+               (array-map "description" "The gateway does not support the caller's protocol."
+                          "content" {"application/json"
+                                     {"schema" {"$ref" "#/components/schemas/incompatible_protocol"}}}))))
 
-(defn document
-  "The OpenAPI 3.1 document for the built-in gateway routes, string-keyed and
-   ready to encode. Deterministic: the same contract renders the same bytes."
+(defn- build-document
   []
-  (array-map
+  (let [[paths schemas] (bundle-schemas (into (sorted-map)
+                                             (map (fn [route]
+                                                    [(templated (:path route)) (path-item route)]))
+                                             gateway/route-table))]
+    (array-map
     "openapi" openapi-version
     "info"
     (array-map
@@ -183,21 +259,23 @@
            "serve the caller's protocol answers 426 with its own numbers instead of the "
            "route's result. The routes that report the gateway's own identity answer any "
            "protocol, so a client can always read that verdict.\n\n"
-           "Request and response bodies are JSON unless the media type says otherwise. Each JSON "
-           "answer refers to its schema in `components/schemas`, and each 4XX and 5XX answer "
-           "refers to the shared error schema. A request body shown as an empty schema is one "
-           "the contract does not constrain yet.")
+           "Request and response bodies are JSON unless the media type says otherwise. Schema "
+           "references resolve within this document.")
       "license" (array-map "name" "MIT"))
     "servers" [(array-map "url" "/" "description" "The gateway that served this document.")]
-    "security" [(array-map "bearer" []) (array-map "gateway_secret" [])]
+    "security" gateway-security
     "tags" [(array-map "name" "public" "description" "Answered without a token.")
             (array-map "name" "sdk" "description" "The client API.")
             (array-map "name" "administration" "description" "Local lifecycle and metrics.")]
     "x-vis-protocol" (array-map "version" gateway/protocol-version
                                 "minimum_client" gateway/minimum-client-protocol
                                 "minimum_gateway" gateway/minimum-gateway-protocol)
-    "components" components
-    "paths" (into (sorted-map)
-                  (map (fn [route]
-                         [(templated (:path route)) (path-item route)]))
-                  gateway/route-table)))
+      "components" (assoc components "schemas" schemas)
+      "paths" paths)))
+
+(def ^:private built-document (delay (build-document)))
+
+(defn document
+  "The cached OpenAPI 3.1 document for the built-in gateway routes."
+  []
+  @built-document)

@@ -216,29 +216,27 @@ def __vis_install_attach__():
     __vis_app_door = __vis_bridge("__vis_live_app__", "attach")
     __vis_app_start_watch = __vis_bridge("__vis_live_app_changed__", "attach")
 
+    from weakref import WeakValueDictionary
+
+    watches = WeakValueDictionary()
+
+    def __vis_view_ready(task_id, reply):
+        view = watches.pop(task_id, None)
+        if reply is None:
+            return None
+        ready = reply["readiness"]
+        if ready == "closed" and view is not None:
+            view._change_ready(ready, reply.get("result"))
+        return ready
+
+    globals()["__vis_view_ready__"] = __vis_view_ready
+
     def __vis_app_changed(view, envelope):
         import json
 
-        # Use the real loop to service private questions during an observation,
-        # including while asyncio.wait is not waiting on this particular handle.
         task = __vis_task_handle__(json.loads(__vis_app_start_watch(json.dumps(envelope))))
-
-        def decode(reply):
-            ready = reply["readiness"]
-            view._change_ready(ready, reply.get("result"))
-            return ready
-
-        task._decode = decode
-
-        # The runtime's aggregate wait observes completion without reading the value.
-        # Read it before reporting completion so callers see the settled view.
-        async def wait_for_readiness(handle, *, read, observe=False):
-            answer = await type(handle)._wait(handle, read=read, observe=observe)
-            if not read and answer == "done":
-                handle.result()
-            return answer
-
-        task._wait = _types.MethodType(wait_for_readiness, task)
+        # A recovered Task has the same id. Another watch of the same view id does not.
+        watches[task._id] = view
         if view._validators:
             loop = _importlib.import_module("asyncio").get_running_loop()
 

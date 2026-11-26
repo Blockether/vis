@@ -1432,13 +1432,31 @@
     (http/json-response {:seq (state/current-seq sid)})
     (http/session-404 (get-in request [:path-params :sid]))))
 
+(defn- task-events-page [sid cursor]
+  (if-let [{:keys [events cursor]} (state/task-events-since sid cursor)]
+    {:events events :cursor cursor}
+    (let [{:keys [tasks tasks-seq]}
+          (task/at-publication-cursor sid #(state/current-seq sid))]
+      {:events [(gateway-contract/subscription-ready-event {:session-id sid
+                                                            :cursor tasks-seq
+                                                            :tasks tasks
+                                                            :tasks-seq tasks-seq
+                                                            :is-live (boolean (state/current-turn-id sid))
+                                                            :server-time-ms (util/now-ms)})]
+       :cursor tasks-seq})))
+
 (defn- events-since-handler
   [request]
   (if-let [sid (http/path-sid request)]
-    {:status 200
-     :headers {"Content-Type" "application/json"}
-     :body (wire/canonical-json-str
-             {"events" (state/events-since sid (sse-cursor request) (sse-replay request))})}
+    (let [cursor (sse-cursor request)]
+      (if (= "true" (http/query-str request "tasks"))
+        (if (state/session-exists? sid)
+          (http/json-response (task-events-page sid cursor))
+          (http/session-404 (get-in request [:path-params :sid])))
+        {:status 200
+         :headers {"Content-Type" "application/json"}
+         :body (wire/canonical-json-str
+                 {"events" (state/events-since sid cursor (sse-replay request))})}))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 ;; Router and middleware
@@ -1515,6 +1533,20 @@
   []
   (boolean (:require-token? @instance/server-state)))
 
+(def ^:private public-paths
+  "Exact built-in paths that do not require a gateway token."
+  (into #{}
+        (keep (fn [{:keys [path audience]}]
+                (when (and (= :public audience) (not (re-find #"[:*]" path))) path)))
+        gateway-contract/route-table))
+
+(def ^:private public-operations
+  "Open methods on paths that otherwise require a gateway token."
+  (into #{}
+        (keep (fn [[key declaration]]
+                (when (= "public" (get declaration "security")) key)))
+        gateway-contract/route-operations))
+
 (defn- wrap-auth
   "Token gate (§3). Skipped entirely when [[auth-required?]] is false
    (loopback default). When on: the API sends `Authorization: Bearer`;
@@ -1532,23 +1564,14 @@
               (voice-api/authenticated? request))
         (handler request)
         (let [uri (str (:uri request))
-              open? (or (= "/healthz" uri)
+              open? (or (contains? public-paths uri)
                         ;; The embedded docs site is public content (the vis.dev
                         ;; pages) — viewable on the tunnel without the token.
-                        (= "/docs" uri)
                         (str/starts-with? uri "/docs/")
                         ;; A webhook sender cannot hold the gateway token. The
                         ;; automation's own webhook secret authenticates it.
                         (str/starts-with? uri "/v1/hooks/")
-                        ;; The API description is public for the same reason: a
-                        ;; client is GENERATED against a gateway before it holds
-                        ;; a token.
-                        (= "/openapi.json" uri)
-                        ;; A browser that `vis-agent web` opened holds only a one-time
-                        ;; launch code, which this route exchanges for the token.
-                        (= "/v1/web/launches/redeem" uri)
-                        ;; The web app shows its brand before it connects.
-                        (and (= :get (:request-method request)) (= "/v1/web/brand" uri))
+                        (contains? public-operations [(:request-method request) uri])
                         ;; A media element cannot send the token. The signed ticket
                         ;; of the file preview authorizes it, and the handler checks it.
                         (fs-api/content-ticket-request? request)
@@ -1581,7 +1604,10 @@
   "Paths that answer EVEN an unsupported client. They are HOW a peer learns the
    gateway's protocol and reads the mismatch verdict, so refusing them would
    leave an old client with nothing but an opaque failure."
-  #{"/healthz" "/readyz" "/v1/capabilities" "/openapi.json" "/v1/web/launches/redeem"})
+  (into #{}
+        (keep (fn [[[_ path] declaration]]
+                (when (and (get declaration "protocol_exempt") (not (re-find #"[:*]" path))) path)))
+        gateway-contract/route-operations))
 
 (defn- wrap-protocol
   "Wire-protocol gate (§3). API clients must advertise a compatible version.

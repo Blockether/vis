@@ -4,9 +4,8 @@
 # its name in lower-case snake form, with the prefix `mcp_` when Python or Vis has
 # that name. Before each block this shim binds that name to a handle, so a block
 # says `await linear.save_issue(title="...")`. There is no `mcp` name. The handles
-# hold no catalog: a call goes through `__vis_mcp_call__`, the verb that the host
-# binds for this shim, and `doc` and `inspect.signature` ask the host. So a tool
-# that a server adds while the session runs is there at once.
+# hold no catalog: lookup and signatures read the host cache. Calls go through
+# `__vis_mcp_call__`. Explicit discovery can refresh an invalidated catalog.
 
 
 def __vis_install_mcp__():
@@ -102,18 +101,35 @@ def __vis_install_mcp__():
             return dict if values is unknown else dict[str, values]
         return plain.get(word, unknown) if isinstance(word, str) else unknown
 
-    def _signature(handle):
-        # The host reads the list of the server: a handle holds no schema.
-        import inspect
+    def _catalog(server, kind, operation, name=None):
         import json
-        import keyword
 
         answer = json.loads(
-            _door("__vis_mcp_parameters__")(json.dumps(list(handle._parts)))
+            _door("__vis_mcp_catalog__")(json.dumps([server, kind, operation, name]))
         )
         if "error" in answer:
-            raise ValueError(answer["error"])
+            raise RuntimeError(answer["error"])
+        return answer
+
+    def _member(parent, cls, kind, name, *, exact):
+        if exact and not isinstance(name, str):
+            raise TypeError("an MCP name must be a string")
+        operation = "item" if exact else "attribute"
+        answer = _catalog(parent._parts[0], kind, operation, name)
+        if answer.get("missing"):
+            raise (KeyError if exact else AttributeError)(name)
+        return cls(*parent._parts, answer["name"])
+
+    def _signature(handle):
+        import inspect
+        import keyword
         import typing
+
+        server, *names = handle._parts
+        kind = "prompt" if len(names) == 2 else "tool"
+        answer = _catalog(server, kind, "signature", names[-1])
+        if answer.get("missing"):
+            raise ValueError(f"MCP server {server!r} has no {kind} {names[-1]!r}")
 
         empty = inspect.Parameter.empty
         defs = answer.get("defs") or {}
@@ -177,10 +193,13 @@ def __vis_install_mcp__():
         __slots__ = ()
 
         def __getattr__(self, name):
-            return _Prompt(*self._parts, _public(name))
+            return _member(self, _Prompt, "prompt", _public(name), exact=False)
 
         def __getitem__(self, name):
-            return _Prompt(*self._parts, name)
+            return _member(self, _Prompt, "prompt", name, exact=True)
+
+        def __dir__(self):
+            return _catalog(self._parts[0], "prompt", "dir")["names"]
 
         def __call__(self):
             return _call(self._parts[0], "prompts/list")
@@ -199,16 +218,16 @@ def __vis_install_mcp__():
         def __getattr__(self, name):
             if name == "prompts":
                 return _Prompts(*self._parts, "prompts")
-            return _Tool(*self._parts, _public(name))
+            return _member(self, _Tool, "tool", _public(name), exact=False)
 
         def __getitem__(self, name):
-            return _Tool(*self._parts, name)
+            return _member(self, _Tool, "tool", name, exact=True)
 
         def __call__(self):
             return _call(self._parts[0])
 
         def __dir__(self):
-            return ["prompts"]
+            return ["prompts", *_catalog(self._parts[0], "tool", "dir")["names"]]
 
     def _is_handle(value):
         return _b.getattr(_b.type(value), "__vis_mcp_handle__", False) is True
@@ -264,9 +283,11 @@ def __vis_install_mcp__():
         "name and by description. `doc(<python_name>.<tool>)` prints the description "
         "and the input schema of one tool, and `doc(<python_name>)` prints the tools "
         "and the prompts of the server. `inspect.signature(<python_name>.<tool>)` "
-        "gives the parameters of one tool. Each connects the server when that is "
-        "necessary. `await <python_name>()` gives the tools with their input schemas "
-        "as data."
+        "gives the named parameters of one tool. You can also give the arguments in one dict. "
+        "Attribute lookup, `dir` and signatures use the host catalog without a network request. "
+        "If the catalog is not available, call `doc(<python_name>)` to discover it. "
+        "A server that adds or removes a tool or prompt can invalidate its catalog. "
+        "`await <python_name>()` gives the tools with their input schemas as data."
         "\n\nWrite a tool name as an identifier: each character that an identifier "
         'cannot have becomes `_`. `figma_dev["get-code"]` takes the exact name.'
         "\n\nA server whose name Python or Vis already has, such as `time`, gets "

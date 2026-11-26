@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.gateway.event-store :as event-store]
             [com.blockether.vis.internal.gateway.voice :as voice]
             [com.blockether.vis.contract.activity :as activity-contract]
+            [com.blockether.vis.contract.document :as contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.paths :as paths]
@@ -5492,6 +5493,14 @@
              ;; session this process has never seen.
              (expect (= 0 (state/replay-floor (str (java.util.UUID/randomUUID)))))
              (finally (reset! registry saved)))))
+  (it "marks journal positions that are not in a new gateway's replay window"
+      (let [sid (str (random-uuid))]
+        (with-redefs-fn {#'state/registry (atom {})
+                         #'journal/journal-high-water-seq (constantly 12)}
+          (fn []
+            (#'state/ensure-session-entry! sid)
+            (expect (= 12 (state/current-seq sid)))
+            (expect (= 12 (state/replay-floor sid)))))))
   (it "waits for a global turn permit and lets cancellation win without execution"
       (let [semaphore
             (java.util.concurrent.Semaphore. 1 true)
@@ -6289,11 +6298,8 @@
                          (select-keys (state/get-turn sid "q1")
                                       ["status" "into_turn_id" "iteration"])))
               (expect (not (contains? (get-in @registry [sid :turns "q1"]) :attachments)))
-              ;; One queue-mirror event per row (live only), then one stored turn.input.
-              (expect (= [["turn.queued.sent" {:turn_id "q1" :into_turn_id "r0" :iteration 2}
-                           {:store? false}]
-                          ["turn.queued.sent" {:turn_id "q3" :into_turn_id "r0" :iteration 2}
-                           {:store? false}]]
+              (expect (= [["turn.queued.sent" {:turn_id "q1" :into_turn_id "r0" :iteration 2} nil]
+                          ["turn.queued.sent" {:turn_id "q3" :into_turn_id "r0" :iteration 2} nil]]
                          (filterv (comp #{"turn.queued.sent"} first) @events)))
               (let [[input] (filterv (comp #{"turn.input"} first) @events)]
                 (expect (nil? (nth input 2)))
@@ -6313,6 +6319,58 @@
             (expect (nil? (#'state/take-marked-queued! sid "r0" 3)))
             (expect (= [] @events))))
         (finally (swap! registry dissoc sid)))))
+  (it "replays the sent receipt when no live subscriber got it"
+      (let [sid (str (random-uuid))
+            tid (str (random-uuid))
+            registry (atom {sid {:next-seq 7
+                                 :turns {tid {:turn_id tid :session_id sid :status "queued"
+                                              :request "one" :deliver "next_iteration"
+                                              :queued_at 100}}
+                                 :turn-order [tid]}})]
+        (with-redefs-fn {#'state/registry registry
+                         #'journal/publish! (fn [& _])
+                         #'event-store/write-event! identity
+                         #'event-store/read-event identity
+                         #'event-store/discard-replaced! (fn [& _])}
+          (fn []
+            (#'state/take-marked-queued! sid "r0" 2)
+            (expect (= [["turn.queued.sent" tid "r0" 2]]
+                       (->> (state/events-since sid 7)
+                            (filter #(= "turn.queued.sent" (get % "type")))
+                            (mapv (juxt #(get % "type") #(get % "turn_id")
+                                        #(get % "into_turn_id") #(get % "iteration"))))))))))
+  (it "reads sent from storage after a restart even if event publication failed"
+      (let [store (sqlite/db-open! :memory)]
+        (try
+          (let [sid (str (h/store-session! store {:channel :api}))
+                other (str (h/store-session! store {:channel :api}))
+                tid (str (random-uuid))
+                into (str (random-uuid))
+                registry (atom {})]
+            (with-redefs-fn {#'state/registry registry
+                             #'state/persisted-queues (atom {})
+                             #'lp/db-info (constantly store)
+                             #'state/append-event! (fn [& _] (throw (ex-info "journal down" {})))}
+              (fn []
+                (#'state/update-session! sid (constantly
+                                               {:next-seq 7
+                                                :turns {tid {:turn_id tid :session_id sid
+                                                             :status "queued" :request "one"
+                                                             :deliver "next_iteration"
+                                                             :queued_at 100}}
+                                                :turn-order [tid]}))
+                (#'state/take-marked-queued! sid into 2)
+                (reset! registry {})
+                (expect (empty? (:turns (persistance/db-list-pending-turns store))))
+                (let [receipt (state/stored-turn sid tid)]
+                  (expect (contract/valid-json? "gateway" "turn" receipt))
+                  (expect (= {"turn_id" tid "session_id" sid "status" "sent" "request" "one"
+                              "request_kind" "user" "created_at" 100
+                              "into_turn_id" into "iteration" 2}
+                             (select-keys receipt ["turn_id" "session_id" "status" "request"
+                                                   "request_kind" "created_at" "into_turn_id" "iteration"]))))
+                (expect (nil? (state/stored-turn other tid))))))
+          (finally (sqlite/db-close! store)))))
   (it "keeps the delivery when the event publication fails"
       ;; A failed publication costs the live mirror event, never the message: the
       ;; take is the one mutation, and the step record keeps the durable copy.

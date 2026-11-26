@@ -17,7 +17,8 @@
    - contract validation of every returned report,
    - graceful error envelopes instead of exploding the caller when a
      provider-specific implementation is absent or malformed."
-  (:require [com.blockether.vis.contract.provider :as contract-provider]
+  (:require [com.blockether.vis.contract.document :as document]
+            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.extension.registry :as registry]
             [com.blockether.vis.internal.provider.catalog :as catalog]
             [com.blockether.vis.internal.util :as util]))
@@ -304,10 +305,8 @@
     (cond (nil? provider) {:error :unknown-provider :message "Provider is not registered."}
           (nil? consume) {:error :reset-unsupported
                           :message "This provider does not support limit resets."}
-          (not (and (util/non-blank-string? account-id)
-                    (<= (count account-id) 512)
-                    (util/non-blank-string? idempotency-key)
-                    (<= (count idempotency-key) 128)))
+          (not (document/valid-json? "gateway" "provider_reset"
+                                      {"account_id" account-id "idempotency_key" idempotency-key}))
           {:error :invalid-reset-request :message "Account and idempotency key are required."}
           :else (try (consume (select-keys attempt [:account-id :idempotency-key]))
                      (catch Exception _

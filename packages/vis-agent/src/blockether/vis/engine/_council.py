@@ -294,6 +294,33 @@ class Council:
             return child.session_id
         return child
 
+    def changed(self, *, after: str | None = None):
+        """Return a Task for the next batch of open child requests.
+
+        Omit `after` to include requests that are already open. Pass the result's
+        `cursor` to the next call. Cancelling the watch does not cancel a child.
+        """
+        from ._task_observer import _admit, _CouncilWatch
+
+        body = {"after": after} if after is not None else {}
+        validate("gateway", "council_watch_request", body)
+
+        def submit():
+            row = validate(
+                "gateway",
+                "council_watch_task",
+                self._session.client.routes.post_session_council_changed(
+                    self._session.id, body=body
+                ),
+            )
+            watch = _CouncilWatch(self._session, row["id"], row["kind"])
+            if "value" in row:
+                watch.set_result(watch._result_from(row))
+            return [watch]
+
+        (watch,) = _admit(self._session, submit)
+        return watch
+
     def run(self, tasks: list[str | dict[str, Any]]) -> list[SubagentTask]:
         """Start each task and return its handle in input order without waiting.
 
@@ -302,8 +329,7 @@ class Council:
         for dependencies. To start a follow-up, give `task` and `child`, with
         optional `files` for that attempt only; without `files` the child has
         its original spawn grant. Both take child IDs, child
-        session IDs or handles from this session. An await that starts while
-        the child has an open question returns at once.
+        session IDs or handles from this session. A child request does not settle the Task.
         """
         from ._client import ProtocolError
 
@@ -325,19 +351,23 @@ class Council:
             else tasks
         }
         validate("agents", "run", body)
-        descriptors = validate(
-            "agents",
-            "subagent_tasks",
-            self._session._call("POST", "/agents/run", body=body),
-        )
-        if len(descriptors) != len(tasks) or len(
-            {row["task_id"] for row in descriptors}
-        ) != len(tasks):
-            raise ProtocolError("Council.run did not return one Task for each input")
-        children = [SubagentTask(self._session, row) for row in descriptors]
-        for child in children:
-            child._start()
-        return children
+        from ._task_observer import _admit
+
+        def submit():
+            descriptors = validate(
+                "agents",
+                "subagent_tasks",
+                self._session._call("POST", "/agents/run", body=body),
+            )
+            if len(descriptors) != len(tasks) or len(
+                {row["task_id"] for row in descriptors}
+            ) != len(tasks):
+                raise ProtocolError(
+                    "Council.run did not return one Task for each input"
+                )
+            return [SubagentTask(self._session, row) for row in descriptors]
+
+        return _admit(self._session, submit)
 
     def extend(self, session_id: str, iterations: int) -> SubagentRecord:
         """Give a subagent more model iterations; the budget has no upper limit.

@@ -863,6 +863,12 @@ def _wait_for_view(view, seconds, process=None):
         watch.cancel()
 
 
+def _shell_result(handle, seconds):
+    if wait([handle], timeout=seconds).not_done:
+        raise TimeoutError()
+    return handle.result()
+
+
 def _shell(command, seconds=120):
     """Wait for a terminal CLI result, stopping the owned process on timeout or Stop."""
     view = _watch_view.get()
@@ -879,7 +885,7 @@ def _shell(command, seconds=120):
     try:
         try:
             if view is None:
-                done = handle.result(timeout=seconds)
+                done = _shell_result(handle, seconds)
             else:
                 deadline = time.monotonic() + seconds
                 while True:
@@ -899,7 +905,9 @@ def _shell(command, seconds=120):
                     if ready:
                         view.events()
                         view.state()
-                done = handle.result(timeout=0)
+                if not handle.done():
+                    raise TimeoutError()
+                done = handle.result()
         except TimeoutError as error:
             raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s") from error
         if done.get("exit") is None:
@@ -970,7 +978,7 @@ def _device_authorization(process, hostname, seconds=60):
         if remaining <= 0:
             raise GhMissing("GitHub CLI did not produce a browser authorization code")
         try:
-            process.result(timeout=min(1, remaining))
+            _shell_result(process, min(1, remaining))
         except TimeoutError:
             pass
 
@@ -1037,7 +1045,7 @@ def _login(hostname="github.com") -> Account:
             raise GhMissing(f"GitHub authentication could not continue: {reason}")
 
         try:
-            finished = process.result(timeout=300)
+            finished = _shell_result(process, 300)
         except TimeoutError as error:
             raise GhMissing(
                 "GitHub authentication did not finish after human authorization"

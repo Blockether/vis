@@ -1109,13 +1109,7 @@
 
 ;; Run after config reload; keep the Var so namespace reloads retain live wiring.
 (defonce ^:private _policy-reload-hook
-  (extension/register-reload-hook!
-     ::security-policy-reload
-     (fn []
-       (doseq [[_ {:keys [environment]}] @cache]
-         (when-let [session (:session-id environment)]
-           (task/sweep! session :reload)))
-       (mark-policy-reload!))))
+  (extension/register-reload-hook! ::security-policy-reload #'mark-policy-reload!))
 
 (defn cache-key
   "Normalize an id-shaped value (UUID or string-UUID) to a UUID

@@ -220,6 +220,23 @@ def test_a_long_log_detail_reaches_the_host_before_any_cut():
     handle.close()
 
 
+def test_run_rejects_an_awaitable_return_value():
+    gateway = Gateway()
+    handle = Session(gateway, "s-1").attach(app(), owner="bot")
+
+    async def inappropriate(event):
+        raise AssertionError("a synchronous callback must not run this coroutine")
+
+    def callback(event):
+        # This is a plain function, so registration-time detection alone cannot work.
+        handle.close()
+        return inappropriate(event)
+
+    gateway.engine.press_shortcut("r")
+    with pytest.raises(TypeError, match="returned an awaitable"):
+        handle.run(callback)
+
+
 def test_run_serves_events_until_the_callback_returns_false():
     gateway = Gateway()
     handle = Session(gateway, "s-1").attach(app(), owner="bot")
@@ -251,7 +268,8 @@ def test_gateway_readiness_reuses_a_pending_handle_and_keeps_event_delivery():
         assert len(events) == 50
         assert len({e.seq for e in events}) == 50
         assert events == seen and handle.events() == []
-        assert gateway.envelopes("watch-result")[-1]["timeout_ms"] == 25000
+        [[watch_id, options]] = gateway.envelopes("_task_await_batch")[-1]["args"][0]
+        assert watch_id and options == {"view_id": handle.view_id, "read": True}
         assert "timeout_ms" not in gateway.envelopes("events")[-1]
         watch = handle.changed()
         assert watch.cancel()
@@ -285,6 +303,29 @@ def test_a_client_extension_callback_opens_its_app_over_the_session_door():
     assert result == {"status": "success", "result": "app-1"}
     assert gateway.calls[0][3]["owner"] == "my-review-tools"
     assert vis._app_door.get() is None
+
+
+def test_separate_app_wrappers_share_the_owner_batch():
+    from concurrent.futures import wait
+
+    gateway = Gateway()
+    session = Session(gateway, "s-1")
+    # The recorder has one app. The two SDK wrappers mirror the same owned view.
+    first = session.attach(app(), owner="bot")
+    second = session.attach(app(), owner="bot")
+    handles = {first.changed(), second.changed()}
+    try:
+        assert wait_for(
+            lambda: any(
+                len(envelope["args"][0]) == 2
+                for envelope in gateway.envelopes("_task_await_batch")
+            ),
+            seconds=1,
+        )
+    finally:
+        first.close()
+    assert wait(handles, timeout=1).done == handles
+    assert {handle.result() for handle in handles} == {"closed"}
 
 
 def test_recorder_press_shortcut_refuses_unbound_keys_and_closed_apps():

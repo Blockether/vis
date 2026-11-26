@@ -3396,10 +3396,10 @@ vis.register_extension(vis.Extension(
                ;; A turn goes only to a session that this extension created.
                (expect (= "forbidden-session" (refusal (guest "POST" own "/turns"))))
                (finally (pyx/install-host-exchange! previous)))))
-    (it "gives each change route an Activity and no read route one"
+    (it "gives each mutation route an Activity and no observation route one"
         (let [changes (set (for [{:keys [path operations]} gateway-contract/route-table
-                                 [method {:keys [extension]}] operations
-                                 :when (and extension (not= :get method))]
+                                 [method {:keys [extension] :as operation}] operations
+                                 :when (and extension (not (gateway-contract/observation? method operation)))]
 
                              [method path]))]
           (expect (= changes (set (keys @#'pyx/host-activities))))
@@ -6753,7 +6753,7 @@ vis.register_extension(vis.Extension(
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.result(30)\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
+  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    from concurrent.futures import wait\n    assert not wait([handle], timeout=30).not_done\n    result = handle.result()\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
 
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
@@ -6888,7 +6888,7 @@ vis.register_extension(vis.Extension(
     ;; policy snapshot bought nothing over the merged config read at every spawn.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    return vis.jailed_shell({'command':'echo latest'}).result(5)['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
+       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    from concurrent.futures import wait\n    sh = vis.jailed_shell({'command':'echo latest'})\n    assert not wait([sh], timeout=5).not_done\n    return sh.result()['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -6922,7 +6922,7 @@ vis.register_extension(vis.Extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi'})\n    r = sh.result(5)\n    return [r['out'], sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi'})\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [r['out'], sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -6945,7 +6945,7 @@ vis.register_extension(vis.Extension(
     ;; Regression: the SDK exposes the process Task as a Future.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\nfrom concurrent.futures import Future\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    r = sh.result(5)\n    return [isinstance(sh, Future), r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\nfrom concurrent.futures import Future\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [isinstance(sh, Future), r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run (symbol-fn (registered "jail") 'run)
               env {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
@@ -11661,7 +11661,7 @@ vis.register_extension(vis.Extension(
               (expect (nil? (:error answer)) (pr-str answer))
               (expect (str/includes? (str (:stdout answer)) "True"))
               (expect (str/includes? (str (:stdout answer)) "find Task t1 in asyncio.all_tasks()")))))))
-  (it "returns pending from asyncio.wait and lets a detached tool request human input"
+  (it "leaves an observation pending and lets a detached tool request input after a foreground wait"
       (with-task-watch
         (fn [{:keys [sid block]}]
           (let [prompt (promise)
@@ -11673,13 +11673,20 @@ vis.register_extension(vis.Extension(
             (try
               (let [waiter (future (block (str "import asyncio\n"
                                               "t = task_ask()\n"
-                                              "done, pending = await asyncio.wait({t})\n"
-                                              "print(not done and pending == {t})\n")))]
-                (expect (wait-for-task-watch #(seq (get-in @@#'task/sessions [sid :entries "t1" :waiters]))))
-                (expect (= ["t1"] (mapv :id (task/detach-awaits! sid {:question "Ready?"}))))
+                                              "done, pending = await asyncio.wait({t}, timeout=0.5)\n"
+                                              "print(not done and pending == {t})\n")))
+                    waiters #(vals (get-in @@#'task/sessions [sid :entries "t1" :waiters]))]
+                (expect (wait-for-task-watch #(some :observation? (waiters))))
+                (expect (empty? (task/detach-awaits! sid {:question "Ready?"})))
                 (let [answer (deref waiter 5000 nil)]
                   (expect (nil? (:error answer)) (pr-str answer))
                   (expect (str/includes? (str (:stdout answer)) "True")))
+                (let [foreground (future (block "print((await t) is t)"))]
+                  (expect (wait-for-task-watch #(some (comp not :observation?) (waiters))))
+                  (expect (= ["t1"] (mapv :id (task/detach-awaits! sid {:question "Ready?"}))))
+                  (let [answer (deref foreground 5000 nil)]
+                    (expect (nil? (:error answer)) (pr-str answer))
+                    (expect (str/includes? (str (:stdout answer)) "True"))))
                 (let [id (deref prompt 5000 nil)]
                   (expect (string? id))
                   (expect (= {:is-accepted true} (human-input/submit! id {"ok" true}))))

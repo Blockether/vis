@@ -848,6 +848,106 @@ def test_turn_wait_continues_when_a_proxy_ends_streams_that_made_progress():
         assert len(streams) == 4
 
 
+def test_turn_wait_replays_sent_after_a_lost_live_notification():
+    from blockether.vis.engine import Turn
+
+    reads, streams = [], []
+    receipt = {"turn_id": "t", "status": "sent", "into_turn_id": "r", "iteration": 2}
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path.endswith("/seq"):
+            return 200, {"seq": 4}
+        if path.endswith("/turns/t"):
+            reads.append(len(streams))
+            return 200, receipt if streams else {"status": "queued"}
+        if path.startswith("/v1/events?"):
+            cursor = parse_qs(urlsplit(path).query)["sids"]
+            streams.append(cursor)
+            ready = {"type": "subscription.ready", "session_id": "s", "cursor": 4}
+            sent = {
+                "type": "turn.queued.sent",
+                "session_id": "s",
+                "seq": 5,
+                "turn_id": "t",
+            }
+            # The turn sent after the record read, before the sink subscribed.
+            return 200, frame(ready) + frame(sent), "text/event-stream"
+        return 404, {"error": {"code": "missing"}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        assert Turn(client.session("s"), "t").wait(timeout=2) == receipt
+    assert streams == [["s:4"]]
+    assert reads == [0, 1]
+
+
+@pytest.mark.parametrize("reconnect", [False, True])
+def test_turn_wait_repairs_an_unproven_cursor_after_gateway_restart(reconnect):
+    from blockether.vis.engine import Turn
+
+    receipt = {"turn_id": "t", "status": "sent", "into_turn_id": "r", "iteration": 2}
+    reads, streams = [], []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path.endswith("/seq"):
+            return 200, {"seq": 41}
+        if path.endswith("/turns/t"):
+            reads.append(path)
+            return 200, receipt if len(reads) > 1 else {"status": "queued"}
+        if path.startswith("/v1/events?"):
+            assert parse_qs(urlsplit(path).query)["sids"] == ["s:41"]
+            streams.append(path)
+            ready = {
+                "type": "subscription.ready",
+                "session_id": "s",
+                # A new gateway can echo the same number on reconnect.
+                "cursor": 41 if reconnect else 0,
+            }
+            return 200, frame(ready), "text/event-stream"
+        return 404, {"error": {"code": "missing"}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        assert Turn(client.session("s"), "t").wait(timeout=2) == receipt
+    assert len(reads) == 2
+    assert len(streams) == (2 if reconnect else 1)
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [("session.deleted", "session-deleted"), ("turn.queued.deleted", "turn-deleted")],
+)
+def test_turn_wait_reports_deletion_without_reading_a_gone_record(kind, reason):
+    from blockether.vis.engine import Turn
+
+    reads = []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path.endswith("/seq"):
+            return 200, {"seq": 4}
+        if path.endswith("/turns/t"):
+            reads.append(path)
+            if len(reads) == 1:
+                return 200, {"status": "queued"}
+            return 404, {"error": {"type": "turn-not-found"}}
+        if path.startswith("/v1/events?"):
+            deleted = {"type": kind, "session_id": "s", "seq": 5}
+            if kind == "turn.queued.deleted":
+                deleted["turn_id"] = "t"
+            return 200, frame(deleted), "text/event-stream"
+        return 404, {"error": {"code": "missing"}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        with pytest.raises(GatewayError) as exc:
+            Turn(client.session("s"), "t").wait(timeout=2)
+    assert (exc.value.status, exc.value.code) == (404, reason)
+    assert len(reads) == 1
+
+
 def test_attachments_cover_one_turn_several_turns_or_the_conversation():
     # A workflow passes the files of one step to the next step. Before, a program
     # had to map the ordinals of the artifact inventory to turns by itself.

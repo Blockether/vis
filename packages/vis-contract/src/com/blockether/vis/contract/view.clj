@@ -8,6 +8,11 @@
 
 (def ^:private schema (document/schema-document "view"))
 
+(defn watch-await-batch-request?
+  "True when a private SDK batch can read view watches without waiting."
+  [envelope]
+  (document/valid-json? "view" "watch_await_batch_request" envelope))
+
 (defn- definition [name] (get-in schema ["$defs" name]))
 
 (defn- variants

@@ -113,7 +113,9 @@ def test_fast_failure_closes_before_slow_reader_cleanup_without_starting_next(re
         for n, state in [(40, "unobserved"), (41, "failed"), (42, "unobserved")]
     ]
     assert recipe.counts[builds[2]] == 0
-    assert recipe.write_threads and all(thread is current_thread() for thread in recipe.write_threads)
+    assert recipe.write_threads and all(
+        thread is current_thread() for thread in recipe.write_threads
+    )
 
 
 def test_success_polls_the_entire_fixed_set_with_only_two_readers(recipe):
@@ -239,7 +241,7 @@ def test_unexpected_producer_failure_still_closes_failed_and_joins_readers(
     original = recipe.recorder.live
 
     def fail_wait(envelope):
-        if json.loads(envelope).get("timeout_ms"):
+        if json.loads(envelope).get("op") == "_task_await_batch":
             raise RuntimeError("Producer stopped")
         return original(envelope)
 

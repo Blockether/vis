@@ -96,9 +96,8 @@ def _media_type(headers: dict[str, str]) -> str:
     return "audio/wav"
 
 
-def _engine_query(engine: str | None, **extra: str | None) -> dict[str, str] | None:
-    query = {k: v for k, v in {"engine": engine, **extra}.items() if v is not None}
-    return query or None
+def _engine_query(engine: str | None, **extra: str | None) -> dict[str, str]:
+    return {k: v for k, v in {"engine": engine, **extra}.items() if v is not None}
 
 
 class Speech:

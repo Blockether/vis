@@ -1401,6 +1401,12 @@
     "GET /v1/sessions/:sid/artifacts": {
       "artifacts": []
     },
+    "POST /v1/sessions/:sid/council/changed": {
+      "id": "a94e3642-a852-4051-9dab-ccf871180dc2",
+      "kind": "tool",
+      "name": "council.changed",
+      "value": {"cursor": "42", "requests": []}
+    },
     "GET /v1/sessions/:sid/council": {
       "default_group_id": "workspace:6f67cd9423b4007d490e43f65a1c3e647f9e31aa2b92656a791ef2e36e159340",
       "activation_id": null

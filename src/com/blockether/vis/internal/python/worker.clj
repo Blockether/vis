@@ -128,12 +128,12 @@
   (into {}
         (concat (map (fn [path]
                        [(str "vis_engine/blockether/vis/" path) (str "blockether/vis/" path)])
-                     ["_contracts.py" "_wire.py" "activity.py" "views.py" "engine/__init__.py"
+                     ["_contracts.py" "_task_future.py" "_wire.py" "activity.py" "views.py" "engine/__init__.py"
                       "engine/_agent.py" "engine/_agents.py" "engine/_client.py"
                       "engine/_council.py" "engine/_extensions.py" "engine/_groups.py"
                       "engine/_host.py" "engine/_install.py" "engine/_local.py" "engine/_models.py"
                       "engine/_proxy.py" "engine/_routes.py" "engine/_service.py"
-                      "engine/_sounds.py" "engine/_speech.py" "engine/_types.py"])
+                      "engine/_sounds.py" "engine/_speech.py" "engine/_task_observer.py" "engine/_types.py"])
                 (map (fn [schema]
                        [(str "vis_engine/blockether/vis/_data/schema/" schema ".json")
                         (str "vis-contract/schema/" schema ".json")])

@@ -2572,8 +2572,8 @@
                  then keep reading
      :skip     — another turn's non-queue event, drop it.
    A `turn.queued.deleted` for the WANTED turn is terminal too: the queued
-   record was pulled back into an editor before it ever ran, so a cancelled
-   terminal is synthesized instead of blocking on a turn that never starts.
+   record left the queue before it ran, so the wait ends with `deleted`, not
+   with an execution result.
    A `turn.queued.sent` for the WANTED turn is terminal in the same way: the
    running turn took the message at its next step (send now), so the waiter
    ends with a `sent` receipt that names `into_turn_id` and `iteration`."
@@ -2581,35 +2581,19 @@
   (let [type
         (get event "type")
 
+        reason
+        (get gateway-contract/turn-wait-event-reasons type)
+
         own?
         (= (str (get event "turn_id")) (str wanted-turn-id))]
 
     (cond (and own? (contains? gateway-contract/turn-terminal-event-types type)) [:terminal event]
-          (and own? (= "turn.queued.deleted" type)) [:terminal
-                                                     (assoc event
-                                                       "type" "turn.completed"
-                                                       "status" "cancelled")]
-          (and own? (= "turn.queued.sent" type)) [:terminal
-                                                  (assoc event
-                                                    "type" "turn.completed"
-                                                    "status" "sent")]
+          (and own? (= "turn-deleted" reason)) [:terminal event]
+          (and own? (contains? gateway-contract/turn-settled-statuses reason))
+          [:terminal (assoc event "type" "turn.completed" "status" reason)]
           own? [:forward event]
           (contains? gateway-contract/queue-mirror-event-types type) [:forward event]
           :else [:skip event])))
-
-(defn- sent-receipt
-  "The synthesized terminal for a queued turn whose stored row already says
-   `sent`: the running turn took the message (send now) before this reader
-   subscribed, and `turn.queued.sent` is live-only, so no replay repeats it.
-   Nil when the row is absent or still waits."
-  [sid wanted-turn-id]
-  (let [turn (get-turn sid wanted-turn-id)]
-    (when (= "sent" (get turn "status"))
-      {"type" "turn.completed"
-       "turn_id" (str wanted-turn-id)
-       "status" "sent"
-       "into_turn_id" (get turn "into_turn_id")
-       "iteration" (get turn "iteration")})))
 
 (defn- read-sse-stream!
   "Read ONE SSE connection for `sid` from `cursor` until the wanted turn reaches
@@ -2620,10 +2604,9 @@
    finished (EOF).
 
    On `subscription.ready` for a turn that is not the daemon's current turn, the
-   stored row is checked once for a `sent` receipt ([[sent-receipt]]). The daemon
-   registers the subscription before it writes that frame, so a `turn.queued.sent`
-   that fired before this connection (a late attach, a reconnect gap) is recovered
-   here, and a later one still arrives live."
+   stored row is checked once for settlement. The daemon registers the
+   subscription before it writes that frame, so the stored row covers a late
+   attachment or a reconnect gap, and subsequent events arrive on the stream."
   [sid cursor wanted-turn-id on-event cursor*]
   (open-sse-events! sid
                     cursor
@@ -2631,8 +2614,9 @@
                     (fn [event]
                       (if (= "subscription.ready" (get event "type"))
                         (when-not (= (str (get event "current_turn_id")) (str wanted-turn-id))
-                          (when-let [receipt (sent-receipt sid wanted-turn-id)]
-                            [:terminal receipt]))
+                          (when-let [settled (gateway-contract/settled-turn-event
+                                               (get-turn sid wanted-turn-id) wanted-turn-id)]
+                            [:terminal settled]))
                         (let [[action event'] (sse-event-action event wanted-turn-id)]
                           (case action
                             :terminal

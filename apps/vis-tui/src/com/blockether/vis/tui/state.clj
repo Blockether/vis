@@ -8433,8 +8433,6 @@
                                     (when cancel-key
                                       (dispatch [:gateway-cancel-result cancel-key result]))))))))
 
-(def ^:private terminal-turn-statuses #{"completed" "failed" "cancelled"})
-
 (defn- probed-turn
   "The gateway row of turn `tid` of `sid`, or nil. One registry read of that turn;
    the full turn list, with content and images, only when the gateway does not
@@ -8461,7 +8459,7 @@
             (gateway-queue-io! (fn []
                                  (when-let [row (probed-turn sid tid client-id)]
                                    (let [status (str (get row "status"))]
-                                     (when (contains? terminal-turn-statuses status)
+                                     (when (contains? gateway-contract/turn-execution-terminal-statuses status)
                                        (dispatch
                                          [:sync-turn-terminal workspace-id
                                           {:phase :turn-terminal

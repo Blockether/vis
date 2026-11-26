@@ -84,25 +84,23 @@
   [view-id request]
   (try (let [{:keys [is-accepted reason] :as outcome} (gw-view/action! view-id
                                                                        (http/body-json request))]
-         (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
-               ;; The client edited an older state, or the app is closed.
-               (and (false? is-accepted)
-                    (#{"conflict" "stale_revision" "closed" "disconnected"} reason))
-               (http/json-response 409 outcome)
-               (and (false? is-accepted) (= "not_cancellable" reason))
-               (http/error-response 409
-                                    :view-action-refused "this input View cannot be cancelled"
-                                    :view_id view-id
-                                    :action "cancel")
-               :else (http/json-response outcome)))
+         (if (and (false? is-accepted) (= "unknown" reason))
+           (view-404 view-id)
+           (http/json-response (cond-> outcome
+                                 (and (false? is-accepted) (nil? reason))
+                                 (assoc :reason "invalid")))))
        (catch clojure.lang.ExceptionInfo e
          (let [{:keys [type action]} (ex-data e)]
-           (http/error-response (if (= :vis/view-action-not-supported type) 409 400)
-                                (or type :vis/view-action-refused)
-                                (ex-message e)
-                                :view_id view-id
-                                :action (some-> action
-                                                name))))))
+           (if (= :vis/view-action-not-supported type)
+             (http/json-response {:is-accepted false
+                                  :reason "unsupported"
+                                  :view-id view-id
+                                  :action action})
+             (http/error-response 400
+                                  (or type :vis/view-action-refused)
+                                  (ex-message e)
+                                  :view_id view-id
+                                  :action (some-> action name)))))))
 
 (defn- view-action-handler
   "POST /v1/sessions/:sid/views/:view-id/actions — apply one closed operator

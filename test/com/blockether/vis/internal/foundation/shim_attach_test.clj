@@ -954,6 +954,18 @@
       (expect (re-find #"RAISED True" so))
       (expect (re-find #"MISSING" so)))))
 
+(defdescribe attachment-id-with-version-test
+  (it "keeps an ID exact when a version is supplied"
+      (let [ctx (ctx-with-root (temp-root))
+            result (binding [mpl-capture/*attachment-reader* (versioned-reader)]
+                     (block ctx
+                            (str "assert get_attachment('v2', version=2)['id'] == 'v2'\n"
+                                 "assert get_attachment({'id': 'v2'}, version=2)['id'] == 'v2'\n"
+                                 "try:\n    get_attachment('v2', version=3)\n"
+                                 "except Exception as e:\n    assert 'v2' in str(e) and 'version 2' in str(e)\n"
+                                 "else:\n    raise AssertionError('wrong version accepted')\n")))]
+        (expect (nil? (:error result))))))
+
 ;; Regression, session 55ed67f6 (iOS companion work): `attach` returned None and
 ;; the artifact it had just stored was invisible to `list_attachments`,
 ;; `get_attachment`, `read_attachment` and `show_attachment` until the NEXT

@@ -30,7 +30,7 @@
           (expect (document/valid? "task" (wire/->wire (task/state sid id))))
           (task/acknowledge! sid id)
           (expect (empty? (task/tasks sid)))
-          (expect (nil? (task/await! sid id {})))
+          (expect (= {:state :done :value 42 :cancelling 1} (task/await! sid id {})))
           (finally (deliver finish true) (task/sweep! sid :session-close)))))
   (it "detaches existing waits without stopping the Task or detaching later waits"
       (let [sid (random-uuid)

@@ -11,23 +11,50 @@ def open_board(app):
     BOARD.open(open_board)
 
 
+class _BoardTools:
+    list_issues = staticmethod(
+        vis.method(
+            tools.list_issues,
+            tag="observation",
+            activity=vis.Activity(label="List board issues", show_start=False),
+        )
+    )
+    create_issue = staticmethod(
+        vis.method(
+            tools.create_issue,
+            tag="mutation",
+            activity=vis.Activity(label="Make a board issue", show_start=False),
+        )
+    )
+    change_issue = staticmethod(
+        vis.method(
+            tools.change_issue,
+            tag="mutation",
+            activity=vis.Activity(label="Change a board issue", show_start=False),
+        )
+    )
+    move_issue = staticmethod(
+        vis.method(
+            tools.move_issue,
+            tag="mutation",
+            activity=vis.Activity(label="Move a board issue", show_start=False),
+        )
+    )
+    delete_issue = staticmethod(
+        vis.method(
+            tools.delete_issue,
+            tag="mutation",
+            activity=vis.Activity(label="Delete a board issue", show_start=False),
+        )
+    )
+
+
 vis.register_extension(
     vis.Extension(
         name="vis-board",
         description="Plan and track the issues of all projects through the SDLC flow.",
         alias="board",
-        symbols=[
-            vis.Symbol(
-                fn, tag=tag, activity=vis.Activity(label=label, show_start=False)
-            )
-            for fn, tag, label in (
-                (tools.list_issues, "observation", "List board issues"),
-                (tools.create_issue, "mutation", "Make a board issue"),
-                (tools.change_issue, "mutation", "Change a board issue"),
-                (tools.move_issue, "mutation", "Move a board issue"),
-                (tools.delete_issue, "mutation", "Delete a board issue"),
-            )
-        ],
+        symbols=[vis.Symbol(_BoardTools(), name="board")],
         global_app=vis.GlobalApp("board", "Board", open_board, icon="board"),
         settings=start.SETTINGS,
     )

@@ -2634,7 +2634,10 @@
                 (expect (= ["task.started" "task.updated" "task.ended"] (mapv #(get % "type") frames)))
                 (expect (= "cancelled" (get-in (last frames) ["task" "state"])))
                 (expect (= [200 {"events" frames}] (request :get sid "/events-since"))))
-              (expect (= 404 (first (request :get sid path))))
+              ;; An acknowledged Task leaves discovery but keeps a receipt for other observers.
+              (expect (= [200 "cancelled"]
+                         (let [[status body] (request :get sid path)] [status (get-in body ["task" "state"])])))
+              (expect (= [200 {"tasks" []}] (request :get sid "/tasks")))
               (let [{:keys [complete!]} (task/start-manual! sid {:name "late"} (constantly nil))]
                 (task/at-publication-cursor sid #(state/current-seq sid))
                 (reset! present? false)
@@ -8820,26 +8823,27 @@
           ;; a valid ticket for a file that is not audio or video serves nothing
           (let [text-path (.getPath (io/file (.getParent (io/file path)) "notes.txt"))]
             (expect (= 415 (:status (fetch (signed text-path (+ (util/now-ms) 60000)))))))
-          ;; a token-gated gateway lets the ticket through its token and protocol gates,
-          ;; and keeps the same route closed without a ticket
           (with-server-state!
             {:require-token? true :token "secret"}
             (fn []
-              (let [authed
-                    ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])
-
-                    gated
-                    ((rv 'wrap-protocol) authed [])]
-
-                (expect (= 200 (:status (gated (request url {})))))
-                (expect (= 401
-                           (:status (authed (request (str/replace url #"&ticket=[^&]*" "") {})))))
-                (expect (= 401
-                           (:status (authed (request (str "/v1/sessions/" sid "/fs/file?ticket=x")
-                                                     {})))))
-                (expect (= 426
-                           (:status (gated (request (str "/v1/sessions/" sid "/fs/file?ticket=x")
-                                                    {})))))))))
+              (with-redefs-fn
+                redefs
+                (fn []
+                  (let [app ((rv 'app) "secret" [])
+                        signed-url (signed path (+ (util/now-ms) 60000))
+                        unsigned (str/replace signed-url #"&ticket=[^&]*" "")
+                        preview (str "/v1/sessions/" sid "/fs/file?ticket=x")
+                        protocol {"x-vis-protocol" (str gateway-contract/protocol-version)}]
+                    (expect (= 200 (:status (app (request signed-url {})))))
+                    (doseq [credential [{"authorization" "Bearer secret"}
+                                        {"x-vis-gateway-secret" "secret"}]]
+                      (let [denial (app (request unsigned (merge protocol credential)))]
+                        (expect (= 401 (:status denial)))
+                        (expect (= "invalid-ticket"
+                                   (get-in (wire/parse-json (:body denial)) ["error" "type"])))))
+                    (expect (= 401 (:status (app (request unsigned protocol)))))
+                    (expect (= 401 (:status (app (request preview protocol)))))
+                    (expect (= 426 (:status (app (request preview {})))))))))))
         (finally (.delete episode) (.delete notes) (.delete root))))))
 
 (defdescribe
@@ -9121,25 +9125,22 @@
                                             (fs-api/attachment-ticket (str sid) iid 0 expires))
                                        {})
                                 :path-params {:sid (str sid)})))))))
-          ;; a token-gated gateway lets a ticketed byte request through its token and
-          ;; protocol gates, and keeps the link route closed without the token
-          (with-server-state! {:require-token? true :token "secret"}
-                              (fn []
-                                (let [authed
-                                      ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])
-
-                                      gated
-                                      ((rv 'wrap-protocol) authed [])]
-
-                                  (expect (= 200 (:status (gated (request url {})))))
-                                  (expect (= 401
-                                             (:status (authed (request
-                                                                (str "/v1/sessions/"
-                                                                     sid
-                                                                     "/iterations/"
-                                                                     iid
-                                                                     "/attachments/0/link?ticket=x")
-                                                                {}))))))))
+          (with-server-state!
+            {:require-token? true :token "secret"}
+            (fn []
+              (with-redefs-fn
+                redefs
+                (fn []
+                  (let [app ((rv 'app) "secret" [])
+                        signed-url (signed 0 0 (+ (util/now-ms) 60000))
+                        unsigned (first (str/split signed-url #"\?" 2))
+                        protocol {"x-vis-protocol" (str gateway-contract/protocol-version)}]
+                    (expect (= 200 (:status (app (request signed-url {})))))
+                    (doseq [credential [{"authorization" "Bearer secret"}
+                                        {"x-vis-gateway-secret" "secret"}]]
+                      (expect (= 200 (:status (app (request unsigned (merge protocol credential)))))))
+                    (expect (= 401 (:status (app (request unsigned protocol)))))
+                    (expect (= 401 (:status (app (request (str unsigned "/link?ticket=x") protocol))))))))))
           ;; the link route answers only for a reference
           (let [inline (link 1)]
             (expect (= 409 (:status inline)))

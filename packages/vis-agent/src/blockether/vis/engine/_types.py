@@ -98,7 +98,33 @@ class AppList(TypedDict):
     views: list[dict[str, JSONValue]]
 
 
-AppDoorAnswer: TypeAlias = dict[str, JSONValue]
+class ViewWatchAwaitBatchReplyVariantItem1(TypedDict):
+    state: Literal["running"]
+
+
+class ViewWatchAwaitBatchReplyVariantItem2Value(TypedDict):
+    readiness: Literal["changed", "event", "closed", "cancelled"]
+    result: NotRequired[JSONValue]
+
+
+class ViewWatchAwaitBatchReplyVariantItem2(TypedDict):
+    state: Literal["done"]
+    value: ViewWatchAwaitBatchReplyVariantItem2Value
+
+
+class ViewWatchAwaitBatchReplyVariantItem3(TypedDict):
+    state: Literal["failed"]
+    error: str
+
+
+ViewWatchAwaitBatchReply: TypeAlias = list[
+    ViewWatchAwaitBatchReplyVariantItem1
+    | ViewWatchAwaitBatchReplyVariantItem2
+    | ViewWatchAwaitBatchReplyVariantItem3
+]
+
+
+AppDoorAnswer: TypeAlias = dict[str, JSONValue] | ViewWatchAwaitBatchReply
 
 
 class AppViewVariant1(TypedDict):
@@ -166,10 +192,10 @@ AppView: TypeAlias = AppViewVariant1 | AppViewVariant2
 
 class ViewOutcome(TypedDict):
     is_accepted: bool
-    reason: NotRequired[str | None]
+    reason: NotRequired[JSONValue]
 
 
-class CapabilitiesCompatibility(TypedDict):
+class ProtocolCompatibility(TypedDict):
     behind: int | None
     client_min_gateway: int | None
     client_name: str
@@ -187,7 +213,7 @@ class Capabilities(TypedDict):
     version: int
     protocol: ProtocolInfo
     addresses: NotRequired[list[str]]
-    compatibility: NotRequired[CapabilitiesCompatibility]
+    compatibility: NotRequired[ProtocolCompatibility]
     features: dict[str, JSONValue]
 
 
@@ -462,6 +488,22 @@ class SessionWorkspace(TypedDict):
     label: str | None
 
 
+TurnOpenStatus: TypeAlias = Literal["pending", "queued", "streaming"]
+
+
+TurnExecutionTerminalStatus: TypeAlias = Literal["completed", "failed", "cancelled"]
+
+
+TurnSettledStatus: TypeAlias = (
+    TurnExecutionTerminalStatus
+    | Literal[
+        "suspended",
+        "error",
+        "sent",
+    ]
+)
+
+
 class TurnTokens(TypedDict):
     cache_created: int
     cached: int
@@ -480,7 +522,7 @@ class TurnRecord(TypedDict):
 
     turn_id: str
     session_id: str
-    status: str
+    status: TurnOpenStatus | TurnSettledStatus
     request: NotRequired[str | None]
     request_kind: str
     role: NotRequired[str]
@@ -489,6 +531,9 @@ class TurnRecord(TypedDict):
     position: NotRequired[int]
     completed_at: NotRequired[int | None]
     duration_ms: NotRequired[int | None]
+    into_turn_id: NotRequired[str]
+    iteration: NotRequired[int]
+    sent_at: NotRequired[int]
     iteration_count: NotRequired[int]
     council: NotRequired[dict[str, JSONValue] | None]
     tokens: NotRequired[TurnTokens]
@@ -1005,8 +1050,19 @@ class TaskList(TypedDict):
     tasks: list[Task]
 
 
+class CouncilReadinessRequestsItem(TypedDict):
+    session_id: str
+    entry_id: int
+
+
+class CouncilReadiness(TypedDict):
+    cursor: str
+    requests: list[CouncilReadinessRequestsItem]
+
+
 class TaskStatus(TypedDict):
     task: Task
+    value: NotRequired[CouncilReadiness]
     record: NotRequired[AgentsRecord]
 
 
@@ -1108,6 +1164,13 @@ class CouncilThreadPage(TypedDict):
     has_more: bool
 
 
+class CouncilWatchTask(TypedDict):
+    id: str
+    kind: Literal["tool"]
+    name: str
+    value: NotRequired[CouncilReadiness]
+
+
 class TurnQueueStep(TypedDict):
     turn: TurnRecord | None
 
@@ -1174,8 +1237,31 @@ class SessionEvent(TypedDict):
     type: SessionEventType
 
 
+class AgentsTeamClock(TypedDict):
+    turn_id: str
+    worked_ms: int
+    busy_since: NotRequired[int]
+
+
+class SubscriptionReady(TypedDict):
+    type: Literal["subscription.ready"]
+    session_id: str
+    cursor: int
+    current_turn_id: str | None
+    is_live: bool
+    server_time_ms: int
+    goal: None | SessionGoal
+    agent_name: NotRequired[str]
+    latest_iteration: NotRequired[int]
+    tasks: NotRequired[list[Task]]
+    tasks_seq: NotRequired[int]
+    agents: NotRequired[list[AgentsAgent]]
+    team_clocks: NotRequired[list[AgentsTeamClock]]
+
+
 class SessionEvents(TypedDict):
-    events: list[SessionEvent]
+    cursor: NotRequired[int]
+    events: list[SessionEvent | SubscriptionReady]
 
 
 class SessionForkTurnsTurnsItem(TypedDict):
@@ -2850,12 +2936,6 @@ class TeamChange(TypedDict):
     busy_since: NotRequired[JSONValue]
 
 
-class AgentsTeamClock(TypedDict):
-    turn_id: str
-    worked_ms: int
-    busy_since: NotRequired[int]
-
-
 class SessionTeamUpdatedData(TypedDict):
     """The `data` of an event of type `session.team_updated`."""
 
@@ -3400,6 +3480,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/cancel-current": "TurnCancel",
     "POST /v1/sessions/:sid/client-calls/:call_id/activity": "EmptyObject",
     "POST /v1/sessions/:sid/client-calls/:call_id/result": "EmptyObject",
+    "POST /v1/sessions/:sid/council/changed": "CouncilWatchTask",
     "POST /v1/sessions/:sid/council/entries": "CouncilEntryRecord",
     "POST /v1/sessions/:sid/council/wake": "CouncilEntryRecord",
     "POST /v1/sessions/:sid/drain-queue": "TurnQueueStep",

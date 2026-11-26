@@ -251,24 +251,37 @@
 
 (defn start-readiness-task!
   "Expose a host readiness observation as a sandbox Task. Cancellation ends only the observation."
-  [{:keys [result cancel! end-result]}]
+  [{:keys [on-ready! cancel! end-result]}]
   (let [sid (task-session (first *caller*))]
     (try
-      (let [row (task/start! sid {:name "view.changed()" :origin *task-origin*
-                                 :detachable? false :cancel-on-request? true}
-                             (fn []
-                               (task/install-interrupt! (fn [_] (cancel!)))
-                               (let [ready @result]
-                                 (if (= "cancelled" ready)
-                                   {:state :cancelled}
-                                   {:state :done
+      (let [{:keys [row complete!]}
+            (task/start-manual! sid {:name "view.changed()" :origin *task-origin*
+                                     :guest-data {:readiness :view :cancel-on-await false}
+                                     :detachable? false :external-settlement? true}
+                                (fn [_] (cancel!)))]
+        (on-ready! (fn [ready]
+                     (complete! #(if (= "cancelled" ready)
+                                    {:state :cancelled}
+                                    {:state :done
                                      :value (cond-> {:readiness ready}
                                               (and (= "closed" ready) end-result (realized? end-result))
-                                              (assoc :result @end-result))}))))]
-        (select-keys row [:id :name]))
+                                              (assoc :result @end-result))}))))
+        (task/guest-task sid (:id row)))
       (catch Throwable e
         (cancel!)
         (throw e)))))
+
+(defn- await-task [sid call id options]
+  (let [token (when-let [token (get options "token")] [call token])
+        opts {:block call :token token :timeout-ms (min 250 (long (get options "timeout_ms" 0)))
+              :leave? (true? (get options "leave"))
+              :observation? (true? (get options "observation"))
+              :hold rt/*blocking-wall-hold*}]
+    (if-let [result (when (task/guest-task sid id) (task/await! sid id opts))]
+      (if (true? (get options "read"))
+        (task-reply result)
+        {"state" (name (:state result))})
+      {"state" "missing"})))
 
 (defn- task-call [session call tool f request]
   (let [[arg x] (get request "args")
@@ -300,18 +313,13 @@
       (= tool "_task_list")
       (into [] (keep #(task/guest-task sid (:id %))) (task/tasks sid))
 
+      (= tool "_task_await_batch")
+      (mapv (fn [[id options]] (await-task sid call id (dissoc options "timeout_ms"))) arg)
+
       :else
       (let [owned? (task/guest-task sid arg)]
         (case tool
-          "_task_await"
-          (let [token (when-let [token (get x "token")] [call token])
-                opts {:block call :token token :timeout-ms (min 250 (long (get x "timeout_ms" 0)))
-                      :leave? (true? (get x "leave"))
-                      :observation? (true? (get x "observation"))
-                      :hold rt/*blocking-wall-hold*}]
-            (if-let [result (when owned? (task/await! sid arg opts))]
-              (task-reply result)
-              {"state" "missing"}))
+          "_task_await" (await-task sid call arg x)
           "_task_snapshot" (when owned? (:record (task/status sid arg)))
           "_task_ack" (when owned? (task/acknowledge! sid arg))
           "_task_cancel" (boolean (and owned? (task/cancel! sid arg :agent :cancel x)))
@@ -322,7 +330,7 @@
 
 (def ^:private task-ops
   #{"_task_start" "_task_await" "_task_ack" "_task_cancel" "_task_state" "_task_cancelling"
-    "_task_uncancel" "_task_rename" "_task_list" "_task_snapshot"})
+    "_task_uncancel" "_task_rename" "_task_list" "_task_snapshot" "_task_await_batch"})
 
 (defn- dispatch-call
   [caller call tool payload]

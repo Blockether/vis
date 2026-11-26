@@ -1,7 +1,7 @@
 """The full live vocabulary crosses both SDK hosts without losing content."""
 
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 
 import blockether.vis.extension as vis
@@ -117,7 +117,9 @@ def test_operator_presses_wake_the_producer_and_are_counted(monkeypatch):
     with vis.live("Actions", [vis.ui.button("go", "Go")], flush_ms=0) as view:
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda _: recorder.activate("go"), range(20)))
-        assert view.changed().result(timeout=1) in ("changed", "event")
+        watch = view.changed()
+        assert wait([watch], timeout=1).done == {watch}
+        assert watch.result() in ("changed", "event")
         assert view.state()["nodes"][0]["clicks"] == 20
         view["go"].set(is_disabled=True)
         with pytest.raises(AssertionError):

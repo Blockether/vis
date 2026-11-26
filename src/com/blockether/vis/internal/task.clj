@@ -50,7 +50,7 @@
        (mapv public-row)))
 
 (defn- wire-row [entry]
-  (when (and entry (not (:acknowledged? entry)))
+  (when entry
     (let [{:keys [id kind] :as row} (:row entry)]
       (cond-> (assoc row :name (str id " " (or (:public-name entry) (name kind))))
         (:cancel-reason row) (update :cancel-reason #(str/replace (name %) "-" "_"))
@@ -60,7 +60,8 @@
   (wire-row (get-in @sessions (key-for session id))))
 
 (defn wire-tasks [session]
-  (into [] (keep wire-row) (sort-by :number (vals (get-in @sessions [(str session) :entries])))))
+  (into [] (comp (remove :acknowledged?) (keep wire-row))
+        (sort-by :number (vals (get-in @sessions [(str session) :entries])))))
 
 (defn at-publication-cursor
   "Capture Task rows after prior publications and before later ones. `cursor` reads the event seq."
@@ -280,17 +281,19 @@
 
 (defn status
   "Read a Task without acknowledging its result. A live snapshot runs outside the lock."
-  [session id]
-  (let [path (key-for session id)
-        {:keys [row snapshot ticket]} (get-in @sessions path)]
-    (when row
-      (let [record (when snapshot (snapshot id))
+  ([session id] (status session id false))
+  ([session id wire?]
+   (let [path (key-for session id)
+         {:keys [row snapshot ticket]} (get-in @sessions path)]
+     (when row
+       (let [record (when snapshot (snapshot id))
             entry (get-in @sessions path)]
         (when (identical? ticket (:ticket entry))
           (let [{:keys [value] :as outcome} (:outcome entry)]
-            (cond-> {:task (:row entry)}
+            (cond-> {:task (if wire? (wire-row entry) (:row entry))}
               (or (:record outcome) record) (assoc :record (or (:record outcome) record))
-              (and (contains? outcome :value) (not= :subagent (:kind row))) (assoc :value value))))))))
+              (and (contains? outcome :value)
+                    (= :council (get-in entry [:guest-data :readiness]))) (assoc :value value)))))))))
 
 (defn start!
   "Start `run` once. It returns `{:state :done|:failed|:cancelled, ...}`."
@@ -394,7 +397,7 @@
                        (when (and (= :running (get-in entry [:row :state]))
                                   (not (contains? (:waiters entry) token)))
                          ;; A requested cancel ends the Task: wait for that end, not for a question.
-                         (if-let [reason (when (and (:detachable? entry) (:detach-reason entry)
+                         (if-let [reason (when (and (not observation?) (:detachable? entry) (:detach-reason entry)
                                                     (zero? (long (:cancelling entry 0))))
                                            ((:detach-reason entry)))]
                            (do (swap! sessions update (first path)
@@ -422,24 +425,34 @@
                     {:state :detached})
                   {:state :running})))))))
 
+(def ^:private receipt-cap 128)
+
 (defn acknowledge! [session id]
   (let [path (key-for session id)]
     (locking sessions
       (when (get-in @sessions (conj path :outcome))
-        (if (= :subagent (get-in @sessions (conj path :row :kind)))
-          (swap! sessions assoc-in (conj path :acknowledged?) true)
-          (swap! sessions update-in (pop path) dissoc id))))
+        ;; Keep a bounded receipt for other observers, but remove it from discovery.
+        (swap! sessions update-in (pop path)
+               (fn [entries]
+                 (let [entries (assoc-in entries [id :acknowledged?] true)
+                       expired (->> entries vals (filter :acknowledged?) (sort-by :number >)
+                                    (drop receipt-cap) (map #(get-in % [:row :id])))]
+                   (apply dissoc entries expired))))))
     nil))
+
+(defn- foreground-wait? [{:keys [detached? observation?]}]
+  (not (or detached? observation?)))
 
 (defn- mark-detached
   [session [id {:keys [row waiters]}] reason]
-  (let [blocks (into #{} (comp (remove :detached?) (map :block)) (vals waiters))]
+  (let [blocks (into #{} (comp (filter foreground-wait?) (map :block)) (vals waiters))]
     (-> (reduce (fn [held block]
                   (update-in held [:detach-notices block] (fnil conj []) {:task row :reason reason}))
                 session blocks)
         (assoc-in [:entries id :signal] (promise))
         (assoc-in [:entries id :row :detached] true)
-        (update-in [:entries id :waiters] update-vals #(assoc % :detached? true)))))
+        (update-in [:entries id :waiters] update-vals
+                    #(cond-> % (foreground-wait? %) (assoc :detached? true))))))
 
 (defn detach-awaits!
   "Release current waits without interrupting their Tasks."
@@ -451,7 +464,7 @@
         (let [detaching (filter (fn [[_ {:keys [row waiters detachable? cancelling]}]]
                                   (and detachable? (= :running (:state row))
                                        (zero? (long (or cancelling 0)))
-                                       (some (complement :detached?) (vals waiters))))
+                                       (some foreground-wait? (vals waiters))))
                                 entries)]
           (swap! sessions update sid
                  (fn [session]

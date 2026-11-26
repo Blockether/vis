@@ -280,7 +280,7 @@ def test_cancelled_task_counts_must_name_operations_and_positive_integers(value)
             "cancelled",
             "task-cancel-ready",
             "replied",
-            "notice",
+            "ready-watch",
             "agent",
             True,
         ),
@@ -358,12 +358,11 @@ def test_task_cancel_verifier_needs_the_launched_asking_child(
         "task_id": "t1",
         "session_id": "child-1",
         "question": "task-cancel-ready",
-        "detached": True,
+        "ready": True,
         "cancelled": True,
         "error": "CancelledError",
     }
-    if observation in {"record", "wrong-entry", "literal"}:
-        row["question_entry_id"] = 58 if observation == "wrong-entry" else 57
+    row["question_entry_id"] = 58 if observation == "wrong-entry" else 57
     if observation in {"record", "wrong-entry"}:
         code = """read_snapshot = task.record
 record = read_snapshot()
@@ -372,7 +371,7 @@ try:
 except asyncio.CancelledError as stopped:
     print(json.dumps(dict(task_id=task.task_id, session_id=record.session_id,
                           question=record.question, question_entry_id=record.question_entry_id,
-                          detached=detached is task, cancelled=task.cancelled(),
+                          ready=bool(readiness), cancelled=task.cancelled(),
                           error=type(stopped).__name__)))
 """
     else:
@@ -383,14 +382,14 @@ except asyncio.CancelledError as stopped:
 """
         if observation == "literal":
             code = f"print({json.dumps(row)!r})"
-    launch = "start = council.run\n[task] = await start(tasks)\ndetached = await task"
+    launch = "start = council.run\n[task] = await start(tasks)\nreadiness = await council.changed()"
     if observation == "unrelated-handler":
         code = f'task.cancel()\ntry:\n    int("42")\nexcept ValueError:\n    pass\nprint({json.dumps(row)!r})'
     elif observation != "literal":
         if observation not in {"record", "wrong-entry"}:
-            code = "record = detached.record()\n" + code
+            code = "record = task.record()\n" + code
         code = code.replace(
-            "try:\n", "stop = detached.cancel\nstop()\nsubject = detached\ntry:\n", 1
+            "try:\n", "stop = task.cancel\nstop()\nsubject = task\ntry:\n", 1
         ).replace("await task", "await subject")
         if observation == "wrong-handler":
             code = code.replace("asyncio.CancelledError", "ValueError")
@@ -401,14 +400,6 @@ except asyncio.CancelledError as stopped:
                 "asyncio.CancelledError", "Stopped"
             )
     blocks = [atif.block("t1/i1/f1", launch)]
-    if observation == "notice":
-        blocks.append(
-            atif.block(
-                "t1/i1/f2",
-                "detached = await task",
-                stdout='[Vis] t1 council a1 runs in the background. a1 asks: "task-cancel-ready". Reply, then await the same Task (t1).',
-            )
-        )
     blocks.append(atif.block("t1/i1/f3", code, stdout=json.dumps(row)))
     document = _run(atif.step(1, *blocks))
     document["subagent_trajectories"] = [child]
@@ -419,10 +410,22 @@ except asyncio.CancelledError as stopped:
         }
         for edge, fields in (
             ("started", {"state": "running"}),
-            ("updated", {"state": "running", "detached": True}),
             ("ended", {"state": "cancelled", "cancel_reason": cancel_reason}),
         )
     ]
+    if ping_state != "pending":
+        for edge, state in (("started", "running"), ("ended", "done")):
+            events.append(
+                {
+                    "type": f"task.{edge}",
+                    "task": {
+                        "id": "t2",
+                        "kind": "tool",
+                        "name": "t2 council.changed",
+                        "state": state,
+                    },
+                }
+            )
     host = {
         "events": events,
         "children": {"a1": "child-1"},

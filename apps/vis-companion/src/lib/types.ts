@@ -152,6 +152,18 @@ export interface SessionTeam {
   total: number;
 }
 
+/** The creation receipt. Read the session route for liveness and other state. */
+export interface SessionCreated {
+  id: string;
+  channel: string;
+  title: string | null;
+  goal: SessionGoal | null;
+  external_id: string | null;
+  workspace_id: string | null;
+  group_id: string | null;
+  origin: { kind: 'extension'; extension: string; session_id?: string } | null;
+}
+
 export interface Session {
   id: string;
   title?: string;

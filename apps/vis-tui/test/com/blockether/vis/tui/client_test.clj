@@ -960,12 +960,9 @@
   (it "own turn terminal returns the event"
       (expect (= [:terminal {"type" "turn.completed" "turn_id" "t1"}]
                  (client/sse-event-action {"type" "turn.completed" "turn_id" "t1"} "t1"))))
-  (it "own queued record deleted synthesizes a cancelled terminal (no hang)"
-      (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
-                                                     "t1")]
-        (expect (= :terminal action))
-        (expect (= "cancelled" (get event' "status")))
-        (expect (= "turn.completed" (get event' "type")))))
+  (it "ends the wait on deletion without inventing an execution event"
+      (let [event {"type" "turn.queued.deleted" "turn_id" "t1"}]
+        (expect (= [:terminal event] (client/sse-event-action event "t1")))))
   (it "own queued record sent into the running turn synthesizes a sent terminal (no hang)"
       ;; `→ Send now`: the running turn takes the queued message at its next
       ;; step, so the queued turn never starts. The waiter ends with a receipt
@@ -1021,6 +1018,20 @@
                        ((rv 'read-sse-stream!) "s" 0 "q1" #(swap! forwarded conj %) (atom 0))))
             (expect (= [["s" "q1"]] @looked-up))
             (expect (= [] @forwarded) "nothing to repaint: the queued turn never ran")))))
+  (it "a completed row recovers the blocking result with one lookup"
+      (let [looked-up (atom [])
+            blocks [{"type" "prose" "markdown" "Done."}]]
+        (with-redefs-fn {(rv 'open-sse-events!)
+                         (fn [_sid _cursor _cursor* handle]
+                           (or (handle {"type" "subscription.ready" "current_turn_id" "r0"})
+                               [:closed]))
+                         #'client/get-turn
+                         (fn [sid tid]
+                           (swap! looked-up conj [sid tid])
+                           {"turn_id" tid "status" "completed" "content" blocks})}
+          (fn []
+            (expect (= blocks (get (client/attach-turn-sync! "s" "t" {}) "content")))
+            (expect (= [["s" "t"]] @looked-up))))))
   (it "the daemon's current turn is never looked up and a waiting row keeps reading"
       (let [looked-up
             (atom 0)

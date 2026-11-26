@@ -39,6 +39,11 @@ def stop_log_sweepers():
 # -- The protocol and the implementation -------------------------------------
 
 
+def _observed(task, timeout):
+    assert wait([task], timeout=timeout).done == {task}
+    return task.result()
+
+
 def test_the_host_is_a_contract_host_and_serves_exactly_the_declared_ops():
     # The protocol is the interface anyone else implements, so this host has to
     # satisfy it the same way a stranger's would.
@@ -290,7 +295,7 @@ def test_log_sweep_preserves_fresh_empty_directories(tmp_path, with_outside):
 
 @pytest.mark.parametrize("command", ["printf hello", ["printf", "hello"]])
 def test_shell_runs_a_command_and_answers_the_engine_shape(command):
-    run = vis.shell({"command": command}).result(10)
+    run = _observed(vis.shell({"command": command}), 10)
     assert run["exit"] == 0
     assert run["out"] == "hello"
     assert run["status"] == "exited"
@@ -314,14 +319,14 @@ def test_a_start_with_a_live_id_starts_no_second_process():
     finally:
         assert first.cancel()
     with pytest.raises(CancelledError):
-        again.result(5)
+        _observed(again, 5)
 
 
 # A command that read stdin hung for hours: nothing ever wrote to it and nothing closed it.
 def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
     started = time.monotonic()
     sh = vis.shell({"command": "cat; echo DONE:$?"})
-    run = sh.result(10)
+    run = _observed(sh, 10)
     assert run["status"] == "exited"
     assert run["out"] == "DONE:0\n"
     assert time.monotonic() - started < 5
@@ -330,7 +335,7 @@ def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
 
     asker = vis.shell({"command": "read x; echo GOT:$x", "stdin": "tty"})
     asker.type("typed")
-    assert asker.result(10)["out"] == "GOT:typed\n"
+    assert _observed(asker, 10)["out"] == "GOT:typed\n"
     with pytest.raises(_outside.Refused, match="stdin"):
         vis.shell({"command": "true", "stdin": "pipe"})
 
@@ -367,7 +372,7 @@ def test_shell_sweeps_old_logs_at_start_and_periodically(
 
     monkeypatch.setattr(_outside, "_sweep_logs", sweep)
     monkeypatch.setattr(_outside, "_LOG_SWEEP_INTERVAL_SECS", 0.01)
-    run = vis.shell({"command": "printf retention"}).result(10)
+    run = _observed(vis.shell({"command": "printf retention"}), 10)
     assert swept.wait(5)
     assert not stale.exists()
     assert not stale.parent.exists()
@@ -385,7 +390,7 @@ def test_shell_sweeps_old_logs_at_start_and_periodically(
     assert not later.parent.parent.exists()
     sweepers = list(_outside._LOG_SWEEPERS.values())
     assert len(sweepers) == 1 and sweepers[0][1].daemon
-    vis.shell({"command": "true"}).result(10)
+    _observed(vis.shell({"command": "true"}), 10)
     assert list(_outside._LOG_SWEEPERS.values()) == sweepers
 
 
@@ -481,10 +486,10 @@ def test_log_sweeper_start_failure_does_not_break_shell(monkeypatch):
 
     with monkeypatch.context() as patched:
         patched.setattr(threading.Thread, "start", fail_start)
-        run = vis.shell({"command": "printf survived"}).result(10)
+        run = _observed(vis.shell({"command": "printf survived"}), 10)
         assert run["exit"] == 0 and run["out"] == "survived"
         assert not _outside._LOG_SWEEPERS
-    vis.shell({"command": "true"}).result(10)
+    _observed(vis.shell({"command": "true"}), 10)
     assert len(_outside._LOG_SWEEPERS) == 1
 
 
@@ -504,7 +509,7 @@ def test_shell_logs_use_the_utc_date_and_keep_state_separate(
     started = datetime.fromisoformat("2026-09-14T00:00:01+00:00").timestamp()
     monkeypatch.setattr(_outside.time, "time", lambda: started)
 
-    run = vis.shell({"command": "printf dated"}).result(10)
+    run = _observed(vis.shell({"command": "printf dated"}), 10)
 
     assert run["exit"] == 0
     assert Path(run["log_path"]).parent == log_root / "2026-09-14" / "outside"
@@ -516,11 +521,11 @@ def test_shell_logs_use_the_utc_date_and_keep_state_separate(
 def test_shell_log_paths_survive_utc_midnight_without_overwriting(monkeypatch):
     clock = [datetime(2026, 9, 13, 23, 59, 59, tzinfo=UTC).timestamp()]
     monkeypatch.setattr(_outside.time, "time", lambda: clock[0])
-    first = vis.shell({"command": "printf first"}).result(10)
+    first = _observed(vis.shell({"command": "printf first"}), 10)
     first_path = Path(first["log_path"])
     clock[0] += 2
-    second = vis.shell({"command": "printf second"}).result(10)
-    third = vis.shell({"command": "printf third"}).result(10)
+    second = _observed(vis.shell({"command": "printf second"}), 10)
+    third = _observed(vis.shell({"command": "printf third"}), 10)
 
     assert first_path.parent.parent.name == "2026-09-13"
     assert Path(second["log_path"]).parent.parent.name == "2026-09-14"
@@ -554,7 +559,7 @@ def test_shell_environment_overlays_the_parent_without_mutating_it(
     }
     if environment is not None:
         options["env"] = environment
-    run = vis.shell(options).result(10)
+    run = _observed(vis.shell(options), 10)
     assert run["exit"] == 0
     assert json.loads(run["out"]) == expected
     assert os.environ["VIS_SHELL_OVERRIDE"] == "parent"
@@ -566,7 +571,7 @@ def test_a_shell_handle_stops_what_it_started():
     assert run.cancel()
     assert not run.cancel()
     with pytest.raises(CancelledError):
-        run.result(5)
+        _observed(run, 5)
 
 
 def _started_pid(run):
@@ -599,11 +604,10 @@ def _ends(pid):
 def test_ending_a_shell_ends_the_processes_its_command_started(start):
     run = vis.shell({"command": "sleep 30 & echo $!; wait", **start})
     pid = _started_pid(run)
-    with pytest.raises(TimeoutError):
-        run.result(2)
+    assert wait([run], timeout=2).not_done == {run}
     assert run.cancel()
     with pytest.raises(CancelledError):
-        run.result(5)
+        _observed(run, 5)
     assert _ends(pid)
 
 
@@ -638,7 +642,7 @@ def test_a_host_that_exits_ends_the_shells_it_left_running():
 
 
 def test_shell_reads_the_last_lines_from_a_negative_offset():
-    run = vis.shell({"command": "printf 'one\ntwo\nthree\n'"}).result(10)
+    run = _observed(vis.shell({"command": "printf 'one\ntwo\nthree\n'"}), 10)
     assert run.logs(-2)["out"].splitlines() == ["two", "three"]
 
 
@@ -647,7 +651,7 @@ def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
     # The engine's `shell` takes `{"op": "run"|"background", …}`; an extension that
     # writes what the engine documents must not be refused out here.
     started = vis.shell({"op": op, "command": "printf hi"})
-    run = started.result(10)
+    run = _observed(started, 10)
     assert run["exit"] == 0
     assert run["out"] == "hi"
 
@@ -657,7 +661,7 @@ def test_a_named_spawn_answers_the_same_handle_the_next_call_reaches():
     assert run["id"] == "tail-me"
     assert run.cancel()
     with pytest.raises(CancelledError):
-        run.result(5)
+        _observed(run, 5)
 
 
 def test_an_op_no_engine_speaks_is_refused_by_the_whole_vocabulary():
@@ -743,7 +747,9 @@ def test_the_extensions_own_validators_run_out_here_too(monkeypatch):
 
 
 @pytest.mark.parametrize("read", ["events", "changed"])
-def test_a_live_view_with_a_validator_has_no_questions_without_a_surface(monkeypatch, read):
+def test_a_live_view_with_a_validator_has_no_questions_without_a_surface(
+    monkeypatch, read
+):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
     port = vis.ui.plaintext(
         "port", validate=lambda value: None if value.isdigit() else "must be digits"
@@ -757,7 +763,8 @@ def test_a_live_view_with_a_validator_has_no_questions_without_a_surface(monkeyp
             watch = view.changed()
             assert wait([watch], timeout=0.05).not_done == {watch}
             view["now"].set("Listening")
-            assert watch.result(timeout=1) == "changed"
+            assert wait([watch], timeout=1).done == {watch}
+            assert watch.result() == "changed"
 
     # The standalone form is where a value can arrive, and its host still judges it.
     vis.outside.answer_with({"port": "eighty"})
@@ -1170,7 +1177,7 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
 
     # A change before the host starts waiting must not be lost.
     recorder.select("jobs", ["b"])
-    assert view.changed().result(timeout=1) in ("event", "changed")
+    assert _observed(view.changed(), 1) in ("event", "changed")
     assert view.state()["nodes"][0]["selected_ids"] == ["b"]
     view.events()
     watch = view.changed()

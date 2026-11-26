@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import threading
-from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from blockether.vis._contracts import validate
+
+from ._task_observer import _SessionTask
 
 if TYPE_CHECKING:
     from ._client import Session
@@ -105,26 +105,24 @@ class SubagentRecord:
         return tuple(cls.from_wire(row) for row in value)
 
 
-class SubagentTask(Future[SubagentRecord]):
+class SubagentTask(_SessionTask[SubagentRecord]):
     """One attempt of a managed subagent, owned by the session that started it.
 
     `id` is the child ordinal, `session_id` is the child session and `task_id`
     identifies this attempt. A follow-up keeps the child and gets a new Task.
-    `result(timeout)` waits for the terminal record without cancelling on timeout.
+    Wait with `await task` or either Python wait function. `result()` does not wait.
     Use `record()` for current progress or a pending question. Answer the question
     through Council before waiting for the result. Child failure is a record;
     a transport or Task failure raises an exception.
     """
 
+    _vis_cancel_on_await = True
+
     def __init__(self, session: Session, descriptor: dict[str, str]):
-        super().__init__()
         validate("agents", "subagent_task", descriptor)
-        self._session = session
+        super().__init__(session, descriptor["task_id"], "subagent")
         self._descriptor = descriptor.copy()
-        self._wake = threading.Event()
         self._terminal_record: SubagentRecord | None = None
-        # Notify concurrent.futures.wait/as_completed before any user callback.
-        self.add_done_callback(self._notify_cancelled)
 
     @property
     def id(self) -> str:
@@ -136,95 +134,30 @@ class SubagentTask(Future[SubagentRecord]):
         """The session of the child, not the session that owns the Task."""
         return self._descriptor["session_id"]
 
-    @property
-    def task_id(self) -> str:
-        """The Task identity of this attempt, such as `t2`."""
-        return self._descriptor["task_id"]
-
-    def _start(self):
-        try:
-            threading.Thread(
-                target=self._watch, name="vis-subagent-result", daemon=True
-            ).start()
-        except RuntimeError as error:
-            self.set_exception(error)
-
-    @staticmethod
-    def _notify_cancelled(future):
-        if future.cancelled():
-            future.set_running_or_notify_cancel()
-
-    def _status(self):
+    def _result_from(self, answer):
         from ._client import ProtocolError
 
-        status = validate(
-            "gateway",
-            "task_status",
-            self._session._call(
-                "GET",
-                "/tasks/:task-id",
-                path={"task-id": self.task_id},
-                query={"include_record": "true"},
-            ),
-        )
-        task = status["task"]
-        record = status.get("record")
+        record = answer.get("record")
         if (
             record is None
-            or task["kind"] != "subagent"
-            or task["id"] != self.task_id
-            or task["session_id"] != self._session.id
             or record["session_id"] != self.session_id
             or record.get("id") not in (None, self.id)
         ):
-            raise ProtocolError("Task status does not match the subagent attempt")
-        return status
+            raise ProtocolError("Task record does not match the subagent attempt")
+        return SubagentRecord.from_wire(record)
+
+    def _cancelled_record(self, answer):
+        self._terminal_record = self._result_from(answer)
+
+    def _settlement(self):
+        outcome = super()._settlement()
+        if outcome[0] == "done":
+            self._terminal_record = outcome[1]
+        return outcome
 
     def record(self) -> SubagentRecord:
         """Read the current snapshot without waiting for the child to finish."""
-        return self._terminal_record or SubagentRecord.from_wire(
-            self._status()["record"]
-        )
+        return self._terminal_record or self._result_from(self._status())
 
     def running(self) -> bool:
         return not self.done()
-
-    def cancel(self) -> bool:
-        """Ask the host to cancel this attempt. A refusal leaves the Task unchanged."""
-        if self.done():
-            return False
-        accepted = validate(
-            "gateway",
-            "task_cancel",
-            self._session._call(
-                "POST", "/tasks/:task-id/cancel", path={"task-id": self.task_id}
-            ),
-        )["requested"]
-        if accepted:
-            self._wake.set()
-        return accepted
-
-    def _watch(self):
-        delay = 0.1
-        try:
-            while True:
-                task = self._status()
-                state = task["task"]["state"]
-                if state != "running":
-                    break
-                self._wake.wait(delay)
-                self._wake.clear()
-                delay = min(1.0, delay * 2)
-            record = SubagentRecord.from_wire(task["record"])
-            if state not in ("cancelled", "done"):
-                raise RuntimeError(
-                    task["task"].get("error") or f"Task {self.task_id} failed"
-                )
-        except Exception as error:
-            self.set_exception(error)
-        else:
-            self._terminal_record = record
-            if state == "cancelled":
-                super().cancel()
-            else:
-                self.set_result(record)

@@ -26,8 +26,7 @@ import time
 from asyncio import CancelledError as _CancelledError
 from collections.abc import Callable, Mapping, Sequence
 from collections.abc import MutableMapping as _MutableMapping
-from concurrent.futures import CancelledError as _FutureCancelledError
-from concurrent.futures import Future, InvalidStateError
+from concurrent.futures import InvalidStateError
 from concurrent.futures import wait as _wait_futures
 from contextlib import contextmanager
 from contextvars import ContextVar as _ContextVar
@@ -55,12 +54,13 @@ from typing import (
     TypeAlias,
     TypeVar,
     Union,
-    cast,
     get_args,
     get_origin,
     overload,
     runtime_checkable,
 )
+
+from blockether.vis._task_future import _HostFuture
 
 # A setting value: `bool` for a boolean setting, `str` for a choice setting.
 _SettingValue = TypeVar("_SettingValue", bool, str)
@@ -4521,6 +4521,24 @@ def _bus_scope(scope: Any) -> str:
     return scope
 
 
+def _require_sync(callback, name):
+    call = inspect.getattr_static(type(callback), "__call__", None)
+    if not callable(callback) or any(
+        inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn)
+        for fn in (callback, call)
+    ):
+        raise TypeError(f"{name} needs a synchronous function")
+
+
+def _call_sync(callback, name, *args):
+    result = callback(*args)
+    if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
+            result.close()
+        raise TypeError(f"{name} returned an awaitable")
+    return result
+
+
 class Bus:
     """Signals between the processes of one Vis gateway, as `vis.bus`.
 
@@ -4605,20 +4623,21 @@ class Bus:
         _bus_name("pattern", pattern)
         if scope is not None:
             _bus_scope(scope)
-        if not callable(handler):
-            raise TypeError("vis.bus.subscribe needs a function")
+        _require_sync(handler, "vis.bus.subscribe")
 
         def deliver(signal):
             # Both hosts give the JSON text of the publisher, so each handler reads
             # its own copy of the data, with the key order and the numbers of the
             # publisher.
-            handler(
+            _call_sync(
+                handler,
+                "vis.bus.subscribe handler",
                 Signal(
                     str(signal["topic"]),
                     json.loads(signal["data_json"]),
                     str(signal["scope"]),
                     int(signal["published_at_ms"]),
-                )
+                ),
             )
 
         subscription_id = _host.bus_subscribe(pattern, deliver, scope)
@@ -4892,91 +4911,6 @@ class ShellResult(dict):
             page = next(page, None)
 
 
-class _HostFutureCancelledError(_FutureCancelledError, _CancelledError):
-    pass
-
-
-_FutureValue = TypeVar("_FutureValue")
-
-
-class _HostFuture(Future[_FutureValue]):
-    """Host-owned work that both Python wait functions can observe."""
-
-    _asyncio_future_blocking = False
-
-    def __init__(self):
-        super().__init__()
-        # Notify aggregate waiters before any user cancellation callback.
-        super().add_done_callback(self._notify_cancelled)
-        self._vis_async_callbacks = []
-        super().add_done_callback(self._publish_async_callbacks)
-
-    def cancel(self, msg=None):
-        return super().cancel()
-
-    @staticmethod
-    def _notify_cancelled(future):
-        if future.cancelled():
-            future.set_running_or_notify_cancel()
-
-    def get_loop(self):
-        # The host work belongs to none of its callers' event loops.
-        return asyncio.get_running_loop()
-
-    def add_done_callback(self, fn, *, context=None):
-        try:
-            loop = self.get_loop()
-        except RuntimeError:
-            return super().add_done_callback(fn)
-        context = copy_context() if context is None else context
-        with self._condition:
-            if not self.done():
-                self._vis_async_callbacks.append((fn, loop, context))
-                return
-        self._schedule_async_callback(fn, loop, context)
-
-    def remove_done_callback(self, fn):
-        with self._condition:
-            callbacks = self._vis_async_callbacks
-            self._vis_async_callbacks = [entry for entry in callbacks if entry[0] != fn]
-            return len(callbacks) - len(self._vis_async_callbacks)
-
-    def _schedule_async_callback(self, fn, loop, context):
-        try:
-            loop.call_soon_threadsafe(fn, self, context=context)
-        except RuntimeError:
-            if not loop.is_closed():
-                raise
-
-    def _publish_async_callbacks(self, _future):
-        with self._condition:
-            callbacks = self._vis_async_callbacks
-            self._vis_async_callbacks = []
-        for fn, loop, context in callbacks:
-            self._schedule_async_callback(fn, loop, context)
-
-    def __await__(self):
-        return self._await_result().__await__()
-
-    async def _await_result(self):
-        # asyncio.wait accepts this Future by its asyncio surface; typeshed asks
-        # for an asyncio.Future, so the type says what the runtime already does.
-        waitable = cast("asyncio.Future[Any]", self)
-        try:
-            if not self.done():
-                await asyncio.wait([waitable])
-        except _CancelledError:
-            await asyncio.to_thread(self.cancel)
-            await asyncio.wait([waitable])
-            raise
-        return self.result()
-
-    def result(self, timeout=None):
-        try:
-            return super().result(timeout)
-        except _FutureCancelledError:
-            raise _HostFutureCancelledError() from None
-
 class ShellFuture(_HostFuture[ShellResult]):
     """The Future for a shell process owned by the host."""
 
@@ -4985,12 +4919,27 @@ class ShellFuture(_HostFuture[ShellResult]):
         self._vis_is_tool = is_tool
         self._vis_call = call
         self._vis_token = descriptor["token"]
-        self._vis_snapshot = self._result_from(descriptor["snapshot"])
-        observer = threading.Thread(
-            target=self._watch, name="vis-shell-result", daemon=True
+        self._vis_cancel_on_await = not descriptor["snapshot"].get(
+            "already_running", False
         )
+        self._vis_snapshot = self._result_from(descriptor["snapshot"])
+        from blockether.vis.engine._task_observer import _admit, _observe_door
+
         try:
-            observer.start()
+            if session_id := descriptor.get("session_id"):
+                self._task_id = descriptor["id"]
+
+                def admit():
+                    # A fast shell can exit between start and registration in
+                    # an already open session observer. Repair that gap once.
+                    self._observe_outcome(self._op("await", timeout_ms=0))
+                    return [self]
+
+                _admit(_host_layer().session(session_id), admit)
+            else:
+                _observe_door(
+                    call, self._batch, self, (self._vis_token, {"read": True})
+                )
         except RuntimeError:
             self.cancel()
             raise
@@ -5049,31 +4998,50 @@ class ShellFuture(_HostFuture[ShellResult]):
             return False
         return bool(self._op("cancel"))
 
-    def _watch(self):
-        # Only this observer reads and publishes the process outcome. A missing
-        # capability after owner teardown is terminal too.
+    def _batch(self, requests):
+        return self._vis_call(None, "_task_await_batch", requests)
+
+    def _decode_outcome(
+        self, answer
+    ) -> (
+        tuple[Literal["running", "cancelled"], None]
+        | tuple[Literal["done"], ShellResult]
+        | tuple[Literal["failed"], Exception]
+    ):
+        state = answer["state"]
+        if state == "running":
+            return state, None
+        if "snapshot" in answer:
+            self._vis_snapshot = self._result_from(answer["snapshot"])
+        if state == "done":
+            return state, self._result_from(answer["value"])
+        if state == "cancelled":
+            return state, None
+        message = answer.get("error") or answer.get("message")
+        return "failed", (
+            message
+            if isinstance(message, Exception)
+            else RuntimeError(message or f"Shell Task is {state}.")
+        )
+
+    def _settlement(self):
+        return self._decode_outcome(self._op("await", timeout_ms=0))
+
+    def _settle_cancelled(self):
+        super().cancel()
+
+    def _observe_outcome(self, answer):
         try:
-            while True:
-                answer = self._op("await", timeout_ms=250)
-                state = answer["state"]
-                if state != "running":
-                    break
-            if "snapshot" in answer:
-                self._vis_snapshot = self._result_from(answer["snapshot"])
-            if state == "done":
-                result = self._result_from(answer["value"])
-            elif state == "cancelled":
-                result = None
-            else:
-                message = answer.get("error") or answer.get("message")
-                raise RuntimeError(message or f"Shell Task is {state}.")
+            outcome = self._decode_outcome(answer)
         except Exception as error:
             self.set_exception(error)
         else:
-            if result is None:
-                super().cancel()
-            else:
-                self.set_result(result)
+            if outcome[0] == "done":
+                self.set_result(outcome[1])
+            elif outcome[0] == "cancelled":
+                self._settle_cancelled()
+            elif outcome[0] == "failed":
+                self.set_exception(outcome[1])
 
 
 def _shell_answer(raw, *, is_tool=False):
@@ -5258,6 +5226,7 @@ def _validator_list(checks):
             "message string"
         )
     for c in checks:
+        _require_sync(c, "validate")
         if _validator_arity(c) is None:
             raise TypeError(
                 "a validate function takes the value, or the value and "
@@ -5300,9 +5269,9 @@ def _verdict(check, value, values):
     # wording is the host's: a raise must not accept the value it was meant to judge.
     try:
         if _validator_arity(check) == 2:
-            verdict = check(value, dict(values))
+            verdict = _call_sync(check, "validate", value, dict(values))
         else:
-            verdict = check(value)
+            verdict = _call_sync(check, "validate", value)
     except Exception as error:
         _log.warning("vis: a validate function raised", exc_info=True)
         return f"could not be validated: {error}"
@@ -5445,9 +5414,11 @@ def ask(title, nodes, **options):
         # accepting a value the extension refused to judge.
         check = validators[str(name)][int(index)]
         if _validator_arity(check) == 2:
-            verdict = check(json.loads(value_json), json.loads(values_json))
+            verdict = _call_sync(
+                check, "validate", json.loads(value_json), json.loads(values_json)
+            )
         else:
-            verdict = check(json.loads(value_json))
+            verdict = _call_sync(check, "validate", json.loads(value_json))
         if verdict is None or verdict is True:
             return json.dumps(None)
         if verdict is False:
@@ -6960,6 +6931,30 @@ def _batch_size(op):
 _LIVE_WAIT_HINT = "Use await asyncio.wait([view.changed()], timeout=seconds)."
 
 
+def _view_watch_batch(envelope, read):
+    from blockether.vis._contracts import validate
+
+    [requests] = validate("view", "watch_await_batch_request", envelope)["args"]
+    replies = []
+    for watch_id, options in requests:
+        try:
+            answer = read(
+                {
+                    "op": "watch-result",
+                    "watch_id": watch_id,
+                    "view_id": options["view_id"],
+                    "timeout_ms": 0,
+                }
+            )
+        except RuntimeError as error:
+            replies.append({"state": "failed", "error": str(error)})
+        else:
+            replies.append(
+                {"state": "done", "value": answer} if answer else {"state": "running"}
+            )
+    return replies
+
+
 class _LocalLiveWatches:
     """Readiness for hosts whose view is already in this Python process."""
 
@@ -7012,10 +7007,9 @@ class _LocalLiveWatches:
 class _ChangeFuture(_HostFuture[str]):
     """A one-shot observation of a view, not ownership of the view itself."""
 
-    def __init__(self, call, envelope, ready, validate=None):
+    def __init__(self, call, envelope, ready, door):
         super().__init__()
         self._call = call
-        self._validate = validate
         self._ready = ready
         self._view_id = envelope["view_id"]
         reply = call(envelope)
@@ -7023,14 +7017,15 @@ class _ChangeFuture(_HostFuture[str]):
         if self._watch_id is None:
             self._complete(reply)
         else:
-            observer = threading.Thread(
-                target=copy_context().run,
-                args=(self._observe,),
-                name="vis-view-changed",
-                daemon=True,
-            )
+            from blockether.vis.engine._task_observer import _observe_door
+
             try:
-                observer.start()
+                _observe_door(
+                    door,
+                    self._batch,
+                    self,
+                    (self._watch_id, {"view_id": self._view_id, "read": True}),
+                )
             except RuntimeError:
                 self._unwatch()
                 raise
@@ -7049,17 +7044,19 @@ class _ChangeFuture(_HostFuture[str]):
             dict(op=name, view_id=self._view_id, watch_id=self._watch_id, **options)
         )
 
-    def _observe(self):
+    def _batch(self, requests):
+        return self._call({"op": "_task_await_batch", "args": [requests]})
+
+    def _observe_outcome(self, answer):
         try:
-            while not self.done():
-                wait_ms = _DOOR_WAIT_MS
-                if self._validate is not None:
-                    self._validate()
-                    wait_ms = 250
-                answer = self._op("watch-result", timeout_ms=wait_ms)
-                if answer.get("readiness"):
-                    self._complete(answer)
-                    return
+            state = answer["state"]
+            if state == "done":
+                self._complete(answer["value"])
+            elif state != "running":
+                error = answer.get("error")
+                if isinstance(error, Exception):
+                    raise error
+                raise RuntimeError(error or f"View watch is {state}.")
         except InvalidStateError:
             # Cancellation won against a completed host response.
             if not self.cancelled():
@@ -7213,7 +7210,7 @@ class LiveView:
         event = self._wire_event(raw)
         for callback in list(self._listeners):
             try:
-                callback(event)
+                _call_sync(callback, "on_event", event)
             except Exception as error:
                 self._callback_failed(error)
 
@@ -7393,8 +7390,24 @@ class LiveView:
         start = getattr(self._door, "changed", None)
         if start is not None:
             return start(self, envelope)
-        judge = self._pull_validations if self._validators and not self._is_pushed else None
-        return _ChangeFuture(self._call, envelope, self._change_ready, judge)
+        watch = _ChangeFuture(
+            self._call, envelope, self._change_ready, self._door or _host.live
+        )
+        if self._validators and not self._is_pushed and not watch.done():
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                pass  # Plain callers can judge queued input with events().
+            else:
+
+                async def judge():
+                    while not watch.done():
+                        self._pull_validations()
+                        await asyncio.sleep(0.02)
+
+                poller = loop.create_task(judge())
+                watch.add_done_callback(lambda _: poller.cancel())
+        return watch
 
     def _change_ready(self, ready, result=None):
         if ready == "closed":
@@ -7491,13 +7504,20 @@ class LiveView:
         if "timeout" in options:
             raise TypeError(_LIVE_WAIT_HINT)
         if options:
-            raise TypeError(f"events() got an unexpected keyword argument {next(iter(options))!r}")
+            raise TypeError(
+                f"events() got an unexpected keyword argument {next(iter(options))!r}"
+            )
         with self._event_lock:
             self.flush()
             if self._validators and not self._is_pushed:
                 self._pull_validations()
             answer = self._call(
-                {"op": "events", "view_id": self.view_id, "after": self._cursor, "public_only": True}
+                {
+                    "op": "events",
+                    "view_id": self.view_id,
+                    "after": self._cursor,
+                    "public_only": True,
+                }
             )
             if not answer.get("is_open", True):
                 self._settle(answer)
@@ -7511,7 +7531,7 @@ class LiveView:
             if not self._is_pushed:
                 for event in fresh:
                     for callback in list(self._listeners):
-                        callback(event)
+                        _call_sync(callback, "on_event", event)
             return fresh
 
     def on_event(self, callback):
@@ -7522,8 +7542,7 @@ class LiveView:
         the view session bound, also when no extension code waits on the view.
         Returns the callback, so you can use this method as a decorator.
         """
-        if not callable(callback):
-            raise TypeError("on_event takes a function of one LiveEvent")
+        _require_sync(callback, "on_event")
         self._listeners.append(callback)
         return callback
 
@@ -7772,12 +7791,13 @@ class _AppDoor:
         # A session handle has a client; a layer is its own client.
         self._sid = None if self._client is target else target.id
         self.owner = owner
+        self._task_batch_key = (_AppDoor, id(self._client), self._sid, owner)
         self._stopped = set()
         # The open envelope of each app, so that a restart can open it again.
         self._declared = {}
         self._guard = threading.Lock()
 
-    def _post(self, envelope, wait_ms=0):
+    def _exchange(self, envelope, wait_ms=0):
         if self._sid is None:
             route, path = "/v1/apps", {}
         else:
@@ -7789,12 +7809,17 @@ class _AppDoor:
             body={"owner": self.owner, "envelope": envelope},
             timeout=None if wait_ms <= 0 else wait_ms / 1000 + 30,
         )
-        answer = response.json() if response.content else None
+        return response.json() if response.content else None
+
+    def _post(self, envelope, wait_ms=0):
+        answer = self._exchange(envelope, wait_ms)
         return answer if isinstance(answer, dict) else {}
 
     def __call__(self, text, listener=None):
         envelope = json.loads(text)
         op = envelope.get("op")
+        if op == "_task_await_batch":
+            return json.dumps(self._exchange(envelope))
         wait_ms = int(envelope.get("timeout_ms") or 0) if op == "watch-result" else 0
         answer = self._post(envelope, wait_ms)
         if op == "patch" and "validators" in envelope:
@@ -7965,6 +7990,7 @@ def _app_hook_ref(name, fn):
     extension file: the module name of that file changes with each load, so its
     namespace finds the name.
     """
+    _require_sync(fn, name)
     qualname = getattr(fn, "__qualname__", None) or ""
     scope = getattr(fn, "__globals__", None)
     found = None
@@ -8296,8 +8322,7 @@ class LiveAttachment(LiveView):
             raise RuntimeError(
                 "Use an await asyncio.wait([app.changed()]) loop, then call app.events()."
             )
-        if not callable(callback):
-            raise TypeError("run takes a function of one LiveEvent")
+        _require_sync(callback, "LiveAttachment.run")
         served = 0
         watch = None
         try:
@@ -8306,7 +8331,10 @@ class LiveAttachment(LiveView):
                 _wait_futures([watch])
                 for event in self.events():
                     served += 1
-                    if callback(event) is False:
+                    if (
+                        _call_sync(callback, "LiveAttachment.run callback", event)
+                        is False
+                    ):
                         return served
                 if watch.result() == "closed":
                     break
@@ -8485,7 +8513,9 @@ class _LiveRecorder:
         # thread frees the lock, so each event reaches the listener on its own thread.
         self._outbox = threading.local()
         self._condition = threading.Condition(_DeliveringLock(self._deliver))  # type: ignore[arg-type]
-        self._change_watches = _LocalLiveWatches(self._condition, self._ready, lambda: self._result)
+        self._change_watches = _LocalLiveWatches(
+            self._condition, self._ready, lambda: self._result
+        )
         self._inner = inner
         # Vis writes the owner extension, or the agent, on each message of the owner.
         self._author = _contracts.owner_author(extension)
@@ -8650,6 +8680,10 @@ class _LiveRecorder:
         envelope = json.loads(envelope_json)
         op = envelope.get("op")
         with self._condition:
+            if op == "_task_await_batch":
+                return json.dumps(
+                    _view_watch_batch(envelope, self._change_watches.call)
+                )
             if op in {"watch", "watch-result", "unwatch"}:
                 return json.dumps(self._change_watches.call(envelope))
             if op == "events" and envelope.get("timeout_ms", 0) > 0:
@@ -8733,7 +8767,8 @@ class _LiveRecorder:
                 "cursor": self._cursor,
                 "seq": self._seq,
                 "events": [
-                    e for e in self._events
+                    e
+                    for e in self._events
                     if e["seq"] > after
                     and (not envelope.get("public_only") or e["type"] != "validate")
                 ],
@@ -8793,7 +8828,6 @@ class _LiveRecorder:
 
     def activate(self, node_id):
         """Simulate an accepted operator press and wake state() waiters."""
-        import json
 
         with self._condition:
             node = self.node(node_id)
@@ -8815,18 +8849,7 @@ class _LiveRecorder:
                 if is_dialog
                 else {"clicks": node.get("clicks", 0) + 1}
             )
-            answer = json.loads(
-                self.host_live(
-                    json.dumps(
-                        {
-                            "op": "patch",
-                            "patch": {
-                                "ops": [{"op": "set", "node_id": node_id, **change}]
-                            },
-                        }
-                    )
-                )
-            )
+            answer = self._patch_ops([{"op": "set", "node_id": node_id, **change}])
             self._event("activate", node_id)
         return answer
 
@@ -8918,6 +8941,7 @@ class _LiveRecorder:
             placement = (self._view or {}).get("placement", "inline")
             if self._listener is not None and placement != "inline":
                 self._queue(self._listener, self._copy(event))
+            self._change_watches.notify()
 
     def _queue(self, listener, event):
         """Keep `event` for `listener` in the outbox of this thread."""
@@ -8944,11 +8968,11 @@ class _LiveRecorder:
     def _patch_ops(self, ops):
         import json
 
+        # A surface action has not committed until it queues its event. The
+        # caller holds the condition and publishes readiness with that event.
         return json.loads(
-            self.host_live(
-                json.dumps(
-                    {"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}
-                )
+            self._dispatch_live(
+                {"op": "patch", "view_id": self.view_id, "patch": {"ops": ops}}
             )
         )
 
@@ -8960,13 +8984,11 @@ class _LiveRecorder:
                 raise AssertionError("only an input in an open view can change")
             if node.get("is_secret"):
                 self._event("change", node_id, is_set=value is not None)
-                self._change_watches.notify()
                 return {"is_accepted": True, "node_id": str(node_id)}
             self._patch_ops(
                 [{"op": "set-value", "node_id": str(node_id), "value": value}]
             )
             self._event("change", node_id, value=self._copy(value))
-            self._change_watches.notify()
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def submit(self, node_id, values=None):
@@ -9033,7 +9055,6 @@ class _LiveRecorder:
                 ]
             )
             self._event("submit", node_id, values=collected)
-            self._change_watches.notify()
             return {"is_accepted": True, "node_id": str(node_id)}
 
     def _scope(self, node_id):
@@ -9062,34 +9083,14 @@ class _LiveRecorder:
 
         An accepted selection queues a `select` event with `node_id` and `item_ids`.
         """
-        import json
-
-        answer = json.loads(
-            self.host_live(
-                json.dumps(
-                    {
-                        "op": "patch",
-                        "view_id": self.view_id,
-                        "patch": {
-                            "ops": [
-                                {
-                                    "op": "set",
-                                    "node_id": str(node_id),
-                                    "selected_ids": [str(one) for one in selected_ids],
-                                }
-                            ]
-                        },
-                    }
-                )
+        with self._condition:
+            ids = [str(one) for one in selected_ids]
+            answer = self._patch_ops(
+                [{"op": "set", "node_id": str(node_id), "selected_ids": ids}]
             )
-        )
-        if not answer.get("error"):
-            with self._condition:
-                self._event(
-                    "select", node_id, item_ids=[str(one) for one in selected_ids]
-                )
-                self._change_watches.notify()
-        return answer
+            if not answer.get("error"):
+                self._event("select", node_id, item_ids=ids)
+            return answer
 
     def _board_refusal(self, node_id, item_id, column=None):
         """Why the board `node_id` refuses a move or an edit, as the host says it, or None."""
@@ -9122,41 +9123,22 @@ class _LiveRecorder:
 
         An accepted move changes the ranks of the column and queues a `move` event.
         """
-        import json
-
         node_id, item_id, column = str(node_id), str(item_id), str(column)
-        if reason := self._board_refusal(node_id, item_id, column):
-            return {"is_accepted": False, "reason": reason}
-        issues = {one["id"]: one for one in self.node(node_id).get("issues") or []}
-        changed = _board_moved(issues, item_id, column, int(index))
-        if changed:
-            answer = json.loads(
-                self.host_live(
-                    json.dumps(
-                        {
-                            "op": "patch",
-                            "view_id": self.view_id,
-                            "patch": {
-                                "ops": [
-                                    {
-                                        "op": "append",
-                                        "node_id": node_id,
-                                        "issues": changed,
-                                    }
-                                ]
-                            },
-                        }
-                    )
-                )
-            )
-            if answer.get("error"):
-                return answer
         with self._condition:
+            if reason := self._board_refusal(node_id, item_id, column):
+                return {"is_accepted": False, "reason": reason}
+            issues = {one["id"]: one for one in self.node(node_id).get("issues") or []}
+            changed = _board_moved(issues, item_id, column, int(index))
+            if changed:
+                answer = self._patch_ops(
+                    [{"op": "append", "node_id": node_id, "issues": changed}]
+                )
+                if answer.get("error"):
+                    return answer
             self._event(
                 "move", node_id, item_id=item_id, column=column, index=int(index)
             )
-            self._change_watches.notify()
-        return {"is_accepted": True}
+            return {"is_accepted": True}
 
     def edit(self, node_id, values, item_id=None, is_removed=False):
         """Simulate a person making, changing or deleting a board issue.
@@ -9176,9 +9158,7 @@ class _LiveRecorder:
             payload["item_id"] = item_id
         if is_removed:
             payload["is_removed"] = True
-        with self._condition:
-            self._event("edit", node_id, **payload)
-            self._change_watches.notify()
+        self._event("edit", node_id, **payload)
         return {"is_accepted": True}
 
     def close(self, reason="interrupted", **ending):

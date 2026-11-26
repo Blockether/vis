@@ -2075,11 +2075,12 @@ plain `def`, use `concurrent.futures.wait([sh], timeout=30)` on the same `ShellF
 return the sets of done and pending handles. Neither cancels the process.
 A timeout in `asyncio.wait_for(sh, timeout=30)` cancels the process.
 
-Use `await sh` in an `async def` or `sh.result()` in a plain `def` for the final result. If a
-timeout on `sh.result()` expires, it raises `TimeoutError` and leaves the process running.
-A nonzero exit code is part of the result, not an exception.
+Use `await sh` in an `async def` for the final result. After the process ends, use
+`sh.result()` to read it. A nonzero exit code is part of the result, not an exception.
 
-Use `sh.done()` to check completion and `sh.exception(timeout=30)` to read a process error.
+Use `sh.done()` to check completion. `sh.result()` and `sh.exception()` do not wait.
+They raise `InvalidStateError` if the process is still running.
+
 Use `sh.add_done_callback(fn)` to receive the `ShellFuture` when the process ends. If you add
 the callback in an active event loop, the callback runs on that loop. Otherwise, the callback
 can run on a background thread. Use `sh.cancel()` to request cancellation of the process and its

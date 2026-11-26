@@ -6,16 +6,27 @@ import json
 import threading
 import time
 import weakref
-from concurrent.futures import CancelledError, Future, as_completed, wait
+from concurrent.futures import (
+    CancelledError,
+    Future,
+    InvalidStateError,
+    as_completed,
+    wait,
+)
 
 import blockether.vis.extension as vis
 import pytest
 from blockether.vis import _outside
 
 
+def _observed(task, timeout):
+    assert wait([task], timeout=timeout).done == {task}
+    return task.result()
+
+
 @pytest.fixture
 def four_lines():
-    return vis.shell("printf 'one\\ntwo\\nthree\\nfour\\n'").result(10)
+    return _observed(vis.shell("printf 'one\\ntwo\\nthree\\nfour\\n'"), 10)
 
 
 def test_a_field_answers_by_attribute_and_a_miss_names_the_fields(four_lines):
@@ -51,13 +62,13 @@ def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
     try:
         if complete:
             sh.type("value")
-            sh.result(5)
+            assert wait([sh], timeout=5).done == {sh}
         sh.add_done_callback(receive)
         if not complete:
             sh.type("value")
         assert observed.wait(5)
         assert seen == [(sh, "value", None)]
-        assert sh.result(0) is sh.result(0)
+        assert sh.result() is sh.result()
     finally:
         sh.cancel()
 
@@ -65,7 +76,9 @@ def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
 def test_field_reads_follow_the_process_before_and_after_completion():
     sh = vis.shell("printf start; read word; printf '%s' \"$word\"", stdin="tty")
     try:
-        with pytest.raises(AttributeError, match=r"asyncio\.wait.*concurrent\.futures\.wait"):
+        with pytest.raises(
+            AttributeError, match=r"asyncio\.wait.*concurrent\.futures\.wait"
+        ):
             _ = sh.wait
         assert wait([sh], timeout=0.02).not_done == {sh}
         deadline = time.monotonic() + 5
@@ -121,7 +134,7 @@ def test_await_shell_result_and_callbacks_in_the_callers_loop():
             sh.add_done_callback(callback.set_result)
             assert not callback.done()
             assert await asyncio.wait_for(callback, 5) is sh
-            assert await sh is sh.result(0)
+            assert await sh is sh.result()
         finally:
             sh.cancel()
 
@@ -135,6 +148,8 @@ def test_asyncio_wait_for_cancels_the_process(timeout):
         try:
             with pytest.raises(TimeoutError):
                 await asyncio.wait_for(sh, timeout)
+            done, pending = await asyncio.wait([sh], timeout=2)
+            assert (done, pending) == ({sh}, set())
             assert sh.cancelled()
             assert sh.status == "stopped"
             with pytest.raises(asyncio.CancelledError):
@@ -208,7 +223,8 @@ def test_live_field_read_uses_the_bounded_tail():
         assert out.endswith("END") and "BEGIN" not in out
         assert len(out) <= 262144 and sh.offset > 0
         sh.type("finish")
-        assert sh.result(5).out.startswith("BEGIN")
+        assert wait([sh], timeout=5).done == {sh}
+        assert sh.result().out.startswith("BEGIN")
     finally:
         sh.cancel()
 
@@ -252,7 +268,7 @@ def test_stdlib_wait_collects_a_shell_without_a_result_reader(collect):
             assert wait([sh], timeout=2).done == {sh}
         else:
             assert list(as_completed([sh], timeout=2)) == [sh]
-        assert sh.result(0).out == "observed"
+        assert sh.result().out == "observed"
     finally:
         sh.cancel()
 
@@ -273,7 +289,7 @@ def test_cancelled_shell_notifies_stdlib_waiters_before_callbacks():
         assert reported.wait(5)
         assert seen == [{sh}]
         with pytest.raises(CancelledError):
-            sh.result(0)
+            sh.result()
     finally:
         sh.cancel()
 
@@ -304,10 +320,10 @@ def test_attach_recovers_the_live_generation_without_starting_a_process(alias, c
         if cancel:
             assert recovered.cancel()
             with pytest.raises(CancelledError):
-                original.result(5)
+                _observed(original, 5)
         else:
             recovered.type("done")
-            assert recovered.result(5).exit == original.result(5).exit == 0
+            assert _observed(recovered, 5).exit == _observed(original, 5).exit == 0
         with pytest.raises(RuntimeError, match="No running background shell"):
             vis.shell(op="attach", id=alias)
     finally:
@@ -318,24 +334,38 @@ def test_timeout_and_late_cancel_do_not_end_a_replacement():
     first = vis.shell("printf old; read word", stdin="tty", id="shared")
     try:
         assert isinstance(first, Future)
-        with pytest.raises(TimeoutError):
-            first.exception(0.02)
+        assert wait([first], timeout=0.02).not_done == {first}
+        with pytest.raises(InvalidStateError):
+            first.exception()
         assert first.running()
         assert first.type("finish") is first
-        assert first.result(5)["out"] == "old"
+        assert _observed(first, 5)["out"] == "old"
         second = vis.shell("printf new; read word", stdin="tty", id="shared")
         try:
             assert not first.cancel()
             assert first.logs()["out"] == "old"
             assert not second.done()
             assert second.cancel()
+            assert wait([second], timeout=5).done == {second}
             with pytest.raises(CancelledError):
-                second.exception(5)
+                second.exception()
             assert second.done() and second.cancelled()
         finally:
             second.cancel()
     finally:
         first.cancel()
+
+
+def test_a_released_extension_still_waits_through_result_timeout():
+    # vis-lang-interface 4.2.2 waits with `result(timeout=...)`.
+    sh = vis.shell("read word; printf done", stdin="tty", id="released-wait")
+    try:
+        with pytest.raises(TimeoutError):
+            sh.result(timeout=0.02)
+        sh.type("go")
+        assert sh.result(timeout=5)["out"] == "done"
+    finally:
+        sh.cancel()
 
 
 @pytest.mark.parametrize("door", ["shell", "jailed_shell"])

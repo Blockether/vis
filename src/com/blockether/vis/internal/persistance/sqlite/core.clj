@@ -1659,19 +1659,36 @@
           (sqlite-busy-cause? cause) true
           :else (recur (.getCause cause)))))
 
+(defn- sqlite-transaction!
+  "Run one SQLite transaction without changing JDBC auto-commit mode.
+
+   Xerial changes its JDBC flag before it runs `BEGIN`. If `BEGIN` fails, Hikari
+   can lend that connection again with auto-commit off but no SQLite transaction.
+   Explicit SQL keeps the flag unchanged and does not start another transaction
+   after `COMMIT`, unlike the driver's JDBC transaction methods."
+  [db-info begin f]
+  (let [source (ds db-info)]
+    (with-open [^java.sql.Connection conn (jdbc/get-connection source)]
+      (jdbc/execute! conn [begin])
+      (try (let [value (f (assoc db-info :datasource conn :conn conn))]
+             (jdbc/execute! conn ["COMMIT"])
+             value)
+           (catch Throwable t
+             (try (jdbc/execute! conn ["ROLLBACK"])
+                  (catch Throwable rollback
+                    ;; Do not return a connection that could still hold a transaction.
+                    (.addSuppressed t rollback)
+                    (when (instance? HikariDataSource source)
+                      (.evictConnection ^HikariDataSource source conn))))
+             (throw t))))))
+
 (defn- sqlite-write-attempt!
-  "Run one immediate write transaction attempt. The xerial connection config
-   sets `transaction_mode=IMMEDIATE`, so next.jdbc's transaction start acquires
-   the SQLite writer reservation before any read can become a stale WAL
-   snapshot. Nested calls reuse the caller's tx-info."
+  "Reserve the writer before a read can become a stale WAL snapshot. Nested
+   writes reuse the caller's transaction."
   [db-info f]
   (if (:sqlite-write-tx? db-info)
     (f db-info)
-    (jdbc/with-transaction [tx (ds db-info)]
-                           (f (assoc db-info
-                                :datasource tx
-                                :conn tx
-                                :sqlite-write-tx? true)))))
+    (sqlite-transaction! db-info "BEGIN IMMEDIATE" #(f (assoc % :sqlite-write-tx? true)))))
 
 (defn- sqlite-write-tx!
   "Central SQLite write boundary. Serializes Vis writes inside this JVM,
@@ -1694,37 +1711,14 @@
               (do (Thread/sleep (long (first delays))) (recur (rest delays)))
               (throw t))))))))
 
-(defn- sqlite-read-snapshot!
-  "Run the read `f` in one DEFERRED transaction on a pooled connection. The connection
-   config makes every JDBC transaction IMMEDIATE, which reserves the SQLite writer, so
-   this transaction starts by hand. In WAL mode it reads one snapshot and waits for no
-   writer."
-  [db-info f]
-  (let [source (ds db-info)]
-    (with-open [^java.sql.Connection conn (jdbc/get-connection source)]
-      (jdbc/execute! conn ["BEGIN DEFERRED"])
-      (try (let [value (f (assoc db-info
-                            :datasource conn
-                            :conn conn))]
-             (jdbc/execute! conn ["COMMIT"])
-             value)
-           (catch Throwable t
-             (try (jdbc/execute! conn ["ROLLBACK"])
-                  (catch Throwable rollback
-                    ;; A pooled connection left inside a transaction fails its next writer.
-                    (.addSuppressed t rollback)
-                    (when (instance? HikariDataSource source)
-                      (.evictConnection ^HikariDataSource source conn))))
-             (throw t))))))
-
 (defn- sqlite-read-tx!
   "Run the read `f` on one consistent snapshot, without the Vis write lock on a WAL
    file. A shared-cache memory store has no WAL, so there the read keeps the lock, as
    in [[run-statement!]]. Inside a write transaction `f` reads that transaction."
   [db-info f]
   (cond (:sqlite-write-tx? db-info) (f db-info)
-        (= :memory (:mode db-info)) (locking sqlite-write-lock (sqlite-read-snapshot! db-info f))
-        :else (sqlite-read-snapshot! db-info f)))
+        (= :memory (:mode db-info)) (locking sqlite-write-lock (sqlite-transaction! db-info "BEGIN DEFERRED" f))
+        :else (sqlite-transaction! db-info "BEGIN DEFERRED" f)))
 
 ;; Workspace - trunk-native work units
 
@@ -4877,12 +4871,15 @@
    :owner_started_at (:owner_started_at owner)
    :updated_at at})
 
+(declare db-put-extension-aggregate!)
+
 (defn db-replace-session-queue!
   "Replace the queued turns and the queue hold of session `session-id` in one
    transaction. `queue` is `{:turns [{:turn-id :payload}] :hold payload-or-nil
-   :owner {:owner_pid :owner_started_at}}`, with `:turns` in queue order. Parked rows
-   of the session stay. Runtime objects in a payload become `{:vis/ref :expr}`."
-  [db-info session-id {:keys [turns hold owner]}]
+   :sent-receipts [...] :owner {:owner_pid :owner_started_at}}`, with `:turns`
+   in queue order. Store sent receipts in this transaction. Parked rows stay.
+   Runtime objects in a payload become `{:vis/ref :expr}`."
+  [db-info session-id {:keys [turns hold owner sent-receipts]}]
   (when (and (ds db-info) session-id)
     (let [sid
           (->ref session-id)
@@ -4893,6 +4890,8 @@
       (sqlite-write-tx!
         db-info
         (fn [tx]
+          (doseq [receipt sent-receipts]
+            (db-put-extension-aggregate! tx receipt))
           (execute! tx
                     {:delete-from :gateway_pending_turn
                      :where [:and [:= :session_id sid] [:= :kind "queued"]]})

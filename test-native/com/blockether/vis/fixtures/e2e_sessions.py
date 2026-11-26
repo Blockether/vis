@@ -1,5 +1,6 @@
 """Phase 8 fixture for #405: extension calls into vis.council, vis.sessions and vis.run."""
 
+import concurrent.futures
 import dataclasses
 import hashlib
 import threading
@@ -7,6 +8,11 @@ import time
 
 import blockether.vis.extension as vis
 from blockether.vis.engine import GatewayError
+
+
+def _settled(child):
+    concurrent.futures.wait([child], timeout=240)
+    return child.result()
 
 
 def _record(value):
@@ -62,7 +68,7 @@ class Sessions:
     def run_child(self, task: str, first: str) -> dict:
         """Read a keyed child and wait for a separate Task."""
         (child,) = vis.council.run([task])
-        record = child.result(timeout=240)
+        record = _settled(child)
         deadline = time.monotonic() + 30
         while True:
             status = vis.sessions.get(first).read()["agent"]["status"]
@@ -82,7 +88,7 @@ class Sessions:
     def resume(self, session_id: str, task: str) -> dict:
         """Give a finished child a follow-up task and wait for it."""
         (child,) = vis.council.run([{"child": session_id, "task": task}])
-        return _record(child.result(timeout=240))
+        return _record(_settled(child))
 
     @vis.method(tag="mutation", activity=_activity("Deny a request", slow=False))
     def deny(self, session_id: str, reason: str) -> dict:

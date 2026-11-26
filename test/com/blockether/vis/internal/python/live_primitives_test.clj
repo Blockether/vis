@@ -6,6 +6,7 @@
             [com.blockether.vis.internal.foundation.shell-test :as shell-fixture]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.python.extensions :as pyx]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.python.extensions-test :as fixture]
             [com.blockether.vis.internal.view.core :as engine]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -87,10 +88,14 @@
           next-watch (promise)
           close-watch (promise)
           registrations (atom 0)
-          watch! engine/app-watch!]
+          watch! engine/app-watch!
+          start! task/start!]
       (try
         (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
                          (constantly dir)
+                         #'task/start! (fn [sid opts work]
+                                         (assert (not= "view.changed()" (:name opts)))
+                                         (start! sid opts work))
                          #'engine/app-watch! (fn [envelope]
                                                (let [watch (watch! envelope)
                                                      id (get (json/read-json envelope) "view_id")]
@@ -104,7 +109,7 @@
             (#'shell-fixture/with-shell-task-context
              (fn [sid ctx]
                (binding [extension/*current-environment* {:session-id sid}]
-                 (let [work (future (env-python/run-python-block ctx "import asyncio\nfrom blockether.vis.extension import ui\napp = attach(ui.app('Pull validation', ui.plaintext('port', label='Port', validate=lambda value: None if value.isdigit() else 'need digits'), ui.button('send', 'Send', action='submit'), ui.button('go', 'Go')))\nwatch = app.changed()\nassert isinstance(watch, asyncio.Task)\ncompleted = []\nasync def run_shell():\n    sh = await shell('printf ready')\n    await sh\n    completed.append(sh.out)\nasync with asyncio.TaskGroup() as group:\n    group.create_task(run_shell())\n    done, pending = await asyncio.wait([watch], timeout=.5)\n    assert not done and pending == {watch}, (done, pending)\n    assert completed == ['ready'], completed\nassert app.events() == []\nassert watch.cancel()\ntry:\n    await watch\nexcept asyncio.CancelledError:\n    pass\nelse:\n    raise AssertionError('cancel did not cancel the watch')\nwatch = app.changed()\nassert await asyncio.wait_for(watch, 5) == 'event'\nassert [(e.type, e.node_id) for e in app.events()] == [('activate', 'go')]\nassert app.events() == []\nassert not app.is_interrupted\nwatch = app.changed()\ndone, pending = await asyncio.wait([watch], timeout=5)\nassert done == {watch} and not pending\nassert app.is_interrupted and app.reason == 'completed'\nassert await watch == 'closed'\nprint('live watch ready')\n"))]
+                 (let [work (future (env-python/run-python-block ctx "import asyncio\nfrom blockether.vis.extension import ui\napp = attach(ui.app('Pull validation', ui.plaintext('port', label='Port', validate=lambda value: None if value.isdigit() else 'need digits'), ui.button('send', 'Send', action='submit'), ui.button('go', 'Go')))\nwatch = app.changed()\nassert isinstance(watch, asyncio.Task)\ncompleted = []\nasync def run_shell():\n    sh = await shell('printf ready')\n    await sh\n    completed.append(sh.out)\nasync with asyncio.TaskGroup() as group:\n    group.create_task(run_shell())\n    done, pending = await asyncio.wait([watch], timeout=.5)\n    assert not done and pending == {watch}, (done, pending)\n    assert completed == ['ready'], completed\nassert app.events() == []\nassert watch.cancel()\ntry:\n    await watch\nexcept asyncio.CancelledError:\n    pass\nelse:\n    raise AssertionError('cancel did not cancel the watch')\nwatch = app.changed()\nassert await asyncio.wait_for(watch, 5) == 'event'\nassert [(e.type, e.node_id) for e in app.events()] == [('activate', 'go')]\nassert app.events() == []\nassert not app.is_interrupted\nimport gc, weakref\napp._validators.clear()\nwatch = app.changed()\noriginal = weakref.ref(watch)\nident = watch._id\ndel watch\ngc.collect()\nassert original() is None\n[watch] = [task for task in asyncio.all_tasks() if getattr(task, '_id', None) == ident]\ndone, pending = await asyncio.wait([watch], timeout=5)\nassert done == {watch} and not pending\nassert app.is_interrupted and app.reason == 'completed'\nassert await watch == 'closed'\nprint('live watch ready')\n"))]
                    (try
                      (let [id (deref first-watch 6000 nil)]
                        (expect (some? id))

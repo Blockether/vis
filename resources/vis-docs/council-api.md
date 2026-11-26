@@ -261,6 +261,18 @@ The same `idempotency_key` returns the original entry and sends no second notifi
 A message receipt does not give your program a Task handle or a child's final answer. Managed
 child work follows the [subagent rules](council.md#choose-who-to-notify).
 
+## Wait for requests from child sessions
+
+`watch = council.changed()` returns a Task for a batch of open requests. It can
+complete at once if a child already has an open request. A question, a request for
+iterations, or a request for file access can complete this Task.
+
+Each batch has a `cursor` and a list of `requests`. Each request has a `session_id`
+and an `entry_id`. Read the entry and reply. Pass the cursor to
+`council.changed(after=cursor)` to wait for later requests. Cancel the watch to stop
+waiting without cancelling a child. The child Task and its views can continue
+while you answer.
+
 ## Handle errors
 
 <div data-variant="python">

@@ -192,14 +192,14 @@
    [:record-plain "out = await tool('svc.plain')"] [:tool-failure "out = await tool('svc.fail')"]
    ;; -- a shell handle --
    [:shell-wait
-    "sh = await tool('shell', {'command': 'echo handle'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], r['exit'], r['out'], sh.logs()['out']]"]
+    "sh = await tool('shell', {'command': 'echo handle'})\nif hasattr(sh, 'task_id'):\n    r = await sh\nelse:\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=20).not_done\n    r = sh.result()\nout = [r['status'], r['exit'], r['out'], sh.logs()['out']]"]
    [:shell-logs-lines
-    "sh = await tool('shell', {'command': 'seq 1 20'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = sh.logs(0, 10)['out']"]
+    "sh = await tool('shell', {'command': 'seq 1 20'})\nif hasattr(sh, 'task_id'):\n    r = await sh\nelse:\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=20).not_done\n    r = sh.result()\nout = sh.logs(0, 10)['out']"]
    [:shell-type
-    "sh = await tool('shell', {'command': 'read word; echo got-$word', 'stdin': 'tty'})\nsh.type('typed\\n')\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = [r['status'], 'got-typed' in r['out']]"]
+    "sh = await tool('shell', {'command': 'read word; echo got-$word', 'stdin': 'tty'})\nsh.type('typed\\n')\nif hasattr(sh, 'task_id'):\n    r = await sh\nelse:\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=20).not_done\n    r = sh.result()\nout = [r['status'], 'got-typed' in r['out']]"]
    [:shell-stop
     "sh = await tool('shell', {'command': 'sleep 30'})\nout = sh.cancel()"]
-   [:shell-wrong-key "sh = await tool('shell', {'command': 'true'})\nr = await sh if hasattr(sh, 'task_id') else sh.result(20)\nout = r['nope']"]
+   [:shell-wrong-key "sh = await tool('shell', {'command': 'true'})\nif hasattr(sh, 'task_id'):\n    r = await sh\nelse:\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=20).not_done\n    r = sh.result()\nout = r['nope']"]
    ;; -- pages of ls and grep --
    [:ls-pages
     "page = await tool('ls', ROOT, limit=1)\nout = [type(page).__name__, str(page), str(next(page, None)), str(page.all()), [str(p) for p in page.pages()]]"]
@@ -531,3 +531,39 @@
           (expect (= [] fixed))
           (expect (= [] fixture))
           (expect (= [] differences)))))))
+
+(defdescribe watch-batch-outside-parity
+  (it "gives the same ordered pending, changed, and closed reads in the host and outside Vis"
+    (with-doors
+      (fn [run]
+        (let [outside (slurp (io/resource "blockether/vis/_outside.py"))
+              code (str "from blockether.vis import extension as vis, _contracts\n"
+                        "import json\n"
+                        "outside = {'__name__': '_standalone_watch_probe'}\n"
+                        "exec(" (pr-str outside) ", outside)\n"
+                        "def read_with(door):\n"
+                        "    def call(envelope):\n"
+                        "        return json.loads(door(json.dumps(envelope)))\n"
+                        "    spec = {'title': 'Batch parity', 'nodes': [vis.ui.status('s', 'Ready')]}\n"
+                        "    opened = [call({'op': 'open', 'view': spec}) for _ in range(3)]\n"
+                        "    ids = [answer['view_id'] for answer in opened]\n"
+                        "    args = []\n"
+                        "    try:\n"
+                        "        for view_id in ids:\n"
+                        "            watch = call(dict(op='watch', view_id=view_id, after=0, after_seq=0))\n"
+                        "            args.append([watch['watch_id'], dict(view_id=view_id, read=True)])\n"
+                        "        call(dict(op='patch', view_id=ids[1], patch={'ops': [\n"
+                        "            dict(op='set', node_id='s', text='Changed')]}))\n"
+                        "        call(dict(op='close', view_id=ids[2], ending={'model_result': 'Closed'}))\n"
+                        "        request = dict(op='_task_await_batch', args=[args])\n"
+                        "        _contracts.validate('gateway', 'app_door_request', dict(owner='test', envelope=request))\n"
+                        "        return _contracts.validate('gateway', 'app_door_answer', call(request))\n"
+                        "    finally:\n"
+                        "        for view_id in ids:\n"
+                        "            call(dict(op='close', view_id=view_id))\n"
+                        "out = [read_with(vis._host.live), read_with(outside['live'])]\n")
+              answer (run :extension code)
+              expected [{"state" "running"}
+                        {"state" "done" "value" {"readiness" "changed"}}
+                        {"state" "done" "value" {"readiness" "closed" "result" "Closed"}}]]
+          (expect (= [expected expected] (some-> (get answer "json") json/read-json)) (pr-str answer)))))))

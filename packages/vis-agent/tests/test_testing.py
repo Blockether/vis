@@ -156,6 +156,7 @@ class _Watch:
 def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
     # The example previously omitted conclusion from the query and skipped final rows.
     import re
+    from concurrent.futures import Future
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -207,13 +208,17 @@ def test_live_view_documentation_renders_terminal_jobs(monkeypatch):
         polled_at.append(now[0])
         fields = command.split("--json ")[1].split(",")
         snapshot = next(replies)
-        return SimpleNamespace(
-            result=lambda timeout: SimpleNamespace(
-                out=json.dumps({key: snapshot[key] for key in fields})
-            )
+        handle = Future()
+        handle.set_result(
+            SimpleNamespace(out=json.dumps({key: snapshot[key] for key in fields}))
         )
+        return handle
 
     def wait(handles, timeout):
+        from concurrent.futures import wait as std_wait
+
+        if all(isinstance(handle, Future) for handle in handles):
+            return std_wait(handles, timeout=0)
         # A local event wakes early; the next GitHub request still waits five seconds.
         waits.append(timeout)
         if len(waits) == 1:

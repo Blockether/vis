@@ -3,12 +3,16 @@
   (:require [lazytest.core :refer [defdescribe expect it throws?]]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.openapi :as openapi]
             [com.blockether.vis.contract.wire :as wire]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.server]
+            [com.blockether.vis.internal.gateway.server :as server]
+            [com.blockether.vis.internal.gateway.state :as state]
+            [com.blockether.vis.internal.gateway.view :as gateway-view]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.persistance.sqlite.core :as sqlite]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -42,6 +46,7 @@
 
     (ring-protocols/write-body-to-stream (:body response) response out)
     {:status (:status response)
+     :headers (:headers response)
      :body (let [text (.toString out "UTF-8")]
              (when (seq text) (wire/parse-json text)))}))
 
@@ -51,6 +56,31 @@
   (some-> (gateway-contract/operation method path)
           :response-schema
           name))
+
+(defdescribe task-polling-response
+  (it "snapshots running Tasks, then replays their settlement once"
+      (let [store (sqlite/db-open! :memory)
+            sid (str (h/store-session! store {:channel :api}))
+            uri (str "/v1/sessions/" sid "/events-since?tasks=true&cursor=")
+            handler (app)]
+        (try
+          (with-redefs [lp/db-info (constantly store)]
+            (let [{:keys [row complete!]} (task/start-manual! sid {:name "watch"} (fn [_]))
+                  initial (call handler :get (str uri -1))
+                  cursor (get-in initial [:body "cursor"])]
+              (expect (= 200 (:status initial)))
+              (expect (document/valid-json? "gateway" (declared :get "/v1/sessions/:sid/events-since") (:body initial)))
+              (expect (= [(:id row)] (mapv #(get % "id") (get-in initial [:body "events" 0 "tasks"]))))
+              (complete! (constantly {:state :done :value "ready"}))
+              (let [after (call handler :get (str uri cursor))
+                    events (get-in after [:body "events"])]
+                (expect (= 200 (:status after)))
+                (expect (= [["task.ended" (:id row) "done"]]
+                           (mapv (fn [event] [(get event "type") (get-in event ["task" "id"])
+                                              (get-in event ["task" "state"])]) events)))
+                (expect (= [] (get-in (call handler :get (str uri (get-in after [:body "cursor"])))
+                                      [:body "events"]))))))
+          (finally (task/sweep! sid :session-close) (sqlite/db-close! store))))))
 
 (defdescribe every-json-route-declares-a-response-schema
              (it "names a gateway schema for each JSON response"
@@ -73,7 +103,7 @@
    `|n` for a `oneOf`, `anyOf` or `allOf` branch. This map can only get smaller: the
    test fails when an entry has fields or when a new open place comes."
   {"activity_page" "The page shape comes from the activity history store. It is not mapped yet."
-   "app_door_answer" "The live seam answer changes with the live operation in the envelope."
+   "app_door_answer|0" "Ordinary app door answers vary with the live operation in the envelope."
    "app_list.views[]" "An extension declares the view fields."
    "app_view|0.view" "An extension declares the view fields."
    "capabilities.features" "Each feature has its own shape, and extensions add features."
@@ -250,10 +280,25 @@
               root (str (System/getProperty "java.io.tmpdir"))
               checked (atom [])
               check! (fn [method path uri & [body]]
-                       (let [{:keys [status body]} (call handler method uri body)
-                             schema (declared method path)]
+                       (let [{:keys [status headers body]} (call handler method uri body)
+                             schema (declared method path)
+                             template (str/replace path #":([^/]+)" "{$1}")
+                             operation (get-in (openapi/document) ["paths" template (name method)])
+                             response (get-in operation ["responses" (str status)])
+                             queries (into #{} (keep #(when (= "query" (get % "in"))
+                                                        (get % "name")))
+                                           (get operation "parameters"))]
 
                          (expect (<= 200 status 299) (pr-str [method uri status body]))
+                         (expect (some? response) (pr-str [method uri status]))
+                         (expect (contains? (get response "content")
+                                            (some-> (get (update-keys headers str/lower-case) "content-type")
+                                                    (str/split #";")
+                                                    first))
+                                 (pr-str [method uri headers]))
+                         (when-let [q (second (str/split uri #"\?" 2))]
+                           (doseq [key (map #(first (str/split % #"=" 2)) (str/split q #"&"))]
+                             (expect (contains? queries key) (pr-str [method uri key]))))
                          (when (<= 200 status 299)
                            (swap! checked conj [method path])
                            (expect (document/valid-json? "gateway" schema body)
@@ -261,6 +306,7 @@
                          body))]
 
           (with-redefs [lp/db-info (constantly store)]
+            (check! :post "/v1/sessions" "/v1/sessions")
             (doseq [[path suffix]
                     [["/v1/sessions/:sid/turns" "/turns"]
                      ["/v1/sessions/:sid/turns/:tid" (str "/turns/" tid)]
@@ -292,6 +338,10 @@
                     (str "/v1/sessions/" sid "/queue/send-now")
                     {})
             (check! :put "/v1/sessions/:sid/read" (str "/v1/sessions/" sid "/read") {})
+            (check! :post
+                    "/v1/sessions/:sid/council/changed"
+                    (str "/v1/sessions/" sid "/council/changed")
+                    {})
             (let [project (check! :post "/v1/projects"
                                   "/v1/projects" {:name "Probe" :workspace_root root})
                   pid (get project "id")
@@ -308,11 +358,35 @@
                       "/v1/sessions/:sid/group"
                       (str "/v1/sessions/" sid "/group")
                       {:group_id (get group "id")})
+              (let [ungrouped (check! :put "/v1/sessions/:sid/group"
+                                      (str "/v1/sessions/" sid "/group"))]
+                (expect (nil? (get ungrouped "group_id"))))
               (check! :delete
                       "/v1/session-groups/:gid"
                       (str "/v1/session-groups/" (get group "id")))))
           (expect (<= 35 (count @checked)) (pr-str @checked)))
         (finally (sqlite/db-close! store))))))
+
+(defdescribe
+  declared-turn-submit-variants
+  (it "describes the real accepted and idempotent reply statuses"
+      (let [sid (str (random-uuid))
+            uri (str "/v1/sessions/" sid "/turns")
+            handler (app)
+            responses (get-in (openapi/document)
+                              ["paths" "/v1/sessions/{sid}/turns" "post" "responses"])
+            turn (get-in (wire/parse-json (slurp (io/resource
+                                                  "vis-contract/fixtures/gateway-answers.json")))
+                         ["answers" "GET /v1/sessions/:sid/turns/:tid"])
+            idempotent? (atom false)]
+        (with-redefs [state/session-archived? (constantly false)
+                      state/submit-turn! (fn [_ _] {:turn turn :idempotent? @idempotent?})]
+          (doseq [retry? [false true]]
+            (reset! idempotent? retry?)
+            (let [{:keys [status body]} (call handler :post uri {:request "Probe"})]
+              (expect (= turn body))
+              (expect (= (if retry? 200 202) status))
+              (expect (contains? (get-in responses [(str status) "content"]) "application/json"))))))))
 
 (defn- capabilities-handler
   "A router that answers GET /v1/capabilities with `body`, checked by the hook."
@@ -340,3 +414,39 @@
                                                           (assoc "release" "1.0.0")))
                                 :get
                                 "/v1/capabilities"))))))
+
+
+(defdescribe negotiated-and-domain-responses
+  (it "requires authentication for readiness and brand writes but not brand reads"
+      (let [wrap-auth (ns-resolve 'com.blockether.vis.internal.gateway.server 'wrap-auth)
+            handler (wrap-auth (constantly {:status 204}) "token" [])]
+        (with-redefs [server/auth-required? (constantly true)]
+          (expect (= 401 (:status (call handler :get "/readyz"))))
+          (expect (= 204 (:status (call handler :get "/v1/web/brand"))))
+          (expect (= 401 (:status (call handler :put "/v1/web/brand")))))))
+  (it "describes the version refusal sent before the protected route runs"
+      (let [wrap-protocol (ns-resolve 'com.blockether.vis.internal.gateway.server 'wrap-protocol)
+            handler (wrap-protocol (app) [])
+            {:keys [status body]} (call handler :get "/v1/models")]
+        (expect (= 426 status))
+        (expect (get-in (openapi/document) ["paths" "/v1/models" "get" "responses" "426"]))
+        (expect (document/valid-json? "gateway" "incompatible_protocol" body)
+                (pr-str body))))
+  (it "returns a stale View action as a domain result"
+      (let [sid (str (random-uuid))
+            vid (str (random-uuid))
+            handler (app)]
+        (with-redefs [gateway-view/view-of (constantly {:id vid})
+                      gateway-view/action! (constantly {:is-accepted false
+                                                       :reason "stale_revision"
+                                                       :revision "new"})]
+          (let [{:keys [status body]}
+                (call handler :post (str "/v1/sessions/" sid "/views/" vid "/actions")
+                      {"action" "submit" "revision" "old"})]
+            (expect (= 200 status))
+            (expect (= "stale_revision" (get body "reason")))
+            (expect (document/valid-json? "gateway" "view_outcome" body))
+            (doseq [invalid [(assoc body "reason" "free-form text")
+                             (assoc body "is_accepted" true)
+                             (dissoc body "reason")]]
+              (expect (not (document/valid-json? "gateway" "view_outcome" invalid)))))))))

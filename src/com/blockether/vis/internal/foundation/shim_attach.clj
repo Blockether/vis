@@ -211,6 +211,16 @@
       (throw (ex-info "list_attachments: call inside py3." {})))
     (into (vec (when reader (or ((:list reader)) []))) (pending-descriptors))))
 
+(defn- exact-attachment
+  "Return `row` if the supplied version agrees with this exact attachment."
+  [caller row version]
+  (let [actual (or (:version row) 1)]
+    (when (and (some? version) (not= version actual))
+      (throw (ex-info (str caller ": attachment " (pr-str (:id row))
+                           " is version " actual ", not " version ". Use the filename to select another version.")
+                      {:type ::attachment-not-found :target (:id row) :version version})))
+    row))
+
 (defn- locate-attachment
   "Resolve an id, filename or relative version against this session's descriptors."
   [caller target version]
@@ -221,7 +231,7 @@
         (str target)
 
         by-id
-        (when (nil? version) (some #(when (= wanted (str (:id %))) %) rows))
+        (some #(when (= wanted (str (:id %))) %) rows)
 
         versions
         (sort-by #(long (or (:version %) 1)) (filter #(= wanted (:filename %)) rows))
@@ -229,13 +239,15 @@
         n
         (count versions)]
 
-    (or by-id
+    (or (when by-id (exact-attachment caller by-id version))
         (when (pos? n)
           (cond (nil? version) (last versions)
                 (<= (- n) (long version) -1) (nth (vec versions) (+ n (long version)))
                 :else (some #(when (= (long version) (long (or (:version %) 1))) %) versions)))
         ;; An attachment of the session wins over an outside one of the same name.
-        (when (and (zero? n) (nil? version)) (locate-outside caller wanted))
+        (when (zero? n)
+           (when-let [row (locate-outside caller wanted)]
+             (exact-attachment caller row version)))
         (throw (ex-info (if (zero? n)
                           (str caller
                                ": unknown id or filename "

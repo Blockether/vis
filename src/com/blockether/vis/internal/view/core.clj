@@ -40,7 +40,8 @@
             [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.task :as task]
             [taoensso.telemere :as tel])
-  (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
+  (:import [java.util.concurrent CompletableFuture Executors ScheduledExecutorService TimeUnit TimeoutException]
+           [java.util.function Consumer]))
 
 (set! *warn-on-reflection* true)
 
@@ -3380,11 +3381,11 @@
 (defn- notify-change-watches!
   "Publish ready watches once. Caller holds the view lock."
   [entry]
-  (doseq [[id {:keys [after-seq after result]}] @(:change-watches entry)
+  (doseq [[id {:keys [after-seq after] ^CompletableFuture result :result}] @(:change-watches entry)
           :let [ready (change-ready entry after-seq after)]
           :when ready]
     (swap! (:change-watches entry) dissoc id)
-    (deliver result ready)))
+    (.complete result ready)))
 
 (defn- adopt-app!
   "Give the open app to its current owner. Keep its nodes and take the title,
@@ -4462,7 +4463,8 @@
   [view-id opts]
   (let [after-seq (get opts "after_seq" 0)
         after (get opts "after" 0)
-        result (promise)]
+        result (CompletableFuture.)
+        on-ready! (fn [f] (.thenAccept result (reify Consumer (accept [_ ready] (f ready)))))]
     (when-not (every? #(and (integer? %) (<= 0 % Long/MAX_VALUE)) [after-seq after])
       (invalid-live-patch! "watch after and after_seq must be nonnegative integers"))
     (if-let [entry (live-entry view-id)]
@@ -4470,18 +4472,19 @@
             id (str (random-uuid))]
         (locking cell
           (if-let [ready (change-ready entry after-seq after)]
-            (deliver result ready)
+            (.complete result ready)
             (swap! (:change-watches entry) assoc id {:after-seq after-seq :after after :result result})))
-        {:result result
+        {:result result :on-ready! on-ready!
          :cell cell
          :end-result (:promise entry)
          :cancel! (fn []
                     (locking cell
                       (when (contains? @(:change-watches entry) id)
                         (swap! (:change-watches entry) dissoc id)
-                        (deliver result "cancelled")
-                        true)))})
-      {:result (deliver result "closed") :cancel! (constantly false)})))
+                        (.complete result "cancelled")
+                         true)))})
+      (do (.complete result "closed")
+          {:result result :on-ready! on-ready! :cancel! (constantly false)}))))
 
 (defonce ^:private wire-change-watches (atom {}))
 (def ^:private wire-watch-lease-ms 120000)
@@ -4509,9 +4512,9 @@
 (defn- wire-watch!
   "Keep the capability between the SDK's registration and readiness requests."
   [view-id opts]
-  (let [{:keys [result] :as watch} (watch-live! view-id opts)]
-    (if (realized? result)
-      (watch-reply @result watch)
+  (let [{:keys [^CompletableFuture result] :as watch} (watch-live! view-id opts)]
+    (if (.isDone result)
+      (watch-reply (.getNow result nil) watch)
       (let [id (str (random-uuid))]
         @wire-watch-reaper
         (swap! wire-change-watches assoc id
@@ -4521,7 +4524,7 @@
 (defn- wire-watch-op!
   [view-id opts op]
   (let [id (get opts "watch_id")
-        {:keys [cell cancel! result] :as watch} (get @wire-change-watches id)]
+        {:keys [cell cancel!] ^CompletableFuture result :result :as watch} (get @wire-change-watches id)]
     (cond
       (not= view-id (:view-id watch)) {:readiness "closed"}
       (= op "unwatch") (do (swap! wire-change-watches dissoc id)
@@ -4534,7 +4537,10 @@
           (invalid-live-patch! "watch-result timeout_ms must be 0..30000"))
         (swap! wire-change-watches
                #(cond-> % (contains? % id) (assoc-in [id :expires] (+ (util/now-ms) wire-watch-lease-ms))))
-        (let [ready (if (identical? cell (current-cell)) (deref result (long timeout) nil) (deref result 0 nil))
+        (let [ready (if (and (pos? timeout) (identical? cell (current-cell)))
+                       (try (.get result (long timeout) TimeUnit/MILLISECONDS)
+                            (catch TimeoutException _ nil))
+                       (.getNow result nil))
               current (current-cell)]
           (cond
             (and current (not (identical? cell current)))
@@ -6112,6 +6118,19 @@
       (invalid-live-view! "only the open of an app with a key takes hooks"))
     (not-empty hooks)))
 
+(defn- watch-await-batch!
+  [envelope read!]
+  (when-not (view-spec/watch-await-batch-request? envelope)
+    (invalid-live-view! "Invalid Task batch for view watches"))
+  (mapv (fn [[watch-id options]]
+          (try
+            (let [answer (read! {"op" "watch-result" "view_id" (get options "view_id")
+                                 "watch_id" watch-id "timeout_ms" 0})]
+              (if (seq answer) {:state "done" :value answer} {:state "running"}))
+            (catch clojure.lang.ExceptionInfo e
+              {:state "failed" :error (ex-message e)})))
+        (first (get envelope "args"))))
+
 (defn live-json!
   "The strings-only seam a Python extension crosses for a live view: one JSON
    envelope in, one JSON answer out.
@@ -6140,10 +6159,10 @@
      (binding [*live-owner* (cond-> owner
                               hooks
                               (assoc :hooks hooks))]
-       (-> envelope
-           (dissoc "channel_id" "channel_ids" "hooks")
-           live-dispatch
-           wire/json-str)))))
+       (wire/json-str
+         (if (= "_task_await_batch" (get envelope "op"))
+           (watch-await-batch! envelope live-dispatch)
+           (live-dispatch (dissoc envelope "channel_id" "channel_ids" "hooks"))))))))
 
 (defn app-watch!
   "Register a sandbox app watch with the same ownership checks as [[app-json!]]."
@@ -6187,6 +6206,46 @@
   [status message]
   (throw (ex-info message {:type :vis/view-app-door-refused :status status :reason message})))
 
+(defn- check-sdk-app-door!
+  [sid extension-name envelope op]
+  (if (= "open" op)
+    (let [view (get envelope "view")]
+      (when-not (and (map? view) (= (name app/placement) (get view "placement")))
+        (invalid-live-view! "the gateway app door opens only apps: placement \"attachment\""))
+      (when-not (contains? (hash-set nil sid) (trimmed (get view "session_id")))
+        (sdk-refusal! 403
+                      (if sid
+                        (str "the gateway app door opens apps only in session " sid)
+                        "the global app door opens no session app")))
+      (when (and sid (= "global" (get view "scope")))
+        (sdk-refusal! 400 "open a global app through POST /v1/apps")))
+    (let [view-id (live-handle-id envelope op)
+          _ (recorded-app! view-id)
+          app (some #(when (app/app? %) %)
+                    [(some-> (live-entry view-id)
+                             :view
+                             deref) (get @closed-apps view-id)])]
+
+      (when-not app
+        (invalid-live-patch! (str "a live " op " needs an app — " view-id " is no app")))
+      (when-not (and (= sid (:session-id app)) (= (nil? sid) (app/global? app)))
+        (sdk-refusal!
+          403
+          (str "app " view-id (if sid " belongs to another session" " is no global app"))))
+      (when-not (= extension-name (:extension app))
+        (sdk-refusal! 403
+                      (str "app " view-id
+                           " belongs to " (if-let [other (:extension app)]
+                                            (str "extension " other)
+                                            "the py3 sandbox"))))
+      (when (and (= "events" op)
+                 (let [timeout (get envelope "timeout_ms" 0)]
+                   (and (integer? timeout) (< sdk-events-wait-ms (long timeout)))))
+        (sdk-refusal! 400
+                      (str "events timeout_ms must be at most "
+                           sdk-events-wait-ms
+                           " on the gateway app door"))))))
+
 (defn owner-app-json!
   "The gateway app door of an SDK program: [[live-json!]] for owner `owner` in
    session `sid`. The owner is bound as extension `sdk/<owner>`.
@@ -6214,51 +6273,17 @@
               extension/*current-environment*
               {:session-id sid}]
 
-      (let [op (live-op-name envelope)]
-        (if (= "open" op)
-          (let [view (get envelope "view")]
-            (when-not (and (map? view) (= (name app/placement) (get view "placement")))
-              (invalid-live-view! "the gateway app door opens only apps: placement \"attachment\""))
-            (when-not (contains? (hash-set nil sid) (trimmed (get view "session_id")))
-              (sdk-refusal! 403
-                            (if sid
-                              (str "the gateway app door opens apps only in session " sid)
-                              "the global app door opens no session app")))
-            (when (and sid (= "global" (get view "scope")))
-              (sdk-refusal! 400 "open a global app through POST /v1/apps")))
-          (let [view-id (live-handle-id envelope op)
-                _ (recorded-app! view-id)
-                app (some #(when (app/app? %) %)
-                          [(some-> (live-entry view-id)
-                                   :view
-                                   deref) (get @closed-apps view-id)])]
-
-            (when-not app
-              (invalid-live-patch! (str "a live " op " needs an app — " view-id " is no app")))
-            (when-not (and (= sid (:session-id app)) (= (nil? sid) (app/global? app)))
-              (sdk-refusal!
-                403
-                (str "app " view-id (if sid " belongs to another session" " is no global app"))))
-            (when-not (= extension-name (:extension app))
-              (sdk-refusal! 403
-                            (str "app " view-id
-                                 " belongs to " (if-let [other (:extension app)]
-                                                  (str "extension " other)
-                                                  "the py3 sandbox"))))
-            (when (and (= "events" op)
-                       (let [timeout (get envelope "timeout_ms" 0)]
-                         (and (integer? timeout) (< sdk-events-wait-ms (long timeout)))))
-              (sdk-refusal! 400
-                            (str "events timeout_ms must be at most "
-                                 sdk-events-wait-ms
-                                 " on the gateway app door"))))))
-      (-> envelope
-          (dissoc "channel_id" "channel_ids")
-          (cond->
-            (and sid (= "open" (live-op-name envelope)))
-            (assoc-in ["view" "session_id"] sid)
-
-            (and (nil? sid) (= "open" (live-op-name envelope)))
-            (assoc-in ["view" "scope"] "global"))
-          live-dispatch
-          wire/json-str))))
+      (wire/json-str
+        (if (= "_task_await_batch" (get envelope "op"))
+          (watch-await-batch! envelope
+            (fn [request]
+              (check-sdk-app-door! sid extension-name request "watch-result")
+              (live-dispatch request)))
+          (let [op (live-op-name envelope)]
+            (check-sdk-app-door! sid extension-name envelope op)
+            (-> envelope
+                (dissoc "channel_id" "channel_ids")
+                (cond->
+                  (and sid (= "open" op)) (assoc-in ["view" "session_id"] sid)
+                  (and (nil? sid) (= "open" op)) (assoc-in ["view" "scope"] "global"))
+                live-dispatch)))))))

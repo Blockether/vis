@@ -32,7 +32,9 @@
     "",
     "",
     "def finish(sh, seconds=30):",
-    "    return sh.result(seconds)",
+    "    if wait([sh], timeout=seconds).not_done:",
+    "        raise TimeoutError()",
+    "    return sh.result()",
     "",
     "",
     "def refusal(error):",
@@ -758,6 +760,7 @@
         "    try:",
         "        await asyncio.wait_for(sh, timeout=0.02)",
         "    except TimeoutError:",
+        "        await asyncio.wait([sh], timeout=5)",
         "        return [sh.cancelled(), sh.status]",
         "answer = asyncio.run(stop())"
       ],

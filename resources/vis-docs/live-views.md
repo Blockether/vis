@@ -79,11 +79,10 @@ TONES = {"": "running", "success": "ok", "skipped": "idle"}  # anything else is 
 
 def poll(run_id):
     sh = vis.shell(f"gh run view {run_id} --json jobs,status,conclusion,url")
-    try:
-        return json.loads(sh.result(timeout=60).out)
-    except TimeoutError:
+    if not wait([sh], timeout=60).done:
         sh.cancel()
-        raise
+        raise TimeoutError("The command did not complete")
+    return json.loads(sh.result().out)
 
 
 def watch_run(run_id: int) -> dict:
@@ -827,8 +826,9 @@ value, change the label, for example to `5 tokens left`.
   the result `"closed"`. Read `view.state()` or drain `view.events()` after the wait.
 - In async code, use `await asyncio.wait([watch], timeout=seconds)`. In a plain `def` in an
   extension or SDK program, use `concurrent.futures.wait([watch], timeout=seconds)` on the same
-  handle. A timeout does not cancel the handle. Wait again on the pending handle, or call
-  `watch.cancel()` if you no longer need it. Cancellation does not close the view.
+  handle. A timeout does not cancel the handle. Wait again on the pending handle.
+- Call `watch.cancel()` if you no longer need the handle. Cancellation does not close the view.
+  `watch.result()` does not wait. Read it after the watch completes.
 - A wait publishes no view update and no activity. Keep a separate poll interval for an external
   service. The CI example keeps its five-second deadline when a view event arrives earlier.
 - `with view.batch(): ...` sends several node changes as one patch.
@@ -964,6 +964,7 @@ Each action of a person becomes a `vis.LiveEvent`:
 - `view.events()` returns the new events without waiting. To wait, use `view.changed()` as described
   in [Updating](#updating).
 - `view.on_event(callback)` calls `callback(event)` in the thread that calls `view.events()`.
+  Use a synchronous function. A callback that returns an awaitable gives an error.
 - In a panel view, `vis.live(..., on_event=callback)` gets each event from the host. The callback
   runs as an extension callback with the session of the view bound, so it can call `Session.send`
   or `vis.sessions.create`.

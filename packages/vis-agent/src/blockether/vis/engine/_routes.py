@@ -7,7 +7,8 @@ its session handles hold the workflow API and call these methods.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, TypeAlias
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from blockether.vis.engine import _types
 from blockether.vis.engine._types import JSONValue
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from ._client import EngineClient, Response
 
 Query: TypeAlias = Mapping[str, str | int | float | bool | None]
+_EMPTY_QUERY: Query = MappingProxyType({})
 
 
 class Routes:
@@ -49,13 +51,22 @@ class Routes:
         ).json()
 
     def get_session_task(
-        self, sid: str, task_id: str, *, timeout: float | None = None
+        self,
+        sid: str,
+        task_id: str,
+        *,
+        include_record: bool = False,
+        timeout: float | None = None,
     ) -> _types.TaskStatus:
-        """GET /v1/sessions/:sid/tasks/:task-id — read one Task."""
+        """GET /v1/sessions/:sid/tasks/:task-id — read one Task.
+
+        Set ``include_record`` to ask for the record of a subagent Task.
+        """
         return self._client._request(
             "GET",
             "/v1/sessions/:sid/tasks/:task-id",
             path={"sid": sid, "task-id": task_id},
+            query={"include_record": "true"} if include_record else _EMPTY_QUERY,
             timeout=timeout,
         ).json()
 
@@ -132,7 +143,7 @@ class Routes:
         ).json()
 
     def get_capabilities(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Capabilities:
         """GET /v1/capabilities — json response."""
         response = self._client._request(
@@ -141,7 +152,7 @@ class Routes:
         return response.json()
 
     def get_devices(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Devices:
         """GET /v1/devices — json response."""
         response = self._client._request(
@@ -152,7 +163,7 @@ class Routes:
     def post_devices(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.DeviceRegistered:
@@ -163,7 +174,7 @@ class Routes:
         return response.json()
 
     def delete_device(
-        self, token: str, *, query: Query | None = None, timeout: float | None = None
+        self, token: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Removed:
         """DELETE /v1/devices/:token — json response."""
         response = self._client._request(
@@ -176,7 +187,7 @@ class Routes:
         return response.json()
 
     def post_devices_test(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.DeviceTest:
         """POST /v1/devices/actions/test — json response."""
         response = self._client._request(
@@ -185,7 +196,7 @@ class Routes:
         return response.json()
 
     def get_fs(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.FsListing:
         """GET /v1/fs — json response."""
         response = self._client._request(
@@ -196,7 +207,7 @@ class Routes:
     def post_fs_mkdir(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.FsEntry:
@@ -212,7 +223,7 @@ class Routes:
         return response.json()
 
     def get_mcp_servers(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.McpServers:
         """GET /v1/mcp/servers — json response."""
         response = self._client._request(
@@ -223,7 +234,7 @@ class Routes:
     def post_mcp_servers(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpServer:
@@ -234,7 +245,7 @@ class Routes:
         return response.json()
 
     def delete_mcp_server(
-        self, name: str, *, query: Query | None = None, timeout: float | None = None
+        self, name: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.McpDeleted:
         """DELETE /v1/mcp/servers/:name — json response."""
         response = self._client._request(
@@ -250,7 +261,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpServer:
@@ -269,7 +280,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpServer:
@@ -285,7 +296,7 @@ class Routes:
         return response.json()
 
     def post_mcp_server_kill(
-        self, name: str, *, query: Query | None = None, timeout: float | None = None
+        self, name: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.McpServer:
         """POST /v1/mcp/servers/:name/actions/kill — json response."""
         response = self._client._request(
@@ -298,7 +309,7 @@ class Routes:
         return response.json()
 
     def post_mcp_server_start(
-        self, name: str, *, query: Query | None = None, timeout: float | None = None
+        self, name: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.McpServer:
         """POST /v1/mcp/servers/:name/actions/start — json response."""
         response = self._client._request(
@@ -314,7 +325,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpAuthCancelled:
@@ -333,7 +344,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpAuthFlow:
@@ -352,7 +363,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpTokenStatus:
@@ -371,7 +382,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpAuthFlow:
@@ -390,7 +401,7 @@ class Routes:
         self,
         name: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpAuthFlow:
@@ -408,7 +419,7 @@ class Routes:
     def post_mcp_servers_test(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpTest:
@@ -424,7 +435,7 @@ class Routes:
         return response.json()
 
     def get_models(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.ModelsCatalog:
         """GET /v1/models — json response."""
         response = self._client._request(
@@ -433,7 +444,7 @@ class Routes:
         return response.json()
 
     def get_projects(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.ProjectList:
         """GET /v1/projects — json response."""
         response = self._client._request(
@@ -444,7 +455,7 @@ class Routes:
     def post_projects(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.Project:
@@ -455,7 +466,7 @@ class Routes:
         return response.json()
 
     def delete_project(
-        self, pid: str, *, query: Query | None = None, timeout: float | None = None
+        self, pid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> None:
         """DELETE /v1/projects/:pid — empty response."""
         self._client._request(
@@ -468,7 +479,7 @@ class Routes:
         return None
 
     def get_project(
-        self, pid: str, *, query: Query | None = None, timeout: float | None = None
+        self, pid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Project:
         """GET /v1/projects/:pid — json response."""
         response = self._client._request(
@@ -480,7 +491,7 @@ class Routes:
         self,
         pid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.Project:
@@ -499,7 +510,7 @@ class Routes:
         self,
         pid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ProjectSessionsMoved:
@@ -517,7 +528,7 @@ class Routes:
     def post_projects_ensure(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.Project:
@@ -533,7 +544,7 @@ class Routes:
         return response.json()
 
     def get_projects_overview(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.ProjectOverview:
         """GET /v1/projects/overview — json response."""
         response = self._client._request(
@@ -542,7 +553,7 @@ class Routes:
         return response.json()
 
     def get_provider_presets(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.ProviderPresets:
         """GET /v1/provider-presets — json response."""
         response = self._client._request(
@@ -553,7 +564,7 @@ class Routes:
     def post_providers(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.RouterFleet:
@@ -567,7 +578,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.RouterFleet:
         """DELETE /v1/providers/:provider-id — json response."""
@@ -584,7 +595,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ProviderAuth:
@@ -603,7 +614,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ProviderAuth:
@@ -622,7 +633,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ProviderAuth:
@@ -641,7 +652,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/auth/start — json response."""
@@ -658,7 +669,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ProviderLimits:
         """GET /v1/providers/:provider-id/limits — json response."""
@@ -675,7 +686,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ProviderResetOutcome:
@@ -694,7 +705,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ProviderAuth:
         """POST /v1/providers/:provider-id/logout — json response."""
@@ -711,7 +722,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ProviderModels:
         """GET /v1/providers/:provider-id/models — json response."""
@@ -728,7 +739,7 @@ class Routes:
         self,
         provider_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ProviderStatus:
         """GET /v1/providers/:provider-id/status — json response."""
@@ -742,7 +753,7 @@ class Routes:
         return response.json()
 
     def get_proxy(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Proxy:
         """GET /v1/proxy — json response."""
         response = self._client._request(
@@ -751,7 +762,7 @@ class Routes:
         return response.json()
 
     def get_router(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.RouterFleet:
         """GET /v1/router — json response."""
         response = self._client._request(
@@ -762,10 +773,10 @@ class Routes:
     def patch_router(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> _types.RouterFleet:
+    ) -> _types.RouterPatch:
         """PATCH /v1/router — json response."""
         response = self._client._request(
             "PATCH", "/v1/router", path={}, query=query, timeout=timeout, body=body
@@ -773,7 +784,7 @@ class Routes:
         return response.json()
 
     def get_session_groups(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionGroupPage:
         """GET /v1/session-groups — the groups of one project, in the human's order."""
         response = self._client._request(
@@ -784,7 +795,7 @@ class Routes:
     def post_session_groups(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionGroupRecord:
@@ -800,7 +811,7 @@ class Routes:
         return response.json()
 
     def delete_session_group(
-        self, gid: str, *, query: Query | None = None, timeout: float | None = None
+        self, gid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionGroupDeleted:
         """DELETE /v1/session-groups/:gid — drop a group and say what becomes of it."""
         response = self._client._request(
@@ -816,7 +827,7 @@ class Routes:
         self,
         gid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionGroupRecord:
@@ -832,7 +843,7 @@ class Routes:
         return response.json()
 
     def get_sessions(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionList:
         """GET /v1/sessions — json response."""
         response = self._client._request(
@@ -843,10 +854,10 @@ class Routes:
     def post_sessions(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> _types.SessionRecord:
+    ) -> _types.SessionCreated:
         """POST /v1/sessions — json response."""
         response = self._client._request(
             "POST", "/v1/sessions", path={}, query=query, timeout=timeout, body=body
@@ -854,7 +865,7 @@ class Routes:
         return response.json()
 
     def delete_session(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> None:
         """DELETE /v1/sessions/:sid — empty response."""
         self._client._request(
@@ -867,7 +878,7 @@ class Routes:
         return None
 
     def get_session(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionRecord:
         """GET /v1/sessions/:sid — json response."""
         response = self._client._request(
@@ -879,7 +890,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionRecord:
@@ -899,7 +910,7 @@ class Routes:
         sid: str,
         aid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ActivityPage:
         """GET /v1/sessions/:sid/activity/:aid — a bounded page of complete Activity records.
@@ -921,7 +932,7 @@ class Routes:
         sid: str,
         aid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> Response:
         """GET /v1/sessions/:sid/activity/:aid/export — complete unfiltered Activity text.
@@ -947,18 +958,23 @@ class Routes:
         return response
 
     def get_session_alert(
-        self, sid: str, *, timeout: float | None = None
+        self,
+        sid: str,
+        *,
+        reason: Literal["question", "answer"] | None = None,
+        timeout: float | None = None,
     ) -> _types.SessionAlert:
-        """GET /v1/sessions/:sid/alert — the banner text for the latest turn."""
+        """GET /v1/sessions/:sid/alert — read the alert, optionally by reason."""
         return self._client._request(
             "GET",
             "/v1/sessions/:sid/alert",
             path={"sid": sid},
+            query={"reason": reason} if reason is not None else _EMPTY_QUERY,
             timeout=timeout,
         ).json()
 
     def get_session_artifacts(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionArtifacts:
         """GET /v1/sessions/:sid/artifacts — json response."""
         response = self._client._request(
@@ -974,7 +990,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         content: bytes | None,
     ) -> _types.Upload:
@@ -993,7 +1009,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionBlock:
@@ -1012,7 +1028,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.TurnCancel:
@@ -1028,7 +1044,7 @@ class Routes:
         return response.json()
 
     def get_session_context(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionContext:
         """GET /v1/sessions/:sid/context — json response."""
         response = self._client._request(
@@ -1041,7 +1057,7 @@ class Routes:
         return response.json()
 
     def post_session_drain_queue(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.TurnQueueStep:
         """POST /v1/sessions/:sid/drain-queue — json response."""
         response = self._client._request(
@@ -1053,8 +1069,26 @@ class Routes:
         )
         return response.json()
 
+    def post_session_council_changed(
+        self,
+        sid: str,
+        *,
+        query: Query = _EMPTY_QUERY,
+        timeout: float | None = None,
+        body: JSONValue = None,
+    ) -> _types.CouncilWatchTask:
+        """POST /v1/sessions/:sid/council/changed — json response."""
+        return self._client._request(
+            "POST",
+            "/v1/sessions/:sid/council/changed",
+            path={"sid": sid},
+            query=query,
+            timeout=timeout,
+            body=body,
+        ).json()
+
     def get_session_events_since(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionEvents:
         """GET /v1/sessions/:sid/events-since — json response."""
         response = self._client._request(
@@ -1067,7 +1101,7 @@ class Routes:
         return response.json()
 
     def get_session_forks(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionForkTurns:
         """GET /v1/sessions/:sid/forks — json response."""
         response = self._client._request(
@@ -1083,7 +1117,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionWrapped:
@@ -1102,7 +1136,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionFsOpen:
@@ -1118,7 +1152,7 @@ class Routes:
         return response.json()
 
     def get_session_fs_file(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.FilePreview:
         """GET /v1/sessions/:sid/fs/file — preview one workspace file by its kind."""
         response = self._client._request(
@@ -1131,7 +1165,7 @@ class Routes:
         return response.json()
 
     def get_session_fs_file_content(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> Response:
         """GET /v1/sessions/:sid/fs/file/content — binary response.
 
@@ -1151,7 +1185,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionRecord:
@@ -1172,7 +1206,7 @@ class Routes:
         iid: str,
         idx: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> Response:
         """GET /v1/sessions/:sid/iterations/:iid/attachments/:idx — binary response."""
@@ -1191,7 +1225,7 @@ class Routes:
         iid: str,
         idx: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.AttachmentLink:
         """GET /v1/sessions/:sid/iterations/:iid/attachments/:idx/link — JSON response.
@@ -1215,7 +1249,7 @@ class Routes:
         iid: str,
         idx: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AgentNote:
@@ -1231,7 +1265,7 @@ class Routes:
         return response.json()
 
     def get_session_model(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionModelRecord:
         """GET /v1/sessions/:sid/model — json response."""
         response = self._client._request(
@@ -1247,7 +1281,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionModelRecord:
@@ -1263,7 +1297,7 @@ class Routes:
         return response.json()
 
     def post_session_queue_send_now(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.QueueSendNow:
         """POST /v1/sessions/:sid/queue/send-now — json response."""
         response = self._client._request(
@@ -1279,7 +1313,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionRead:
@@ -1295,7 +1329,7 @@ class Routes:
         return response.json()
 
     def post_session_release(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> None:
         """POST /v1/sessions/:sid/release — empty response."""
         self._client._request(
@@ -1308,7 +1342,7 @@ class Routes:
         return None
 
     def get_session_resources(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionResources:
         """GET /v1/sessions/:sid/resources — json response."""
         response = self._client._request(
@@ -1321,7 +1355,7 @@ class Routes:
         return response.json()
 
     def get_session_resources_logs(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionResourceLogs:
         """GET /v1/sessions/:sid/resources/logs — json response."""
         response = self._client._request(
@@ -1334,7 +1368,7 @@ class Routes:
         return response.json()
 
     def post_session_resources_stop(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionResourceStop:
         """POST /v1/sessions/:sid/resources/stop — json response."""
         response = self._client._request(
@@ -1347,7 +1381,7 @@ class Routes:
         return response.json()
 
     def post_session_resume_queue(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.TurnQueueStep:
         """POST /v1/sessions/:sid/resume-queue — json response."""
         response = self._client._request(
@@ -1360,7 +1394,7 @@ class Routes:
         return response.json()
 
     def get_session_seq(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionSeq:
         """GET /v1/sessions/:sid/seq — json response."""
         response = self._client._request(
@@ -1373,7 +1407,7 @@ class Routes:
         return response.json()
 
     def get_session_slashes(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionSlashes:
         """GET /v1/sessions/:sid/slashes — json response."""
         response = self._client._request(
@@ -1386,7 +1420,7 @@ class Routes:
         return response.json()
 
     def get_session_keybindings(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.KeybindingList:
         """GET /v1/sessions/:sid/keybindings — json response."""
         response = self._client._request(
@@ -1402,7 +1436,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.KeybindingRunResult:
@@ -1421,7 +1455,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.McpAppRpcAnswer:
@@ -1437,7 +1471,7 @@ class Routes:
         return response.json()
 
     def get_session_snapshot(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> Response:
         """GET /v1/sessions/:sid/snapshot — binary response."""
         response = self._client._request(
@@ -1450,7 +1484,7 @@ class Routes:
         return response
 
     def get_session_trajectory(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionAtif:
         """GET /v1/sessions/:sid/trajectory.json — json response."""
         response = self._client._request(
@@ -1466,11 +1500,11 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> _types.VoiceJob:
-        """POST /v1/sessions/:sid/speech — json response."""
+    ) -> Response | _types.VoiceJob:
+        """POST /v1/sessions/:sid/speech — audio for a short line or a synthesis job."""
         response = self._client._request(
             "POST",
             "/v1/sessions/:sid/speech",
@@ -1479,14 +1513,14 @@ class Routes:
             timeout=timeout,
             body=body,
         )
-        return response.json()
+        return response.json() if response.status == 202 else response
 
     def delete_session_speech_job(
         self,
         sid: str,
         job_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.Forgotten:
         """DELETE /v1/sessions/:sid/speech/jobs/:job-id — json response."""
@@ -1504,7 +1538,7 @@ class Routes:
         sid: str,
         job_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.VoiceJob:
         """GET /v1/sessions/:sid/speech/jobs/:job-id — json response."""
@@ -1522,7 +1556,7 @@ class Routes:
         sid: str,
         job_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> Response:
         """GET /v1/sessions/:sid/speech/jobs/:job-id/audio — binary response."""
@@ -1536,7 +1570,7 @@ class Routes:
         return response
 
     def get_session_suggest(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionSuggestions:
         """GET /v1/sessions/:sid/suggest — json response."""
         response = self._client._request(
@@ -1549,7 +1583,7 @@ class Routes:
         return response.json()
 
     def get_session_transcript(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.TranscriptRecord:
         """GET /v1/sessions/:sid/transcript — json response."""
         response = self._client._request(
@@ -1562,7 +1596,7 @@ class Routes:
         return response.json()
 
     def get_session_transcript_html(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> Response:
         """GET /v1/sessions/:sid/transcript.html — html response."""
         response = self._client._request(
@@ -1575,7 +1609,7 @@ class Routes:
         return response
 
     def get_session_transcript_md(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> Response:
         """GET /v1/sessions/:sid/transcript.md — markdown response."""
         response = self._client._request(
@@ -1588,7 +1622,7 @@ class Routes:
         return response
 
     def get_session_turns(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.TurnList:
         """GET /v1/sessions/:sid/turns — json response."""
         response = self._client._request(
@@ -1604,7 +1638,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.TurnRecord:
@@ -1624,7 +1658,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.TurnCancel:
         """DELETE /v1/sessions/:sid/turns/:tid — json response."""
@@ -1642,7 +1676,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.TurnRecord:
         """GET /v1/sessions/:sid/turns/:tid — json response."""
@@ -1660,7 +1694,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.TurnRecord:
@@ -1680,7 +1714,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.TurnAttachments:
         """GET /v1/sessions/:sid/turns/:tid/attachments — json response."""
@@ -1699,7 +1733,7 @@ class Routes:
         tid: str,
         aid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> Response:
         """GET /v1/sessions/:sid/turns/:tid/attachments/:aid — binary response.
@@ -1720,7 +1754,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.TurnCancel:
         """POST /v1/sessions/:sid/turns/:tid/cancel — json response."""
@@ -1738,7 +1772,7 @@ class Routes:
         sid: str,
         tid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.TurnTrace:
         """GET /v1/sessions/:sid/turns/:tid/trace — json response."""
@@ -1752,7 +1786,7 @@ class Routes:
         return response.json()
 
     def get_session_usage(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionUsage:
         """GET /v1/sessions/:sid/usage — json response."""
         response = self._client._request(
@@ -1769,7 +1803,7 @@ class Routes:
         sid: str,
         view_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ViewOutcome:
@@ -1785,7 +1819,7 @@ class Routes:
         return response.json()
 
     def get_session_views_input(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.ViewRequests:
         """GET /v1/sessions/:sid/views/input — json response."""
         response = self._client._request(
@@ -1798,7 +1832,7 @@ class Routes:
         return response.json()
 
     def get_session_views_live(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AppList:
         """GET /v1/sessions/:sid/views/live — json response."""
         response = self._client._request(
@@ -1815,7 +1849,7 @@ class Routes:
         sid: str,
         view_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.AppView:
         """GET /v1/sessions/:sid/views/live/:view-id — json response."""
@@ -1834,7 +1868,7 @@ class Routes:
         view_id: str,
         node_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.ViewLog:
         """GET /v1/sessions/:sid/views/live/:view-id/log — json response.
@@ -1855,7 +1889,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AppDoorAnswer:
@@ -1871,7 +1905,7 @@ class Routes:
         return response.json()
 
     def get_apps(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AppList:
         """GET /v1/apps — json response."""
         response = self._client._request(
@@ -1882,7 +1916,7 @@ class Routes:
     def post_apps(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AppDoorAnswer:
@@ -1893,7 +1927,7 @@ class Routes:
         return response.json()
 
     def get_app(
-        self, view_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, view_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AppView:
         """GET /v1/apps/:view-id — json response."""
         response = self._client._request(
@@ -1909,7 +1943,7 @@ class Routes:
         self,
         view_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ViewOutcome:
@@ -1925,7 +1959,7 @@ class Routes:
         return response.json()
 
     def get_web_brand(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.WebBrand:
         """GET /v1/web/brand — json response."""
         response = self._client._request(
@@ -1936,7 +1970,7 @@ class Routes:
     def put_web_brand(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.WebBrand:
@@ -1947,7 +1981,7 @@ class Routes:
         return response.json()
 
     def delete_web_brand(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> None:
         """DELETE /v1/web/brand — empty response."""
         self._client._request(
@@ -1959,7 +1993,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         content: bytes | None,
     ) -> _types.VoiceJob:
@@ -1979,7 +2013,7 @@ class Routes:
         sid: str,
         job_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.Forgotten:
         """DELETE /v1/sessions/:sid/voice/jobs/:job-id — json response."""
@@ -1997,7 +2031,7 @@ class Routes:
         sid: str,
         job_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.VoiceJob:
         """GET /v1/sessions/:sid/voice/jobs/:job-id — json response."""
@@ -2011,7 +2045,7 @@ class Routes:
         return response.json()
 
     def get_session_workspace(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionWorkspace:
         """GET /v1/sessions/:sid/workspace — json response."""
         response = self._client._request(
@@ -2027,7 +2061,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionWorkspaceBranches:
@@ -2043,7 +2077,7 @@ class Routes:
         return response.json()
 
     def get_session_workspace_branches(
-        self, sid: str, *, query: Query | None = None, timeout: float | None = None
+        self, sid: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionWorkspaceBranches:
         """GET /v1/sessions/:sid/workspace/branches — json response."""
         response = self._client._request(
@@ -2059,7 +2093,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionWorkspace:
@@ -2077,7 +2111,7 @@ class Routes:
     def post_sessions_archive(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SessionArchive:
@@ -2095,7 +2129,7 @@ class Routes:
     def post_sessions_import(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         content: bytes | None,
     ) -> _types.SessionRecord:
@@ -2111,7 +2145,7 @@ class Routes:
         return response.json()
 
     def get_sessions_search(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SessionSearch:
         """GET /v1/sessions/actions/search — json response."""
         response = self._client._request(
@@ -2122,7 +2156,7 @@ class Routes:
     def post_machines_order(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.MachineOrder:
@@ -2138,7 +2172,7 @@ class Routes:
         return response.json()
 
     def get_automations(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AutomationsList:
         """GET /v1/automations — json response."""
         response = self._client._request(
@@ -2149,7 +2183,7 @@ class Routes:
     def post_automations(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AutomationsAutomation:
@@ -2160,7 +2194,7 @@ class Routes:
         return response.json()
 
     def get_automation_runs(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AutomationsRunList:
         """GET /v1/automations/runs — json response."""
         response = self._client._request(
@@ -2169,7 +2203,7 @@ class Routes:
         return response.json()
 
     def get_automation_run(
-        self, run_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, run_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.AutomationsRun:
         """GET /v1/automations/runs/:run-id — json response."""
         response = self._client._request(
@@ -2185,7 +2219,7 @@ class Routes:
         self,
         automation_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.AutomationsAutomation:
         """GET /v1/automations/:automation-id — json response."""
@@ -2202,7 +2236,7 @@ class Routes:
         self,
         automation_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AutomationsAutomation:
@@ -2221,7 +2255,7 @@ class Routes:
         self,
         automation_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.AutomationsDeleted:
         """DELETE /v1/automations/:automation-id — json response."""
@@ -2238,7 +2272,7 @@ class Routes:
         self,
         automation_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.AutomationsRun:
         """POST /v1/automations/:automation-id/run — json response."""
@@ -2255,7 +2289,7 @@ class Routes:
         self,
         automation_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.AutomationsSecretCreated:
@@ -2273,7 +2307,7 @@ class Routes:
     def post_evals_agreement(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsAgreement:
@@ -2291,7 +2325,7 @@ class Routes:
     def post_evals_compare(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsCaseComparison:
@@ -2309,7 +2343,7 @@ class Routes:
     def post_evals_diagnose(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsDiagnosis:
@@ -2327,7 +2361,7 @@ class Routes:
     def post_evals_labels(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsAgreement:
@@ -2340,7 +2374,7 @@ class Routes:
     def post_evals_leaderboard(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsLeaderboard:
@@ -2358,7 +2392,7 @@ class Routes:
     def post_evals_report(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.EvalsBenchReport:
@@ -2369,7 +2403,7 @@ class Routes:
         return response.json()
 
     def get_settings(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Settings:
         """GET /v1/settings — json response."""
         response = self._client._request(
@@ -2380,7 +2414,7 @@ class Routes:
     def post_settings(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.Setting:
@@ -2393,7 +2427,7 @@ class Routes:
     def patch_settings(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.Settings:
@@ -2404,7 +2438,7 @@ class Routes:
         return response.json()
 
     def get_setting(
-        self, id: str, *, query: Query | None = None, timeout: float | None = None
+        self, id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Setting:
         """GET /v1/settings/:id — json response."""
         response = self._client._request(
@@ -2416,7 +2450,7 @@ class Routes:
         self,
         id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SettingPreviewResult:
@@ -2434,7 +2468,7 @@ class Routes:
     def post_extensions_reload(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.ExtensionReload:
@@ -2452,18 +2486,18 @@ class Routes:
     def post_speech(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
-    ) -> _types.VoiceJob:
-        """POST /v1/speech — json response."""
+    ) -> Response | _types.VoiceJob:
+        """POST /v1/speech — audio for a short line or a synthesis job."""
         response = self._client._request(
             "POST", "/v1/speech", path={}, query=query, timeout=timeout, body=body
         )
-        return response.json()
+        return response.json() if response.status == 202 else response
 
     def delete_speech_job(
-        self, job_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, job_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Forgotten:
         """DELETE /v1/speech/jobs/:job-id — json response."""
         response = self._client._request(
@@ -2476,7 +2510,7 @@ class Routes:
         return response.json()
 
     def get_speech_job(
-        self, job_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, job_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceJob:
         """GET /v1/speech/jobs/:job-id — json response."""
         response = self._client._request(
@@ -2489,7 +2523,7 @@ class Routes:
         return response.json()
 
     def get_speech_job_audio(
-        self, job_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, job_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> Response:
         """GET /v1/speech/jobs/:job-id/audio — binary response."""
         response = self._client._request(
@@ -2502,7 +2536,7 @@ class Routes:
         return response
 
     def get_speech_model(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceModel:
         """GET /v1/speech/model — json response."""
         response = self._client._request(
@@ -2511,7 +2545,7 @@ class Routes:
         return response.json()
 
     def post_speech_model(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceModel:
         """POST /v1/speech/model — json response."""
         response = self._client._request(
@@ -2520,7 +2554,7 @@ class Routes:
         return response.json()
 
     def get_speech_voices(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.SpeechVoices:
         """GET /v1/speech/voices — json response."""
         response = self._client._request(
@@ -2531,7 +2565,7 @@ class Routes:
     def post_speech_voices(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         content: bytes | None,
     ) -> _types.SpeechVoice:
@@ -2547,7 +2581,11 @@ class Routes:
         return response.json()
 
     def delete_speech_voice(
-        self, voice_id: str, *, query: Query | None = None, timeout: float | None = None
+        self,
+        voice_id: str,
+        *,
+        query: Query = _EMPTY_QUERY,
+        timeout: float | None = None,
     ) -> _types.Forgotten:
         """DELETE /v1/speech/voices/:voice-id — json response."""
         response = self._client._request(
@@ -2563,7 +2601,7 @@ class Routes:
         self,
         voice_id: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.SpeechVoice:
@@ -2579,7 +2617,11 @@ class Routes:
         return response.json()
 
     def get_speech_voice_sample(
-        self, voice_id: str, *, query: Query | None = None, timeout: float | None = None
+        self,
+        voice_id: str,
+        *,
+        query: Query = _EMPTY_QUERY,
+        timeout: float | None = None,
     ) -> Response:
         """GET /v1/speech/voices/:voice-id/sample — binary response."""
         response = self._client._request(
@@ -2681,7 +2723,7 @@ class Routes:
     def post_voice(
         self,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         content: bytes | None,
     ) -> _types.VoiceJob:
@@ -2692,7 +2734,7 @@ class Routes:
         return response.json()
 
     def delete_voice_job(
-        self, job_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, job_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.Forgotten:
         """DELETE /v1/voice/jobs/:job-id — json response."""
         response = self._client._request(
@@ -2705,7 +2747,7 @@ class Routes:
         return response.json()
 
     def get_voice_live_capabilities(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceLiveCapabilities:
         """GET /v1/voice/live/capabilities — json response."""
         response = self._client._request(
@@ -2717,7 +2759,7 @@ class Routes:
         self,
         sid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
         body: JSONValue = None,
     ) -> _types.VoiceLiveStart:
@@ -2737,7 +2779,7 @@ class Routes:
         sid: str,
         vid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.VoiceLiveSnapshot:
         """GET /v1/sessions/:sid/voice/live/:vid — json response."""
@@ -2755,7 +2797,7 @@ class Routes:
         sid: str,
         vid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> _types.VoiceLiveClosed:
         """DELETE /v1/sessions/:sid/voice/live/:vid — json response."""
@@ -2773,7 +2815,7 @@ class Routes:
         sid: str,
         vid: str,
         *,
-        query: Query | None = None,
+        query: Query = _EMPTY_QUERY,
         timeout: float | None = None,
     ) -> Response:
         """GET /v1/sessions/:sid/voice/live/:vid/media — WebSocket media is not supported by this SDK."""
@@ -2787,7 +2829,7 @@ class Routes:
         return response
 
     def get_voice_job(
-        self, job_id: str, *, query: Query | None = None, timeout: float | None = None
+        self, job_id: str, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceJob:
         """GET /v1/voice/jobs/:job-id — json response."""
         response = self._client._request(
@@ -2800,7 +2842,7 @@ class Routes:
         return response.json()
 
     def get_voice_model(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceModel:
         """GET /v1/voice/model — json response."""
         response = self._client._request(
@@ -2809,7 +2851,7 @@ class Routes:
         return response.json()
 
     def post_voice_model(
-        self, *, query: Query | None = None, timeout: float | None = None
+        self, *, query: Query = _EMPTY_QUERY, timeout: float | None = None
     ) -> _types.VoiceModel:
         """POST /v1/voice/model — json response."""
         response = self._client._request(

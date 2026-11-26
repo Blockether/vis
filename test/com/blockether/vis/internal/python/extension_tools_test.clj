@@ -6,6 +6,9 @@
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
+            [com.blockether.vis.internal.gateway.wiring :as wiring]
+            [com.blockether.vis.internal.gateway.server :as gateway]
+            [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.python.extensions :as pyx]
@@ -128,10 +131,20 @@
     "\n" "    def shell_handle(self) -> dict:\n"
     "        \"Run a command with the session shell tool and drive its handle.\"\n"
     "        sh = vis.tools.shell({\"command\": \"echo handle\"})\n"
-    "        r = sh.result(20)\n" "        slow = vis.tools.shell({\"command\": \"sleep 30\"})\n"
+    "        from concurrent.futures import wait\n"
+    "        assert not wait([sh], timeout=20).not_done\n"
+    "        r = sh.result()\n" "        slow = vis.tools.shell({\"command\": \"sleep 30\"})\n"
     "        stopped = slow.cancel()\n"
     "        return {\"status\": r[\"status\"], \"out\": r[\"out\"], \"logs\": sh.logs()[\"out\"],\n"
     "                \"stopped\": stopped}\n" "\n"
+    "    def shell_replay(self) -> dict:\n"
+    "        \"Run a session shell twice through one Task observation.\"\n"
+    "        from concurrent.futures import wait\n"
+    "        sh = vis.shell('sleep 0.5; echo replay', id='shell-replay')\n"
+    "        attached = vis.shell(id='shell-replay', op='attach')\n"
+    "        assert wait([sh, attached], timeout=5).done == {sh, attached}\n"
+    "        return {'first': sh.result()['out'], 'attached': attached.result()['out']}\n"
+    "\n"
     "    def attach_probe(self) -> dict:\n" "        \"Store an artifact and read it back.\"\n"
     "        row = vis.attach(b\"a,b\\n1,2\\n\", \"totals.csv\", label=\"Totals\")\n"
     "        return {\n"
@@ -250,6 +263,26 @@
                                                         :active-extensions (atom active))]
               (expect (= {"status" "exited" "out" "handle\n" "logs" "handle\n" "stopped" true}
                          (dissoc (call (exts "client") 'client.shell_handle) "op"))))))))
+  (it "settles both shell handles via the embedded session Task replay"
+    (with-tools
+      (fn [exts]
+        (let [store (:db-info extension/*current-environment*)
+              previous @@#'pyx/host-exchange
+              exchange (#'gateway/host-exchange (#'gateway/app nil []))
+              queries (atom [])]
+          (wiring/install!)
+          (pyx/install-host-exchange!
+            (fn [frame extra]
+              (when (.endsWith ^String (get frame "route") "/events-since")
+                (swap! queries conj (get frame "query")))
+              (exchange frame extra)))
+          (try
+            (with-redefs [loop/db-info (constantly store)]
+              (expect (= {"first" "replay\n" "attached" "replay\n"}
+                         (dissoc (call (exts "client") 'client.shell_replay) "op")))
+              (expect (seq @queries))
+              (expect (every? #(re-find #"(?:^|&)tasks=true(?:&|$)" %) @queries)))
+            (finally (pyx/install-host-exchange! previous)))))))
   (it "shows each nested call as its own Activity under the calling tool"
       (with-tools (fn [exts]
                     (let [events (atom [])]

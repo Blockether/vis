@@ -3,6 +3,71 @@
   "$id": "https://vis.blockether.com/schema/view.json",
   "title": "View contract",
   "$defs": {
+    "watch_await_batch_request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "args"],
+      "properties": {
+        "op": {"const": "_task_await_batch"},
+        "args": {
+          "type": "array",
+          "minItems": 1,
+          "items": false,
+          "prefixItems": [
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "items": false,
+                "prefixItems": [
+                  {"type": "string", "minLength": 1},
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["view_id", "read"],
+                    "properties": {
+                      "view_id": {"type": "string", "minLength": 1},
+                      "read": {"const": true}
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "watch_await_batch_reply": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["state"], "properties": {"state": {"const": "running"}}
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["state", "value"],
+            "properties": {
+              "state": {"const": "done"},
+              "value": {
+                "type": "object", "additionalProperties": false, "required": ["readiness"],
+                "properties": {
+                  "readiness": {"enum": ["changed", "event", "closed", "cancelled"]},
+                  "result": {}
+                }
+              }
+            }
+          },
+          {
+            "type": "object", "additionalProperties": false,
+            "required": ["state", "error"],
+            "properties": {"state": {"const": "failed"}, "error": {"type": "string"}}
+          }
+        ]
+      }
+    },
     "operator_action": {
       "oneOf": [
         {

@@ -1529,12 +1529,9 @@
                               "t1")]
         (expect (= :terminal action))
         (expect (= "cancelled" (get event' "status")))))
-  (it "own queued record deleted synthesizes a cancelled terminal (no hang)"
-      (let [[action event'] (client/sse-event-action {"type" "turn.queued.deleted" "turn_id" "t1"}
-                                                     "t1")]
-        (expect (= :terminal action))
-        (expect (= "cancelled" (get event' "status")))
-        (expect (= "turn.completed" (get event' "type")))))
+  (it "ends the wait on deletion without inventing an execution event"
+      (let [event {"type" "turn.queued.deleted" "turn_id" "t1"}]
+        (expect (= [:terminal event] (client/sse-event-action event "t1")))))
   (it "own queued record sent into the running turn synthesizes a sent terminal (no hang)"
       ;; `→ Send now`: the running turn takes the queued message at its next
       ;; step, so the queued turn never starts. The waiter ends with a receipt

@@ -218,20 +218,27 @@ If you rename a Task, keep its handle or look for the new name.
 Use `task.cancel()` to request cancellation. Then await the Task for its result or
 `asyncio.CancelledError`. You can also request cancellation from **Background**.
 
-**Stop** for the active turn interrupts the block and requests cancellation for Tasks it awaits for results.
-It does not cancel Tasks in the background or Tasks it only observes. `/reload`, session
-closure, and worker loss request cancellation for the session's Tasks. Stopping a live view
-can give a normal result instead of cancelling its Task.
+**Stop** for the active turn interrupts the block and requests cancellation for owned Tasks
+that it awaits for results. It does not cancel Tasks in the background or Tasks that it only
+observes. A reload that only changes Python keeps the host Tasks. A policy change that
+retires the worker, session closure, or worker loss can cancel the session's Tasks. Stopping
+a live view can give a normal result instead of cancelling its Task.
 
 `await asyncio.wait(tasks, timeout=seconds)` gives `(done, pending)` without cancelling the
-Tasks. A child question can end the wait early. A direct await of a detachable Task can give you the Task itself
-instead of its result. Answer the open request, then await the same Task. The Task and its
-live views can continue while you answer.
+Tasks. `concurrent.futures.wait(tasks, timeout=seconds)` does the same but blocks the calling
+thread. Include `council.changed()` in the wait to detect an open Council
+request. The readiness Task is done at once if a request is already open. Pass its
+result's cursor as `after` on the next watch.
 
-`await asyncio.wait_for(task, seconds)` requests cancellation if the wait expires. It raises
-`TimeoutError` if the Task ends from that cancellation. If the Task returns a result instead,
-you get that result. If a question releases the wait, you can get the Task back instead. Use
-`wait` to set a time limit without requesting cancellation.
+A direct await of a detachable Task can give you the Task itself instead of its result.
+Answer the open request, then await the same Task. The Task and its live views can continue
+while you answer.
+
+`await asyncio.wait_for(task, seconds)` requests cancellation of a Task that this caller owns
+if the wait expires. It raises `TimeoutError` if the Task ends from that cancellation. If the
+Task returns a result instead, you get that result. For a Task that this caller only observes,
+it raises `TimeoutError` without cancelling the Task. Use `wait` to observe any Task without
+requesting cancellation.
 
 `asyncio.shield(task)` protects the Task from cancellation of the wait, not from direct
 cancellation. `asyncio.create_task(task)` returns the same Task. You can also use host Tasks
@@ -265,8 +272,8 @@ process controls.
 Live reads do not give `timed_out` or `timeout_secs`. Check `sh in pending` to see if the wait
 ended before the process. On Linux, `sh.waiting_for_input` is true if you started the process
 with `stdin="tty"` and a process in its tree is waiting for input from its terminal. On macOS,
-the field is false. A process that runs for at least 30 seconds with no output and less than
-1 percent CPU use can give a `sh.note`.
+the field is false. Vis can give a `sh.note` if the current output is empty. The process tree
+must also use less than one second of CPU time over at least 30 seconds.
 
 ## What the sandbox may do
 

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.gateway.server.council
   "Council and agent-team routes for one session."
-  (:require [com.blockether.vis.internal.gateway.server.http :as http]
+  (:require [com.blockether.vis.internal.session.agents :as agents]
+            [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]))
 
 (defn- agents-handler
@@ -82,6 +83,22 @@
 
              (http/error-response status kind (ex-message e)))))))
 
+(defn- changed-handler [request]
+  (if-let [sid (http/path-sid request)]
+    (if-not (state/session-exists? sid)
+      (http/session-404 sid)
+      (try (let [body (try (http/body-json request) (catch Exception _ nil))]
+             (when-not (and (map? body) (every? #{"after" :after} (keys body)))
+               (agents/fail! :invalid-request "Expected a Council cursor object"))
+             (http/json-response
+               (select-keys (agents/watch-requests! sid (get body "after" (:after body)))
+                            [:id :kind :name :value])))
+           (catch clojure.lang.ExceptionInfo e
+             (if (= :invalid-request (:error (ex-data e)))
+               (http/error-response 400 :invalid-request (ex-message e))
+               (throw e)))))
+    (http/session-404 (get-in request [:path-params :sid]))))
+
 (def handlers
   "Handlers for this namespace's routes, keyed by the gateway contract's `[method path]`."
   {[:post "/v1/sessions/:sid/agents"] (agents-handler :spawn)
@@ -93,6 +110,7 @@
    [:post "/v1/sessions/:sid/agents/run"] (agents-handler :run)
    [:get "/v1/sessions/:sid/agents/:child-id/timeline"] (agents-handler :timeline)
    [:get "/v1/sessions/:sid/council"] (council-handler :binding)
+   [:post "/v1/sessions/:sid/council/changed"] changed-handler
    [:post "/v1/sessions/:sid/council/wake"] (council-handler :wake)
    [:get "/v1/sessions/:sid/council/members"] (council-handler :members)
    [:get "/v1/sessions/:sid/council/threads"] (council-handler :threads)

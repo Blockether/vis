@@ -530,6 +530,7 @@
    "council.members" ["List members" "Listed members" false]
    "council.run" ["Start subagents" "Started subagents" false]
    "council.wait" ["Wait for subagents" "Waited for subagents" true]
+   "council.changed" ["Watch child requests" "Watched child requests" false]
    "council.cancel" ["Cancel subagent" "Cancelled subagent" false]
    "council.resume" ["Resume subagent" "Resumed subagent" true]
    "council.extend" ["Extend subagent budget" "Extended subagent budget" false]

@@ -3,6 +3,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.app :as app]
+            [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.internal.attachment.storage :as attachment-storage]
             [com.blockether.vis.internal.channel.events :as ce]
             [com.blockether.vis.internal.extension.core :as extension]
@@ -4145,6 +4146,39 @@
   (swap! (var-get #'hi/pending) dissoc view-id))
 
 (defdescribe sdk-live-watch-test
+  (it "reads several watches in order and isolates a foreign app in the same batch"
+    (recorded
+      (fn []
+        (let [sid (str (random-uuid))
+              open #(sdk-door! sid % (keyed-app sid))
+              [alice bob] (mapv open ["alice" "bob"])
+              watch (fn [owner view]
+                      (let [id (get view "view_id")]
+                        [(get (sdk-door! sid owner {"op" "watch" "view_id" id
+                                                  "after_seq" (get-in view ["view" "seq"]) "after" 0})
+                              "watch_id")
+                         {"view_id" id "read" true}]))
+              [a1 a2 b] [(watch "alice" alice) (watch "alice" alice) (watch "bob" bob)]
+              batch (fn [owner items]
+                      (let [request {"op" "_task_await_batch" "args" [items]}
+                            reply (sdk-door! sid owner request)]
+                        (expect (document/valid-json? "gateway" "app_door_request"
+                                                      {"owner" owner "envelope" request}))
+                        (expect (document/valid-json? "gateway" "app_door_answer" reply))
+                        reply))]
+          (try
+            (expect (= [{"state" "running"} {"state" "running"}]
+                       (batch "alice" [a1 a2])))
+            (doseq [[owner view] [["alice" alice] ["bob" bob]]]
+              (sdk-door! sid owner {"op" "patch" "view_id" (get view "view_id")
+                                    "patch" {"ops" [{"op" "set" "node_id" "go" "label" "New"}]}}))
+            (let [[first-read refused second-read] (batch "alice" [a1 b a2])
+                  changed {"state" "done" "value" {"readiness" "changed"}}]
+              (expect (= changed first-read second-read))
+              (expect (= "failed" (get refused "state")))
+              (expect (not (contains? refused "value")))
+              (expect (= [changed] (batch "bob" [b]))))
+            (finally (doseq [view [alice bob]] (hi/close-live! (get view "view_id")))))))))
   (it "observes state and public events, cancels, and does not follow a restarted app"
     (recorded
       (fn []

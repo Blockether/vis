@@ -822,6 +822,95 @@
 ;; text}` for a file request. They stay in memory: the asking child blocks in this process, so a
 ;; restart ends the question with its turn.
 (defonce ^:private questions (atom {}))
+(defonce ^:private request-watchers (atom {}))
+(defonce ^:private request-sequence (volatile! 0))
+(defonce ^:private request-epoch (task/call-id))
+
+(defn- request-batch [owner ^long after]
+  (when-let [rows (seq (sort-by (comp :sequence val)
+                              (filter (fn [[_ row]]
+                                        (and (= owner (:recipient row)) (> (long (:sequence row)) after)))
+                                      @questions)))]
+    {:cursor (str request-epoch ":" owner ":" (:sequence (val (last rows))))
+     :requests (mapv (fn [[child row]] {:session_id child :entry_id (:entry_id row)}) rows)}))
+
+(defn- request-position [owner after]
+  (if (nil? after)
+    0
+    (let [[epoch recipient sequence :as parts] (when (string? after) (str/split after #":" -1))
+          position (some-> sequence parse-long)]
+      (when-not (and (= 3 (count parts)) (= owner recipient) (some? (parse-uuid epoch))
+                     (some? position) (<= 0 (long position)))
+        (fail! :invalid-request "after must be a cursor from council.changed for this session"))
+      (if (= request-epoch epoch) position 0))))
+
+(defn- remove-watches [watchers owner ids]
+  (let [remaining (apply dissoc (get watchers owner) ids)]
+    (if (seq remaining)
+      (assoc watchers owner remaining)
+      (dissoc watchers owner))))
+
+(defn watch-requests!
+  "Observe committed child requests newer than `after`, or all open requests when it is nil."
+  [owner after]
+  (let [owner (str owner)
+        after (request-position owner after)
+        watch (task/call-id)
+        handoff (atom nil)
+        finish (fn [complete! outcome] (complete! (constantly outcome)))
+        {:keys [row complete!]}
+        (task/start-manual! owner {:name "council.changed()" :origin host/*task-origin*
+                                  :guest-data {:readiness :council :cancel-on-await false}
+                                  :public-name "council.changed"
+                                  :detachable? false :external-settlement? true}
+                            (fn [_]
+                              (when-let [complete!
+                                         (locking questions
+                                           (swap! request-watchers remove-watches owner [watch])
+                                           (first (reset-vals! handoff :stopped)))]
+                                (when (fn? complete!) (finish complete! {:state :cancelled})))))
+        decision (locking questions
+                   (if (= :stopped @handoff)
+                     :stopped
+                     (do (reset! handoff complete!)
+                         (or (request-batch owner after)
+                             (do (swap! request-watchers assoc-in [owner watch]
+                                        [after #(finish complete! {:state :done :value %})]) nil)))))]
+    (cond
+      (= :stopped decision) (finish complete! {:state :cancelled})
+      decision (finish complete! {:state :done :value decision}))
+    (cond-> (task/guest-task owner (:id row))
+      (map? decision) (assoc :value decision))))
+
+(defn- install-request! [owner child request]
+  (let [ready (locking questions
+                (swap! questions assoc child (assoc request :recipient owner :sequence (vswap! request-sequence #(inc (long %)))))
+                (let [ready (into [] (keep (fn [[id [after complete]]]
+                                             (when-let [batch (request-batch owner after)]
+                                               [id complete batch])))
+                                  (get @request-watchers owner))]
+                  (when (seq ready)
+                    (swap! request-watchers remove-watches owner (map first ready)))
+                  ready))]
+    (doseq [[_ complete batch] ready] (complete batch))))
+
+(defn- remove-request! [child entry-id]
+  (locking questions
+    (when (= entry-id (get-in @questions [child :entry_id]))
+      (swap! questions dissoc child))))
+
+(defn changed
+  "Return a Task that ends when a child asks a question or requests budget or files.
+   The result has `cursor` and `requests`. Each request has `session_id` and `entry_id`.
+   Omit `after` to read all open requests. Use the last cursor to wait for new requests.
+   A request that is open when you start the watch can settle the Task at once.
+   Cancelling the watch does not cancel the child."
+  ([env] (changed env {}))
+  ([env opts]
+   (when-let [extra (seq (dissoc opts "after" :after))]
+     (fail! :invalid-request (str "Unknown option: " (ffirst extra))))
+   (result :council.changed
+           {:__vis_host_task__ (watch-requests! (:session-id env) (get opts "after" (:after opts)))})))
 
 (defn- request-changed
   "Watch of `questions`: tell the runtime about each child whose open request opened, changed or
@@ -1418,7 +1507,7 @@
             entry-id
             (:entry_id entry)]
 
-        (swap! questions assoc sid (merge {:question question :entry_id entry-id} request))
+        (install-request! parent sid (merge {:question question :entry_id entry-id} request))
         (task/detach-awaits! parent (merge {:session-id sid :question question}
                                            (select-keys me [:id :title])))
         ;; A reply in this process signals the thread, and a cancel of this child signals its team.
@@ -1438,9 +1527,7 @@
                              (>= (util/now-ms) deadline))
                          nil
                          :else (do (park! ks gens signal-tick-ms deadline) (recur))))))
-             (finally (swap! questions #(if (= entry-id (get-in % [sid :entry_id]))
-                                          (dissoc % sid)
-                                          %))))))))
+             (finally (remove-request! sid entry-id)))))))
 
 (defn ask
   "As a subagent, ask your parent for a decision and wait for the reply text. If only the person
@@ -1555,7 +1642,7 @@
   (let [{:keys [entry_id] :as question} (get @questions sid)]
     (when (get question kind)
       ((runtime-fn :publish) env {:content text :reply_to entry_id})
-      (swap! questions #(if (= entry_id (get-in % [sid :entry_id])) (dissoc % sid) %))
+      (remove-request! sid entry_id)
       true)))
 
 (defn- current-record
@@ -1642,7 +1729,7 @@
 
     (when-not entry_id (fail! :invalid-request "That subagent has no open question"))
     ((runtime-fn :publish) env {:content text :reply_to entry_id})
-    (swap! questions #(if (= entry_id (get-in % [session_id :entry_id])) (dissoc % session_id) %))
+    (remove-request! session_id entry_id)
     (current-record env session_id)))
 
 (defn- overlaps?
@@ -1954,11 +2041,11 @@
                                  :inject-env? true
                                  :active-fn (fn [env]
                                               (enabled? (:db-info env) (:session-id env)))
-                                 :tag :mutation
-                                 :activity (presenter/for-tool (keyword (str sym)))
+                                 :tag (if (= sym 'council.changed) :observation :mutation)
                                  :call call
                                  :description (:doc (meta v))
-                                 :result result-doc}
+                                 :result result-doc
+                                 :activity (presenter/for-tool (keyword (str sym)))}
                           (seq params)
                           (assoc :params
                             (mapv (fn [p]
@@ -1968,6 +2055,8 @@
       [records
        "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
       [[#'run 'council.run {:pos ["tasks"]} [] "An ordered list of SubagentTask handles."]
+        [#'changed 'council.changed {:pos [] :rest :always} ["after"]
+         "A Task for the next batch of open child requests."]
        [#'extend-agent 'council.extend {:pos ["session_id" "iterations"]} [] records]
        [#'deny-agent 'council.deny {:pos ["session_id" "reason"]} [] records]
        [#'grant-files 'council.grant {:pos ["session_id" "files"]} [] records]

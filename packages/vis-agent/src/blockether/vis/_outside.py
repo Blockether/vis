@@ -1169,6 +1169,11 @@ def _shell_descriptor(run, snapshot):
 
 def shell_task(run, op, opts):
     """Drive the exact local process that this capability identifies."""
+    if op == "_task_await_batch":
+        return [
+            run.outcome(0) if isinstance(run, _Run) else {"state": "missing"}
+            for run, _ in opts
+        ]
     if not isinstance(run, _Run):
         raise Refused("This extension does not own that shell Task.")
     if op == "await":
@@ -1595,7 +1600,14 @@ def _check_request(request):
 # extension polling its own view reads the truth either side of the boundary.
 _LIVE_REASONS = _contracts.definition("view", "settlement_reason")["enum"]
 _LIVE_HANDLE_OPS = (
-    "patch", "state", "events", "validations", "close", "watch", "watch-result", "unwatch"
+    "patch",
+    "state",
+    "events",
+    "validations",
+    "close",
+    "watch",
+    "watch-result",
+    "unwatch",
 )
 _LIVE_VIEWS = {}
 
@@ -1799,6 +1811,21 @@ def _live_verdict(held, ending):
     return verdict
 
 
+def _held_live(view_id):
+    held = _LIVE_VIEWS.get(view_id)
+    if held is None:
+        raise Refused(
+            f"no live view {view_id} is open — it was closed, interrupted, or never opened"
+        )
+    return held
+
+
+def _read_live_watch(request):
+    held = _held_live(request["view_id"])
+    with held["condition"]:
+        return held["watches"].call(request)
+
+
 def live(envelope_json, listener=None):
     """`vis.live` with no pane: stderr is the surface, and the record with it.
 
@@ -1808,6 +1835,10 @@ def live(envelope_json, listener=None):
     if not isinstance(envelope, dict):
         raise Refused("a live envelope must be a JSON object")
     op = str(envelope.get("op") or "open")
+    if op == "_task_await_batch":
+        from blockether.vis.extension import _view_watch_batch
+
+        return json.dumps(_view_watch_batch(envelope, _read_live_watch))
     if op == "open":
         view = envelope.get("view")
         kept = _live_checked(view)
@@ -1823,7 +1854,9 @@ def live(envelope_json, listener=None):
             return None
 
         held["condition"] = threading.Condition()
-        held["watches"] = _LocalLiveWatches(held["condition"], readiness, lambda: held.get("result"))
+        held["watches"] = _LocalLiveWatches(
+            held["condition"], readiness, lambda: held.get("result")
+        )
         held["view"]["seq"] = 0
         held["view"]["id"] = view_id
         _LIVE_VIEWS[view_id] = held
@@ -1835,11 +1868,7 @@ def live(envelope_json, listener=None):
         ops = ", ".join(("open", *_LIVE_HANDLE_OPS))
         raise Refused(f"a live op is one of {ops}, got {op!r}")
     view_id = str(envelope.get("view_id") or "")
-    held = _LIVE_VIEWS.get(view_id)
-    if held is None:
-        raise Refused(
-            f"no live view {view_id} is open — it was closed, interrupted, or never opened"
-        )
+    held = _held_live(view_id)
     with held["condition"]:
         if op in {"watch", "watch-result", "unwatch"}:
             return json.dumps(held["watches"].call(envelope))
@@ -1865,7 +1894,13 @@ def _live_handle(held, envelope, op, view_id):
         # Outside Vis nobody can act on the view, so no event ever arrives.
         after = envelope.get("after", 0)
         return json.dumps(
-            {"view_id": view_id, "is_open": True, "cursor": after, "seq": held["seq"], "events": []}
+            {
+                "view_id": view_id,
+                "is_open": True,
+                "cursor": after,
+                "seq": held["seq"],
+                "events": [],
+            }
         )
     if op == "patch":
         refusal = _contracts.live_patch_refusal(

@@ -98,6 +98,31 @@ print(b in asyncio.all_tasks())")]
                 (expect (= "2\nFalse\n" (:stdout last-block)) (pr-str last-block)))
               (finally (deliver finish true) (deliver cancel :interrupt))))))))
 
+(defdescribe worker-host-task-concurrent-wait-test
+  (it "observes the original host Tasks without cancelling pending work"
+      (with-worker-context
+        (fn [session]
+          (let [finish (promise)]
+            (env/set-python-bindings!
+              session [{:sym 'task-watch :task? true :val (fn [] @finish)}])
+            (try
+              (let [pending (env/run-python-block session
+                              "import concurrent.futures as cf
+from concurrent.futures import wait
+watch = task_watch()
+assert wait([watch, watch], timeout=0) == (set(), {watch})
+assert not watch.cancelled()
+print('pending')")]
+                (expect (= "pending\n" (:stdout pending)) (pr-str pending)))
+              (deliver finish "finished")
+              (let [settled (env/run-python-block session
+                              "local = cf.Future()
+local.set_result(None)
+assert cf.wait([local, watch], timeout=5) == ({local, watch}, set())
+print(watch.result())")]
+                (expect (= "finished\n" (:stdout settled)) (pr-str settled)))
+              (finally (deliver finish "finished"))))))))
+
 (defdescribe worker-shell-task-test
   (it "recovers a process Task after its start handle is dropped"
       (with-worker-context
@@ -226,6 +251,33 @@ print(subject.result(), await subject)
 assert subject not in asyncio.all_tasks()")]
                    (expect (= "42 42\n" (:stdout answer)) (pr-str answer)))
                  (finally (deliver finish 0))))))))
+
+(defdescribe worker-task-result-transfer-test
+  (it "observes a large result without copying it until result is read"
+      (with-worker-context
+        (fn [session]
+          (let [dispatch python-host/dispatch
+                sizes (atom [])]
+            (env/set-python-bindings! session [{:sym 'task-large :task? true
+                                                :val #(str/join (repeat 1048576 "x"))}])
+            (with-redefs [python-host/dispatch
+                          (fn [& args]
+                            (let [reply (apply dispatch args)
+                                  tool (nth args (- (count args) 2))]
+                              (when (#{"_task_await" "_task_await_batch" "_task_ack"} tool)
+                                (swap! sizes conj [tool (count reply)]))
+                              reply))]
+              (let [answer (env/run-python-block session
+                             "import asyncio
+large = task_large()
+done, pending = await asyncio.wait([large], timeout=5)
+assert (done, pending) == ({large}, set())
+print(len(large.result()), len(large.result()))")]
+                (expect (= "1048576 1048576\n" (:stdout answer)) (pr-str answer))
+                (expect (= {"_task_await" 1 "_task_ack" 1}
+                           (frequencies (map first (remove #(= "_task_await_batch" (first %)) @sizes)))))
+                (expect (some #(= "_task_await_batch" (first %)) @sizes))
+                (expect (= ["_task_await"] (mapv first (filter #(< 1048576 (second %)) @sizes)))))))))))
 
 (defdescribe worker-to-thread-test
   (it "keeps the Task returned by a plain function"
@@ -458,6 +510,29 @@ print(worker_value)"))))
                          (expect (= fresh (loop/send! id "after reload")))
                          (expect (= 1 @builds))
                          (expect (identical? (:lock entry) (:lock (get @loop-env/cache id)))))))))))
+
+(defdescribe reload-preserves-host-tasks-test
+  (it "keeps a running host Task on an unchanged policy reload"
+      (with-worker-context
+        (fn [session]
+          (let [finish (promise)
+                owner (python-host/task-session session)
+                handle (task/start! owner {:name "watch"} (fn [] {:state :done :value @finish}))
+                hook (get @@#'extension/reload-hooks
+                          :com.blockether.vis.internal.loop.environment/security-policy-reload)
+                entry (#'loop-env/new-cache-entry {:session-id owner :python-context session})]
+            (try
+              (with-redefs [loop-env/cache (atom {owner entry})
+                            python-exec/policy-reload-epoch (atom 0)
+                            loop-env/policy-unchanged? (constantly true)]
+                (dotimes [_ 2] (hook))
+                (expect (= :running (:state (:task (task/status owner (:id handle))))))
+                (expect (worker/worker-live? session)))
+              (deliver finish :done)
+              (expect (= {:state :done :value :done}
+                         (select-keys (task/await! owner (:id handle) {:timeout-ms 3000})
+                                      [:state :value])))
+              (finally (deliver finish :done))))))))
 
 (defdescribe worker-task-death-test
   (it "sweeps the session Tasks when a worker dies"

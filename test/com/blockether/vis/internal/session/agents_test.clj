@@ -8,6 +8,8 @@
             [com.blockether.vis.internal.task :as task]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.shell-test :as shell-fixture]
+            [com.blockether.vis.internal.python.env :as python-env]
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.util :as util]
@@ -424,7 +426,78 @@
     (let [r (snapshot env child)]
       (if (or (= "asking" (get r "status")) (> n 50)) r (do (Thread/sleep 100) (recur (inc n)))))))
 
-;; Issue #388: a child had 64 iterations, no warning and a hard stop without a handoff. A
+(defdescribe council-readiness-test
+  (it "wakes only on committed requests, with a cursor over each recipient's children"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            first-child (child! db leader {:iteration_budget 4})
+            second-child (child! db leader {:files {:write ["/w/a/**"]}})
+            owner {:db-info db :session-id leader}
+            child #(assoc owner :session-id %)
+            wait-for (fn [watch] (task/await! leader (:id watch) {:timeout-ms 2000}))
+            published (promise)
+            finish-publish (promise)]
+        (with-fake-runtime db (atom #{leader})
+          (fn [entries]
+            (let [original (:publish @@#'agents/runtime)]
+              (swap! @#'agents/runtime assoc :publish
+                     (fn [env opts]
+                       (let [entry (original env opts)]
+                         (when (= "Which parser?" (:content opts))
+                           (deliver published (:entry_id entry))
+                           @finish-publish)
+                         entry)))
+              (with-redefs [ps/db-council-get (fn [_ id] (get @entries id))]
+                (let [watch (agents/watch-requests! leader nil)
+                      asking (future (outcome #(agents/ask (child first-child) "Which parser?" {:timeout_secs 12})))]
+                  (try
+                    (let [entry-id (deref published 2000 nil)]
+                      (expect (some? entry-id))
+                      (expect (= :running (:state (task/state leader (:id watch)))))
+                      (expect (nil? (agents/open-request first-child)))
+                      (deliver finish-publish true)
+                      (let [first-batch (:value (wait-for watch))
+                            after (:cursor first-batch)
+                            next-watch (agents/watch-requests! leader after)
+                            files (future (outcome #(agents/ask-files (child second-child) {"write" ["/w/b/**"]} "For docs" {:timeout_secs 12})))]
+                        (expect (= [{:session_id first-child :entry_id entry-id}] (:requests first-batch)))
+                        (try
+                          (let [file-batch (:value (wait-for next-watch))
+                                both (:value (wait-for (agents/watch-requests! leader nil)))
+                                later (agents/watch-requests! leader (:cursor both))]
+                            (expect (= [second-child] (mapv :session_id (:requests file-batch))))
+                            (expect (= [first-child second-child] (mapv :session_id (:requests both))))
+                            (expect (= :running (:state (task/state leader (:id later)))))
+                            (expect (task/cancel! leader (:id later) :person))
+                            (expect (= :cancelled (:state (wait-for later))))
+                            (foundation/register!)
+                            (let [ctx (#'shell-fixture/py-ctx owner)]
+                              (try
+                                (let [answer (binding [extension/*current-environment* owner]
+                                               (python-env/run-python-block ctx
+                                                 (str "import asyncio\nwatch = council.changed()\n"
+                                                      "assert isinstance(watch, asyncio.Task)\n"
+                                                      "assert watch.done()\n"
+                                                      "assert (await watch)['requests'][0]['session_id'] == " (pr-str first-child) "\n"
+                                                      "assert (await council.changed()) == watch.result()\n"
+                                                      "print('ready')")))]
+                                  (expect (= "ready\n" (:stdout answer)) (pr-str answer)))
+                                (finally (python-env/dispose-python-context! ctx))))
+                            (expect (= "For docs" (get-in (agents/open-request second-child) [:files :reason])))
+                            (outcome #(agents/operation! owner :answer {:session_id first-child :text "Use Clojure"}))
+                            (expect (= "Use Clojure" (deref asking 3000 ::timeout)))
+                            (let [budget-watch (agents/watch-requests! leader (:cursor both))
+                                  budget (future (outcome #(agents/ask-budget (child first-child) 2 "More tests" {:timeout_secs 12})))]
+                              (try
+                                (expect (= [first-child] (mapv :session_id (get-in (wait-for budget-watch) [:value :requests]))))
+                                (expect (= 2 (get-in (agents/open-request first-child) [:budget :iterations])))
+                                (finally (outcome #(agents/deny-agent owner first-child "No more work"))
+                                         (future-cancel budget)))))
+                          (finally (outcome #(agents/deny-agent owner second-child "No grant"))
+                                   (future-cancel files)))))
+                    (finally (deliver finish-publish true) (future-cancel asking)))))))))))
+
+;; Issue #388 a child had 64 iterations, no warning and a hard stop without a handoff. A
 ;; parent could not add iterations, so the only option was a new child without the context.
 (defdescribe
   subagent-budget-test
@@ -571,7 +644,15 @@
                                                              10
                                                              "The suite has 40 files"
                                                              {:timeout_secs 10})))
-                  r (asking-record env child)]
+                  r (asking-record env child)
+                  changed (ns-resolve 'com.blockether.vis.internal.session.agents 'watch-requests!)]
+              (expect (some? changed))
+              (when changed
+                (let [ready (changed leader nil)
+                      answer (task/await! leader (:id ready) {:timeout-ms 500})]
+                  (expect (= :done (:state answer)))
+                  (expect (= [{:session_id child :entry_id (get r "question_entry_id")}]
+                             (get-in answer [:value :requests])))))
 
               (expect (= {"iterations" 10 "reason" "The suite has 40 files"}
                          (get r "budget_request")))
@@ -1917,10 +1998,13 @@
             env {:db-info db :session-id leader}
             child (child! db leader {:status "running"})
             id (:id (agents/register-task! env (agents/info db child) (fn [_]) nil))
-            wait {:block "b" :token "wait"}]
+            wait {:block "b" :token "wait"}
+            observation {:block "b" :token "observe" :observation? true}]
         (expect (= :running (:state (task/await! leader id wait))))
+        (expect (= :running (:state (task/await! leader id observation))))
         (task/detach-awaits! leader :council)
         (expect (= :detached (:state (task/await! leader id wait))))
+        (expect (= :running (:state (task/await! leader id observation))))
         (expect (= :running (:state (task/await! leader id (assoc wait :token "again")))))))
   (it "detaches an await that starts after the child asks"
       (let [db (h/store)
@@ -1934,6 +2018,7 @@
                                             "Which parser?" {:timeout_secs 10}))]
               (try (expect (= "asking" (get (asking-record env child) "status")))
                    (expect (= :detached (:state (task/await! leader id {:block "b" :token "wait"}))))
+                   (expect (= :running (:state (task/await! leader id {:block "b" :token "observe" :observation? true}))))
                    (expect (= ["Which parser?"]
                               (mapv #(get-in % [:reason :question])
                                     (task/take-detach-notices! leader "b"))))

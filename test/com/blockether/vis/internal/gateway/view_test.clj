@@ -891,8 +891,8 @@
       (try (expect (await-true #(some? (gw-hi/input-view-of sid rid))))
            ;; the app is refused the escape hatch the TUI dialog also denies
            (let [response (view-action-response sid rid {:action "cancel"})]
-             (expect (= 409 (:status response)))
-             (expect (= "view-action-refused" (get-in (json-body response) ["error" "type"])))
+             (expect (= 200 (:status response)))
+             (expect (= "not_cancellable" (get (json-body response) "reason")))
              (expect (false? (:is-cancellable (gw-hi/input-view-of sid rid))))
              (expect (some? (gw-hi/input-view-of sid rid))))
            ;; answering it is still the way out
@@ -2844,7 +2844,7 @@
               stale
               (draft "three" {"base_seq" seen})]
 
-          (expect (= 409 (:status stale)))
+          (expect (= 200 (:status stale)))
           (expect (= "conflict" (get (json-body stale) "reason")))
           (expect (= "two" (get (app-node (app-view sid view-id) "general") "draft")))
           (app-op! {"op" "patch"
@@ -2859,7 +2859,7 @@
                                            "anchor" app-line
                                            "body" "x"
                                            "revision" "def5678"})]
-            (expect (= 409 (:status old)))
+            (expect (= 200 (:status old)))
             (expect (= "stale_revision" (get (json-body old) "reason"))))))))
   (it "hides an app from another session"
       (recorded (fn []
@@ -2899,7 +2899,7 @@
             (let [late (view-action-response sid
                                              closed
                                              {"action" "draft" "node_id" "general" "body" "late"})]
-              (expect (= 409 (:status late)))
+              (expect (= 200 (:status late)))
               (expect (= "closed" (get (json-body late) "reason"))))
             (forget-app! closed)
             (expect (true? (get-in (json-body (app-view sid closed)) ["view" "is_closed"])))

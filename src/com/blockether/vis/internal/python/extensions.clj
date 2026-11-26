@@ -110,24 +110,6 @@
     (throw (ex-info (str "python source missing from the classpath: " path)
                     {:type ::missing-python-source :path path}))))
 
-(def ^:no-doc bootstrap-python
-  "The `blockether.vis.extension` module bootstrap. Executed in each extension session BEFORE the
-   extension file: it builds a real `blockether.vis.extension` module (registered in `sys.modules`, so
-   `import blockether.vis.extension as vis` works) whose functions live in the module's own namespace, while
-   the extension file's globals stay clean. Host callbacks (`__vis_host_*`,
-   installed as session globals before this runs) are handed in through the
-   module dict.
-
-   TWO real `.py` files, assembled here and nowhere else. The BODY is the
-   distributable package `packages/vis-agent/src/blockether/vis/extension.py` — the very file
-   PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
-   the sandbox runs — handed to the injector as the `_vis_body` literal, because
-   `exec` into a module dict is the one thing that keeps the API off the
-   extension's globals. The INJECTOR is `vis-host-python/extension_bootstrap.py`,
-   which also seals this session's Python callables so the host can hold them."
-  (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/extension.py"))
-       "\n" (classpath-src "vis-host-python/extension_bootstrap.py")))
-
 (def ^:private stale-sdk-modules-python
   "Drop shared packages that still hold the SDK module of an older context.
 
@@ -1227,12 +1209,15 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
         admit-shell
         (fn [value origin]
-          (when-let [row (get value "__vis_shell_task__")]
-            (when-let [token (get row "token")]
+          (if-let [token (get-in value ["__vis_shell_task__" "token"])]
+            (let [row (get value "__vis_shell_task__")
+                  sid (call-session bound-session)]
               (swap! shell-capabilities assoc token
-                     {:session (shell-session) :task-id (get row "id") :token token
-                      :origin origin :id (get-in row ["snapshot" "id"])})))
-          value)
+                     {:session (or sid sess) :task-id (get row "id") :token token
+                      :origin origin :id (get-in row ["snapshot" "id"])})
+              (cond-> value
+                (and sid @host-exchange) (assoc-in ["__vis_shell_task__" "session_id"] sid)))
+            value))
 
         ;; #326: a project extension's setting is known only where its project runs.
         setting-root
@@ -1454,9 +1439,16 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
     (put! g
           "__vis_host_shell_task__"
           (fn [token op opts]
-            (if-let [capability (get @shell-capabilities token)]
-              (shell/sdk-task-op capability op opts)
-              (throw (ex-info "This extension does not own that shell Task." {:op op})))))
+            (if (= "_task_await_batch" op)
+              (let [capabilities @shell-capabilities]
+                (mapv (fn [[id _]]
+                        (if-let [capability (get capabilities id)]
+                          (shell/sdk-task-op capability "await" {"timeout_ms" 0})
+                          {"state" "missing"}))
+                      opts))
+              (if-let [capability (get @shell-capabilities token)]
+                (shell/sdk-task-op capability op opts)
+                (throw (ex-info "This extension does not own that shell Task." {:op op}))))))
     (put! g
           "__vis_host_request_input__"
           ;; Typed input View pause: one JSON request object in, one JSON
@@ -1632,6 +1624,25 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
   "Names from the actual host bindings, without invoking a host operation."
   []
   (sort (keys (host-doors nil nil nil))))
+
+(def ^:no-doc bootstrap-python
+  "The `blockether.vis.extension` module bootstrap. Executed in each extension session BEFORE the
+   extension file: it builds a real `blockether.vis.extension` module (registered in `sys.modules`, so
+   `import blockether.vis.extension as vis` works) whose functions live in the module's own namespace, while
+   the extension file's globals stay clean. Host callbacks (`__vis_host_*`,
+   installed as session globals before this runs) are handed in through the
+   module dict.
+
+   TWO real `.py` files, assembled here and nowhere else. The BODY is the
+   distributable package `packages/vis-agent/src/blockether/vis/extension.py` — the very file
+   PyPI ships as `vis-agent`, so an author reads, lints and unit-tests the code
+   the sandbox runs — handed to the injector as the `_vis_body` literal, because
+   `exec` into a module dict is the one thing that keeps the API off the
+   extension's globals. The INJECTOR is `vis-host-python/extension_bootstrap.py`,
+   which also seals this session's Python callables so the host can hold them."
+  (str "_vis_body = " (python-string-literal (classpath-src "blockether/vis/extension.py"))
+        "\n_vis_door_names = " (json/write-json-str (vec (host-member-names)))
+       "\n" (classpath-src "vis-host-python/extension_bootstrap.py")))
 
 (defn ^:no-doc bind-inert-host!
   "Install every host member as a REFUSAL, so the `blockether.vis.extension` module can be BUILT without

@@ -63,8 +63,6 @@
         (expect (= (mapv second (re-seq #"\{([^}]+)\}" path))
                    (mapv #(get % "name") (get item "parameters" []))))))
   (it "turns each declared transport into its media type"
-      (expect (= {"application/json" {"schema" {}}}
-                 (get-in @encoded ["paths" "/v1/sessions" "post" "requestBody" "content"])))
       (expect (= {"application/octet-stream" {"schema" {"type" "string" "format" "binary"}}}
                  (get-in @encoded
                          ["paths" "/v1/sessions/{sid}/attachments" "post" "requestBody"
@@ -80,7 +78,7 @@
                  (set (keys (get-in @encoded
                                     ["paths" "/metrics" "get" "responses" "200" "content"])))))
       ;; An empty response answers 204 and carries no content at all.
-      (expect (= #{"204" "4XX" "5XX" "default"}
+      (expect (= #{"204" "426" "4XX" "5XX" "default"}
                  (set (keys (get-in @encoded
                                     ["paths" "/v1/sessions/{sid}/release" "post" "responses"])))))
       (expect (every? (fn [[_ _ operation]]
@@ -106,6 +104,61 @@
                                ["components" "schemas"
                                 (str/replace (get schema "$ref" "") "#/components/schemas/" "")]))
                 (str method " " path))))
+  (it "documents the create-session status and the event cursor"
+      (let [create (get-in @encoded ["paths" "/v1/sessions" "post"])
+            events (get-in @encoded ["paths" "/v1/sessions/{sid}/events-since" "get"])]
+        (expect (= {"$ref" "#/components/schemas/session_create_request"}
+                   (get-in create ["requestBody" "content" "application/json" "schema"])))
+        (expect (false? (get-in create ["requestBody" "required"])))
+        (expect (contains? (get create "responses") "201"))
+        (expect (not (contains? (get create "responses") "200")))
+        (expect (some #(= ["cursor" "query" "integer"]
+                          [(get % "name") (get % "in") (get-in % ["schema" "type"])])
+                      (get events "parameters")))))
+  (it "describes required upload metadata and bodyless ungrouping"
+      (let [upload (get-in @encoded ["paths" "/v1/sessions/{sid}/attachments" "post"])
+            group (get-in @encoded ["paths" "/v1/sessions/{sid}/group" "put"])]
+        (expect (= #{"filename" "media_type"}
+                   (into #{} (keep #(when (get % "required") (get % "name")))
+                         (get upload "parameters"))))
+        (expect (false? (get-in group ["requestBody" "required"])))))
+  (it "describes the authentication and protocol alternatives of media links"
+      (doseq [[path security] [["/v1/sessions/{sid}/fs/file/content" [{"content_ticket" []}]]
+                               ["/v1/sessions/{sid}/iterations/{iid}/attachments/{idx}"
+                                [{"bearer" []} {"gateway_secret" []} {"content_ticket" []}]]]]
+        (let [operation (get-in @encoded ["paths" path "get"])]
+          (expect (= security (get operation "security")))
+          (expect (contains? (get operation "responses") "426"))))
+      (expect (nil? (get-in @encoded ["paths" "/readyz" "get" "security"])))
+      (expect (= [] (get-in @encoded ["paths" "/v1/web/brand" "get" "security"])))
+      (expect (nil? (get-in @encoded ["paths" "/v1/web/brand" "put" "security"]))))
+  (it "validates reset credit bodies by the account and idempotency key limits"
+      (let [schema (skjema/compile-schema (get-in @encoded ["components" "schemas" "provider_reset"]))
+            body {"account_id" (apply str (repeat 512 "a"))
+                  "idempotency_key" (apply str (repeat 128 "x"))}]
+        (expect (nil? (skjema/explain schema body)))
+        (expect (nil? (skjema/explain schema
+                                     (assoc body "idempotency_key" (apply str (repeat 128 "𐀀"))))))
+        (doseq [invalid [(assoc body "account_id" "")
+                         (assoc body "account_id" "\u2003")
+                         (assoc body "account_id" (str "a" (get body "account_id")))
+                         (assoc body "idempotency_key" " \t")
+                         (assoc body "idempotency_key" (str "x" (get body "idempotency_key")))]]
+          (expect (some? (skjema/explain schema invalid))))))
+  (it "gives each JSON request a schema reference"
+      (doseq [[path method operation] (operations @encoded)
+              :let [json (get-in operation ["requestBody" "content" "application/json"])]
+              :when json]
+        (expect (str/starts-with? (get-in json ["schema" "$ref"] "") "#/components/schemas/")
+                (str method " " path))))
+  (it "resolves every schema reference in the served document without a network"
+      (doseq [[_ ref] (filter #(and (map-entry? %) (= "$ref" (key %)))
+                              (tree-seq coll? seq @encoded))]
+        (expect (str/starts-with? ref "#/") ref)
+        (expect (some? (get-in @encoded
+                               (map #(-> % (str/replace "~1" "/") (str/replace "~0" "~"))
+                                    (str/split (subs ref 2) #"/"))))
+                ref)))
   (it "is a valid OpenAPI 3.1 document"
       ;; The official OpenAPI 3.1 schema (2022-10-07), kept next to this test.
       (let [meta-schema (skjema/compile-schema
@@ -145,12 +198,14 @@
 (defdescribe
   session-goal-schema-test
   (it "exposes the canonical goal on detail, creation, mutation and list responses"
-      (doseq [[path method shape]
-              [["/v1/sessions/{sid}" "get" "session"] ["/v1/sessions/{sid}" "patch" "session"]
-               ["/v1/sessions" "post" "session_created"] ["/v1/sessions" "get" "session_list"]]]
+      (doseq [[path method status shape]
+              [["/v1/sessions/{sid}" "get" "200" "session"]
+               ["/v1/sessions/{sid}" "patch" "200" "session"]
+               ["/v1/sessions" "post" "201" "session_created"]
+               ["/v1/sessions" "get" "200" "session_list"]]]
         (expect (= {"$ref" (str "#/components/schemas/" shape)}
                    (get-in @encoded
-                           ["paths" path method "responses" "200" "content" "application/json"
+                           ["paths" path method "responses" status "content" "application/json"
                             "schema"]))))
       (doseq [shape ["session" "session_created"]]
         (expect (every? (set (get-in @encoded ["components" "schemas" shape "required"]))

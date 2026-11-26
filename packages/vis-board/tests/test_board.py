@@ -1,12 +1,15 @@
 """Check the saved board and the SDK events that change it."""
 
 import json
+import runpy
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import blockether.vis.extension as vis
 import pytest
 
+from vis_board import app as board_app
 from vis_board import start, store, tools
 from vis_board.app import CHANGED, BoardApp
 from vis_board.store import Store, edit
@@ -33,6 +36,53 @@ def app(saved, monkeypatch):
     board = _board(saved).open(watch=False)
     yield board, recorder
     board.stop()
+
+
+def test_board_entrypoint_calls_namespaced_tools_and_reopens(saved, monkeypatch):
+    monkeypatch.setattr(board_app, "BOARD", board_app.GlobalBoard())
+    monkeypatch.setattr(
+        board_app, "BoardApp", lambda: BoardApp(projects=lambda: [saved.workspace])
+    )
+    declarations = []
+    monkeypatch.setattr(vis, "register_extension", declarations.append)
+    runpy.run_path(str(Path(__file__).resolve().parents[1] / "extension.py"))
+    (declaration,) = declarations
+    (namespace,) = declaration.symbols
+    members = namespace.contract["members"]
+    assert {member["name"] for member in members} == {
+        "board.list_issues",
+        "board.create_issue",
+        "board.change_issue",
+        "board.move_issue",
+        "board.delete_issue",
+    }
+    item = namespace.fn.create_issue("Keep the same board")
+    assert namespace.fn.list_issues() == [item]
+
+    recorders = {}
+
+    def live(payload, listener=None):
+        envelope = json.loads(payload)
+        if envelope["op"] == "open":
+            key = envelope["view"]["key"]
+            if key not in recorders:
+                recorders[key] = vis.testing.LiveRecorder(object(), view_id=key)
+            recorder = recorders[key]
+        else:
+            recorder = recorders[envelope["view_id"]]
+        return recorder.live(payload, listener)
+
+    monkeypatch.setattr(vis._host, "live", live)
+    app = declaration.global_app
+    try:
+        app.open({"key": app.key, "view_id": None})
+        first = board_app.BOARD.app.view.view_id
+        app.open({"key": app.key, "view_id": first})
+        assert board_app.BOARD.app.view.view_id == first == app.key
+        assert recorders[first].node("issues")["issues"][0]["key"] == item["key"]
+    finally:
+        if board_app.BOARD.app is not None:
+            board_app.BOARD.app.stop()
 
 
 def test_round_trip_and_failed_replace(saved, monkeypatch):

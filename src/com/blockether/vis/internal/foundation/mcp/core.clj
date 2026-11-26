@@ -577,15 +577,18 @@
   [session-id server]
   (or (get-in @session-specs [session-id server]) (get (local-session-specs session-id) server)))
 
+(defn- pooled-connection
+  "The pool entry for the server as seen by the session. A session's own server
+   never falls back to a global server of the same name."
+  [session-id server]
+  (if (session-spec-of session-id server)
+    (get @session-conns [session-id server])
+    (get @conns server)))
+
 (defn- conn-of
-  "The live conn for `server` as SEEN BY `session-id` (nil = global scope only).
-   A server the session brought itself is answered from the session pool ONLY, so
-   a same-named global server can never be handed to it by accident."
+  "The pooled connection for `server` as seen by `session-id`."
   ([server] (conn-of nil server))
-  ([session-id server]
-   (if (session-spec-of session-id server)
-     (get-in @session-conns [[session-id server] :conn])
-     (get-in @conns [server :conn]))))
+  ([session-id server] (:conn (pooled-connection session-id server))))
 
 (defn- disconnect!
   "Close `server` in `session-id`'s scope and drop it from that pool."
@@ -2354,78 +2357,73 @@
 
 (doc-corpus/register-resolver! :mcp #'doc-entry)
 
-(defn- parameters
-  "The parameters of the tool or the prompt that `parts` names, for
-   `inspect.signature`: `[server tool]` or `[server \"prompts\" prompt]`, as a
-   block typed them: `{parameters, defs}`. Each parameter is `{name, schema,
-   required}`. `schema` is the JSON schema of a tool argument; an argument of a
-   prompt is a string. `defs` has the definitions that a `$ref` of a schema names.
-   The sandbox shim is the one reader that makes a Python type of a schema. It
-   connects the server when that is necessary, and throws when the server or the
-   name is not there."
-  [[server & names]]
-  (let [sid
-        (:session-id extension/*current-environment*)
-
-        prompt?
-        (= "prompts" (first names))
-
-        kind
-        (if prompt? "prompt" "tool")
-
-        wanted
-        (if prompt? (second names) (first names))
-
-        conn
-        (when (get (visible-servers sid) server) (ensure-connected! sid server))]
-
-    (when-not conn
+(defn- warm-catalog
+  "Read the session's authorized catalog without connecting or listing. An empty
+   catalog is known; nil means discovery has not run or the server changed it."
+  [server kind]
+  (let [sid (:session-id extension/*current-environment*)
+        spec (get (visible-servers sid) server)]
+    (when-not spec
       (throw (ex-info (str "MCP server '" server "' is not available.") {:type :mcp/unavailable})))
-    (with-current-era
-      sid
-      server
-      conn
-      (fn [conn]
-        (let [rows
-              (cond (not prompt?) (model-tools conn)
-                    (contains? (:server-capabilities conn) "prompts") (mcp/list-all conn
-                                                                                    "prompts/list"))
+    (or (let [{:keys [conn] attached-spec :spec} (pooled-connection sid server)]
+          (when (and (= spec attached-spec) (mcp/alive? conn))
+            (if (= kind "prompt")
+              (if (contains? (:server-capabilities conn) "prompts")
+                (cached-list conn "prompts/list")
+                [])
+              (some->> (:tools conn) deref (filterv apps/model-visible?)))))
+        (throw (ex-info (str "MCP discovery required for server '" server
+                             "'. Call doc(" (pr-str (python-name server)) ") first.")
+                        {:type :mcp/discovery-required})))))
 
-              named
-              (match-name (map #(get % "name") rows) wanted)
+(defn- catalog-parameters
+  "The schema rows of one tool or prompt. The shim makes Python types from these."
+  [row kind]
+  (if (= kind "prompt")
+    {"parameters" (mapv (fn [argument]
+                          {"name" (get argument "name")
+                           "schema" {"type" "string"}
+                           "required" (boolean (get argument "required"))})
+                        (get row "arguments"))
+     "defs" {}}
+    (let [required (set (get-in row ["inputSchema" "required"]))]
+      {"parameters" (mapv (fn [[nm property]]
+                            {"name" nm
+                             "schema" (if (map? property) property {})
+                             "required" (contains? required nm)})
+                          (get-in row ["inputSchema" "properties"]))
+       "defs" (merge (get-in row ["inputSchema" "definitions"])
+                     (get-in row ["inputSchema" "$defs"]))})))
 
-              row
-              (first (filter #(= named (get % "name")) rows))
-
-              required
-              (set (get-in row ["inputSchema" "required"]))]
-
-          (cond (nil? row) (throw (ex-info
-                                    (str "MCP server '" server "' has no " kind " '" wanted "'.")
-                                    {:type :mcp/unknown-name}))
-                prompt? {"parameters" (mapv (fn [argument]
-                                              {"name" (get argument "name")
-                                               "schema" {"type" "string"}
-                                               "required" (boolean (get argument "required"))})
-                                            (get row "arguments"))
-                         "defs" {}}
-                :else {"parameters" (mapv (fn [[nm property]]
-                                            {"name" nm
-                                             "schema" (if (map? property) property {})
-                                             "required" (contains? required nm)})
-                                          (get-in row ["inputSchema" "properties"]))
-                       "defs" (merge (get-in row ["inputSchema" "definitions"])
-                                     (get-in row ["inputSchema" "$defs"]))}))))))
+(defn- catalog-answer
+  "List usable attributes, resolve one name, or read one signature from the cache."
+  [[server kind operation wanted]]
+  (let [rows (warm-catalog server kind)
+        names (mapv #(get % "name") rows)]
+    (if (= operation "dir")
+      (let [exact (set names)
+            normalized (frequencies (map identifier exact))]
+        {"names" (into []
+                       (filter #(and (attribute? %)
+                                     (not (and (= kind "tool") (= "prompts" %)))
+                                     (or (contains? exact %) (= 1 (get normalized %)))))
+                       (keys normalized))})
+      (let [named (if (= operation "attribute")
+                    (match-name names wanted)
+                    (some #{wanted} names))]
+        (cond (nil? named) {"missing" true}
+              (= operation "signature") (catalog-parameters
+                                          (first (filter #(= named (get % "name")) rows)) kind)
+              :else {"name" named})))))
 
 (defn- bridge-bindings
-  "The host calls of the sandbox shim that cannot wait: `inspect.signature` is not
-   a coroutine. Each takes JSON and gives JSON."
+  "The synchronous catalog read of the sandbox shim. Takes JSON and gives JSON."
   []
-  {"__vis_mcp_parameters__" (fn [parts-json]
-                              (json/write-json-str
-                                (try (parameters (json/read-json (str parts-json)))
-                                     (catch Throwable failure
-                                       {"error" (or (ex-message failure) (str failure))}))))})
+  {"__vis_mcp_catalog__" (fn [request]
+                           (json/write-json-str
+                             (try (catalog-answer (json/read-json (str request)))
+                                  (catch clojure.lang.ExceptionInfo failure
+                                    {"error" (ex-message failure)}))))})
 
 (defn- handle-arguments
   "The one dict of arguments of a call of the handle `target`: one dict, keyword
@@ -2733,6 +2731,7 @@
    request carries it each time, and `apropos` and `doc` have the rest."
   (str "Use the MCP server's `python_name` from `session[\"env\"][\"mcp\"][\"servers\"]`. "
        "Use `apropos` to find its tools and `doc(\"mcp\")` for the call. "
+       "If the catalog needs discovery, call `doc` on the server first. "
        "Do not repeat a call that can already have changed data."))
 
 (def vis-extension
