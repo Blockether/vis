@@ -163,7 +163,7 @@
         ;; C-x arms the prefix; a group key opens the group and the next key runs the verb.
         (expect (= :cx (:prefix armed)))
         (doseq [[group key action] [[\m \m :cycle-model] [\m \r :pick-reasoning]
-                                    [\m \f :toggle-codex-fast] [\m \l :cycle-verbosity]
+                                    [\m \f :cycle-codex-speed] [\m \l :cycle-verbosity]
                                     [\b \f :search-open] [\a \a :pick-file]
                                     [\v \v :toggle-voice-recording] [\s \m :session-group]]]
           (let [opened (:state (input/handle-key (char-key (Character. group)) armed))]

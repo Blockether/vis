@@ -132,7 +132,8 @@
                                    (not (and (= "restrict" inheritance)
                                              (denial? (:value result))
                                              (not= "default" (:source result)))))
-                            {:value (get (:values layer) id) :source (:scope layer)}
+                            {:value (toggles/coerce-legacy-value spec (get (:values layer) id))
+                             :source (:scope layer)}
                             result))
                         {:value default :source "default"}
                         layers)]
@@ -557,7 +558,7 @@
 
       (mapv (fn [{:keys [id] :as row}]
               (assoc row
-                :own-value (get own id)
+                :own-value (toggles/coerce-legacy-value row (get own id))
                 :inherited-value (get-in inherited [id :value])
                 :inherited-source (get-in inherited [id :source])))
             (resolve-layers specs (layers db target) (:scope target) own)))))

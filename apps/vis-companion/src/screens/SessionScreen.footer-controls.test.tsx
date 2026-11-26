@@ -62,7 +62,7 @@ describe('composer response controls', () => {
     expect(document.activeElement).not.toBe(composer);
   });
 
-  it('orders reasoning, verbosity, then fast mode and cycles verbosity', async () => {
+  it('orders reasoning, verbosity, then speed and cycles verbosity', async () => {
     const user = userEvent.setup();
     const reasoning = toggle('reasoning_level', 'Reasoning effort', 'balanced', [
       'low',
@@ -91,7 +91,7 @@ describe('composer response controls', () => {
       },
     });
 
-    const fastButton = await screen.findByRole('button', { name: /fast mode — off/i });
+    const speedButton = await screen.findByRole('button', { name: 'Speed — normal' });
     const verbosityButton = await screen.findByRole('button', {
       name: /verbosity — low, tap for the next level/i,
     });
@@ -100,12 +100,12 @@ describe('composer response controls', () => {
     // one, in the body face, beside real icons.
     expect(reasoningButton).toHaveTextContent('balanced');
     expect(verbosityButton).toHaveTextContent('low');
-    expect(fastButton).toHaveTextContent('standard');
+    expect(speedButton).toHaveTextContent('normal');
     expect(
       reasoningButton.compareDocumentPosition(verbosityButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(
-      verbosityButton.compareDocumentPosition(fastButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+      verbosityButton.compareDocumentPosition(speedButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     // The GPT model has no thinking display, so its cached toggle stays hidden.
     expect(screen.queryByRole('button', { name: /thinking summary/i })).not.toBeInTheDocument();
@@ -115,6 +115,36 @@ describe('composer response controls', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /verbosity — medium/i })).toBeInTheDocument(),
     );
+  });
+
+  it('cycles Codex speed for this session', async () => {
+    const user = userEvent.setup();
+    const codex = { provider: 'openai-codex', model: 'gpt-6-astra' };
+    let speed = toggle('codex_fast_mode', 'Speed', 'normal', ['normal', 'fast', 'ultrafast']);
+    const setSetting = vi.fn(async () => {
+      const next = (speed.choices.indexOf(speed.value) + 1) % speed.choices.length;
+      speed = { ...speed, value: speed.choices[next]! };
+      return speed;
+    });
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => codex,
+        sessionModel: () => Promise.resolve(codex),
+        cachedSetting: (id: string) => (id === speed.id ? speed : null),
+        setting: (id: string) => Promise.resolve(id === speed.id ? speed : null),
+        setSetting,
+      },
+    });
+
+    for (const [index, value] of ['normal', 'fast', 'ultrafast', 'normal'].entries()) {
+      const button = await screen.findByRole('button', { name: `Speed — ${value}` });
+      if (index < 3) await user.click(button);
+    }
+    expect(setSetting).toHaveBeenCalledTimes(3);
+    expect(setSetting).toHaveBeenLastCalledWith(speed.id, 'cycle', undefined, {
+      scope: 'session',
+      target_id: 's1',
+    });
   });
 
   describe('thinking summary switch', () => {
@@ -367,8 +397,8 @@ describe('composer response controls', () => {
     });
   });
   // Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
-  // Fast mode was encoded as an OpenAI-only request field before routing finished.
-  it('leaves Fast mode to the gateway submission snapshot', async () => {
+  // Speed was encoded as an OpenAI-only request field before routing finished.
+  it('leaves Codex speed to the gateway submission snapshot', async () => {
     const user = userEvent.setup();
     const fast = { id: 'codex_fast_mode', label: 'Fast mode', type: 'boolean', enabled: true };
     const submitTurn = vi.fn(
@@ -766,20 +796,20 @@ describe('composer response controls', () => {
       subscriptions: hub,
     });
 
-    expect(await screen.findByRole('button', { name: /fast mode — on/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Speed — fast' })).toBeInTheDocument();
     hub.emit({
       type: 'session.model_updated',
       provider: 'anthropic-coding-plan',
       model: 'claude-opus-5',
     } as never);
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /fast mode/i })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: /^Speed —/ })).not.toBeInTheDocument(),
     );
 
     await act(async () => {
       resolveSessionModel(codex);
       await Promise.resolve();
     });
-    expect(screen.queryByRole('button', { name: /fast mode/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Speed —/ })).not.toBeInTheDocument();
   });
 });

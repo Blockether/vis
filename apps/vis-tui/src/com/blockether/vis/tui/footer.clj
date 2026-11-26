@@ -552,8 +552,10 @@
         thinking-summary
         (not (false? (:thinking-summary settings)))
 
-        codex-fast?
-        (and (= :openai-codex (:provider info)) (true? (:codex-fast-mode settings)))
+        codex-speed
+        (when (= :openai-codex (:provider info))
+          (let [speed (:codex-fast-mode settings)]
+            (when (#{:fast :ultrafast} speed) speed)))
 
         ws
         (:workspace db)
@@ -572,7 +574,7 @@
         (git-footer-spans git-status)]
 
     (cond-> (vec git-spans)
-      ;; Response controls read reasoning → verbosity → thinking → fast, matching
+      ;; Response controls read reasoning → verbosity → thinking → speed, matching
       ;; Companion.
       reasoning?
       ;; The chord sits INSIDE the button, as on the model chip.
@@ -606,11 +608,12 @@
              :region :left
              :priority 3})
 
-      codex-fast?
-      (conj {:text "speed: fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
+      codex-speed
+      (conj {:text (str "speed: " (name codex-speed))
+             :fg t/footer-fg-strong :bold? true :region :left :priority 2})
 
-      codex-fast?
-      (conj {:text (str "(" (keymap/label-for :toggle-codex-fast) ")")
+      codex-speed
+      (conj {:text (str "(" (keymap/label-for :cycle-codex-speed) ")")
              :join-left? true
              :fg t/footer-fg-muted
              :bold? false

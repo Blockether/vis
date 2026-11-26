@@ -582,6 +582,14 @@
                           (not (contains? reg id)))
                         persisted)))))
 
+(defn coerce-legacy-value
+  "Read old speed booleans as Normal or Fast where the enum offers both choices."
+  [{:keys [type choices]} value]
+  (if (and (= :enum type) (boolean? value)
+           (some #{"normal"} choices) (some #{"fast"} choices))
+    (if value "fast" "normal")
+    value))
+
 (defn coerce-config-value
   "Coerce a raw config value (from hand-written `vis.yml`, where YAML has no
    keyword literal, or from the machine `state.yml` round-trip) onto the
@@ -595,7 +603,8 @@
    Unregistered / untyped ids return the value unchanged (hydrate then drops
    the orphan)."
   [id v]
-  (let [spec (get @registry id)]
+  (let [spec (get @registry id)
+        v (coerce-legacy-value spec v)]
     (case (:type spec)
       :boolean
       (cond (boolean? v) v
@@ -635,7 +644,8 @@
                                                                                       false})))
 
     :enum
-    (let [target (some-> (cond (keyword? v) (name v)
+    (let [v (coerce-legacy-value spec v)
+          target (some-> (cond (keyword? v) (name v)
                                (string? v) v)
                          str/trim
                          str/lower-case)]

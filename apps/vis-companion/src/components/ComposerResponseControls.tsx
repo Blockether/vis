@@ -39,7 +39,7 @@ export type ComposerResponseControlsModel = {
   reasoning?: ChoiceControl | CycleControl;
   verbosity?: CycleControl;
   thinking?: ToggleControl;
-  fast?: ToggleControl;
+  speed?: CycleControl;
   /** The git branch of the workspace; absent outside git. */
   branch?: BranchControl;
 };
@@ -233,7 +233,7 @@ export function ComposerResponseControls({
     'pick-model': controls.model.choose,
     'cycle-verbosity': controls.verbosity && !controls.verbosity.busy && controls.verbosity.cycle,
     'toggle-thinking-summary': controls.thinking && !controls.thinking.busy && controls.thinking.toggle,
-    'toggle-codex-fast': controls.fast && !controls.fast.busy && controls.fast.toggle,
+    'cycle-codex-speed': controls.speed && !controls.speed.busy && controls.speed.cycle,
   });
   return (
     <div className="flex w-full items-center gap-1 pt-1 mouse:gap-1.5 mouse:pt-0.5">
@@ -299,22 +299,22 @@ export function ComposerResponseControls({
         </>
       )}
 
-      {controls.fast && (
+      {controls.speed && (
         <>
           <Divider />
           <MetaButton
             density="compact"
             className="shrink-0"
             onMouseDown={keepKeyboard}
-            onClick={() => void controls.fast?.toggle()}
-            disabled={controls.fast.busy}
-            aria-busy={controls.fast.busy}
-            aria-pressed={controls.fast.enabled}
-            aria-label={`Fast mode — ${controls.fast.enabled ? 'on' : 'off'}`}
-            title={`Fast mode: ${controls.fast.enabled ? 'on' : 'off'}`}
+            onClick={() => void controls.speed?.cycle()}
+            disabled={controls.speed.busy}
+            aria-busy={controls.speed.busy}
+            aria-live="polite"
+            aria-label={`${controls.speed.label} — ${controls.speed.value}`}
+            title={`${controls.speed.label}: ${controls.speed.value} — tap to cycle`}
           >
             <FastIcon className="size-3" />
-            {controls.fast.enabled ? 'fast' : 'standard'}
+            {controls.speed.value}
           </MetaButton>
         </>
       )}

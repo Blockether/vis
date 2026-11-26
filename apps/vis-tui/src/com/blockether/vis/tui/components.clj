@@ -303,7 +303,7 @@
       :rows [[(keymap/label-for :cycle-model) "Cycle model"]
              [(keymap/label-for :pick-model) "Pick model (search)"]
              [(keymap/label-for :pick-reasoning) "Change reasoning effort"]
-             [(keymap/label-for :toggle-codex-fast) "Toggle Codex Fast mode"]
+             [(keymap/label-for :cycle-codex-speed) "Cycle Codex speed"]
              [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
              [(keymap/label-for :toggle-thinking-summary) "Show or omit thinking summary"]
              [(keymap/label-for :search-open) "Search in session"]

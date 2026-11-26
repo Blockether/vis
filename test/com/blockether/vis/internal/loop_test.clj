@@ -7140,6 +7140,23 @@
           (expect (= {:service_tier "standard_only" :max_tokens 1024}
                      (provider-body projected :anthropic-coding-plan)))
           (expect (= verbosity (sanitize verbosity)))))
+    (it "sends Ultrafast only to Codex and clears the caller-level tier"
+        (let [features {"codex_fast_mode" "ultrafast"}
+              legacy {"service_tier" "ultrafast" "max_tokens" 512}]
+          (doseq [projected [(project-router router {} features)
+                             (project-router router legacy {})]]
+            (expect (= {:service_tier "ultrafast" :provider-option true}
+                       (provider-body projected :openai-codex)))
+            (expect (= {:service_tier "standard_only" :max_tokens 1024}
+                       (provider-body projected :anthropic-coding-plan))))
+          (expect (= {"max_tokens" 512} (sanitize legacy)))))
+    (it "does not send a service tier when the explicit speed is Normal"
+        (let [plain {:providers [{:id :openai-codex}]}
+              legacy {"service_tier" "priority"}]
+          (doseq [mode ["normal" false nil]]
+            (expect (= plain (project-router plain legacy {"codex_fast_mode" mode}))))
+          (expect (= plain (project-router plain {} {})))
+          (expect (nil? (sanitize legacy)))))
     (it "moves legacy caller Priority to Codex without deleting valid tiers"
         (let [legacy
               {"service_tier" "PRIORITY" "max_tokens" 512}
@@ -7192,26 +7209,34 @@
                                                                        exact))))
                   (expect (nil? (:preferred-reasoning-effort (defaults {:reasoning-default "quick"}
                                                                        exact)))))))
-  (describe "fast mode"
-            (it "turns on the provider fast modes the snapshot enables"
-                (expect (= {"codex_fast_mode" true}
-                           (loop-router/setting-turn-features {"codex_fast_mode" true})))
-                (expect (nil? (loop-router/setting-turn-features {"codex_fast_mode" false})))
+  (describe "response speed"
+            (it "passes the selected speed and maps legacy true to Fast"
+                (doseq [[saved mode] [[true "fast"] ["fast" "fast"] ["ultrafast" "ultrafast"]]]
+                  (expect (= {"codex_fast_mode" mode}
+                             (loop-router/setting-turn-features {"codex_fast_mode" saved}))))
+                (doseq [saved [false nil "normal"]]
+                  (expect (nil? (loop-router/setting-turn-features {"codex_fast_mode" saved}))))
                 (expect (nil? (loop-router/setting-turn-features {}))))
             (it "keeps explicit caller features over the snapshot"
                 (let [defaults
                       (deref #'turn/with-setting-defaults)
 
                       snapshot
-                      {"codex_fast_mode" true}]
+                      {"codex_fast_mode" "ultrafast"}]
 
-                  (expect (= {"codex_fast_mode" true "voice_projection" true}
+                  (expect (= {"codex_fast_mode" "ultrafast" "voice_projection" true}
                              (:turn/features (defaults {:turn/features {"voice_projection" true}}
                                                        snapshot))))
                   (expect (= {"codex_fast_mode" false}
                              (:turn/features (defaults {:turn/features {"codex_fast_mode" false}}
                                                        snapshot))))
-                  (expect (not (contains? (defaults {} {}) :turn/features))))))
+                  (expect (not (contains? (defaults {} {}) :turn/features)))))
+            (it "keeps a caller's legacy service tier over the saved speed"
+                (let [defaults (deref #'turn/with-setting-defaults)
+                      opts (defaults {:extra-body {"service_tier" "priority"}}
+                                     {"codex_fast_mode" "ultrafast"})]
+                  (expect (= 2.0 (loop-router/fast-mode-cost-multiplier
+                                   (:extra-body opts) (:turn/features opts) :openai-codex))))))
   (describe "verbosity"
             (let [request-body
                   (deref #'iteration/request-extra-body)

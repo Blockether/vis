@@ -63,7 +63,7 @@ describe('chordStep', () => {
 
 describe('matchVerbs', () => {
   it('needs every word, in the title, the group or the chord', () => {
-    expect(matchVerbs(KEYMAP_VERBS, 'fast model').map((item) => item.id)).toEqual(['toggle-codex-fast']);
+    expect(matchVerbs(KEYMAP_VERBS, 'speed model').map((item) => item.id)).toEqual(['cycle-codex-speed']);
     expect(matchVerbs(KEYMAP_VERBS, 'c-x m c').map((item) => item.id)).toContain('pick-model');
     expect(matchVerbs(KEYMAP_VERBS, '  ')).toHaveLength(KEYMAP_VERBS.length);
   });

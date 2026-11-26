@@ -228,13 +228,13 @@
           "x-vis-group": "model"
         },
         {
-          "const": "toggle-codex-fast",
-          "title": "fast mode",
-          "description": "Turn Codex fast mode on or off",
+          "const": "cycle-codex-speed",
+          "title": "speed",
+          "description": "Change the Codex speed: normal, fast or ultrafast",
           "x-vis-key": "f",
           "x-vis-group": "model",
           "x-vis-show-when": "codex",
-          "$comment": "Fast mode acts only on OpenAI Codex, so other sessions do not see it (#333)."
+          "$comment": "The speed acts only on OpenAI Codex, so other sessions do not see it (#333)."
         },
         {
           "const": "cycle-verbosity",

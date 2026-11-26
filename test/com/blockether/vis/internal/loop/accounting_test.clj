@@ -97,6 +97,33 @@
             (accounting/response-cost pricing usage priced-model :openai)]
 
         (expect (close? (* 2.0 (double (:cost-usd standard))) (:cost-usd fast)))))
+  (it "charges six times the standard rates for an Ultrafast Codex response"
+      (let [usage
+            {:input-tokens 8298 :output-tokens 60
+             :input-tokens-details {:cache-read 8000 :cache-write 12}}
+
+            cost
+            (fn [features provider]
+              (:cost-map
+                (accounting/response-cost (accounting/pricing priced-model nil {} features)
+                                          usage priced-model provider)))
+
+            features
+            {"codex_fast_mode" "ultrafast"}
+
+            standard
+            (cost {} :openai-codex)
+
+            ultrafast
+            (cost features :openai-codex)]
+
+        (expect (pos? (get standard "total_cost")))
+        (doseq [k ["input_cost" "input_uncached_cost" "input_cached_cost"
+                   "input_cache_write_cost" "output_cost" "total_cost"]
+                :let [v (get standard k)]
+                :when (number? v)]
+          (expect (close? (* 6.0 (double v)) (get ultrafast k))))
+        (expect (= (cost {} :openai) (cost features :openai)))))
   ;; #356: declared provider rates must price the response of the provider that
   ;; served it; svar's catalog stays the fallback.
   (it

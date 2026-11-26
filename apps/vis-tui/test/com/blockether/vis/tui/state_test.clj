@@ -53,24 +53,7 @@
             effect
             (first (filter #(= :gateway-enqueue (first %)) (:fx result)))]
 
-        (expect (= [nil nil {}] (subvec effect 4 7)))))
-  (it "toggles Fast for Codex and refuses other providers"
-      (let [handler (-> #'state/event-registry
-                        deref
-                        deref
-                        (get :toggle-codex-fast-mode)
-                        :fn)]
-        (with-redefs [vis/get-router (constantly :router)
-                      vis/resolve-model-info (fn [_ provider _model]
-                                               {:provider (keyword provider)})]
-
-          (expect (= [[:toggle-boolean "s1" "codex_fast_mode"]]
-                     (:fx (handler {:session {:id "s1"}
-                                    :session-model-pref {:provider "openai-codex" :model "gpt"}}
-                                   [:toggle-codex-fast-mode]))))
-          (expect (nil? (:fx (handler {:session-model-pref {:provider "github-copilot"
-                                                            :model "gpt"}}
-                                      [:toggle-codex-fast-mode]))))))))
+        (expect (= [nil nil {}] (subvec effect 4 7))))))
 
 (defdescribe thinking-summary-toggle-test
              (it "toggles the thinking summary for adaptive Claude and refuses other models"
@@ -796,9 +779,10 @@
                                                                      "type" "enum"
                                                                      "value" "deep"}]}]})
                       vis/setting
-                      (fn [& args]
-                        (swap! reads conj (vec args))
-                        {"id" "simplified_thinking_modes" "type" "boolean" "enabled" false})]
+                      (fn [id & owners]
+                        (when (= id "simplified_thinking_modes")
+                          (swap! reads conj (into [id] owners))
+                          {"id" id "type" "boolean" "enabled" false}))]
 
           ((var-get #'state/refresh-session-settings!) "s1"))
         ;; Only the gateway sets it: the read names no group, project or session.
@@ -871,6 +855,8 @@
                       {"groups" [{"toggles"
                                   [{"id" "reasoning_level" "type" "enum" "value" "quick"}]}]})
 
+                    vis/setting (constantly nil)
+
                     vis/notify!
                     (fn [& _]
                       (state/dispatch [:bump-render-version]))]
@@ -898,6 +884,8 @@
                         {"groups" [{"toggles"
                                     [{"id" "reasoning_level" "type" "enum" "value" "deep"}]}]})
 
+                      vis/setting (constantly nil)
+
                       vis/notify!
                       (fn [text & _]
                         (swap! notified conj text))]
@@ -908,11 +896,49 @@
           (expect (= [["reasoning_level" "cycle" {:scope "session" :target-id "s1"}]] @calls))
           (expect (= :deep (get-in @state/app-db [:session-settings "s1" :reasoning-level])))
           (expect (= [] @notified) "A reasoning change shows no toast"))))
+  (it "refreshes and cycles Codex speed without a Settings row"
+      (let [target {:scope "session" :target-id "s1"}
+            speed (atom "normal")]
+        (with-redefs [vis/get-router (constantly :router)
+                      vis/resolve-model-info (fn [_ provider _model]
+                                               {:provider (keyword provider)})
+                      vis/gateway-settings (constantly {"groups" []})
+                      vis/setting (fn [id & [owner]]
+                                    (when (= id "codex_fast_mode")
+                                      (expect (= target owner))
+                                      {"id" id "type" "enum" "value" @speed}))
+                      vis/change-setting! (fn [id action owner]
+                                            (expect (= ["codex_fast_mode" "cycle" target]
+                                                       [id action owner]))
+                                            {"id" id "type" "enum"
+                                             "value" (swap! speed {"normal" "fast"
+                                                                   "fast" "ultrafast"
+                                                                   "ultrafast" "normal"})})]
+          (reset! state/app-db {:session {:id "s1"}
+                                :session-model-pref {:provider "openai-codex" :model "gpt"}
+                                :render-version 0})
+          (state/dispatch [:refresh-session-settings "s1"])
+          (flush-queue-io!)
+          (expect (= :normal (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))
+          (doseq [expected [:fast :ultrafast :normal]]
+            (state/dispatch [:cycle-codex-speed])
+            (flush-queue-io!)
+            (expect (= expected (get-in @state/app-db [:session-settings "s1" :codex-fast-mode]))))
+          (swap! state/app-db assoc-in [:session-model-pref :provider] "github-copilot")
+          (state/dispatch [:cycle-codex-speed])
+          (flush-queue-io!)
+          (expect (= "normal" @speed)))))
+  (it "reads legacy Codex booleans as fast or normal"
+      (reset! state/app-db {:session {:id "s1"} :render-version 0})
+      (doseq [[enabled speed] [[true :fast] [false :normal]]]
+        (state/dispatch [:session-settings-loaded "s1"
+                         [{"id" "codex_fast_mode" "type" "boolean" "enabled" enabled}]])
+        (expect (= speed (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))))
   (it "keeps a late response under its original owner after switching sessions"
       (reset! state/app-db {:session {:id "s2"} :render-version 0})
       (state/dispatch [:session-settings-loaded "s1"
-                       [{"id" "codex_fast_mode" "type" "boolean" "enabled" false}]])
-      (expect (false? (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))
+                       [{"id" "codex_fast_mode" "type" "enum" "value" "ultrafast"}]])
+      (expect (= :ultrafast (get-in @state/app-db [:session-settings "s1" :codex-fast-mode])))
       (expect (nil? (get-in @state/app-db [:session-settings "s2"]))))
   (it "offers no reasoning picker for fixed-thinking Z.ai models"
       (let [notified (atom nil)]

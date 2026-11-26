@@ -197,6 +197,51 @@
 
 (defdescribe
   durable-scopes
+  (it "reads legacy Codex speed overrides and keeps Speed out of every settings catalog"
+      (with-empty-config
+        (let [db
+              (h/store)
+
+              project
+              (store/db-create-project! db {:name "Codex Speed"})
+
+              group
+              (store/db-create-session-group! db (:id project) {:name "Work"})
+
+              sid
+              (h/store-session! db {:title "Codex Speed"})
+
+              key
+              "codex_fast_mode"]
+
+          (store/db-set-session-group! db sid (:id group))
+          (store/db-set-scoped-setting! db "group" (:id group) key true)
+          (expect (= "normal" (get (scoped/values db sid) key)))
+          (store/db-set-scoped-setting! db "session" sid key false)
+          (expect (= "normal" (get (scoped/values db sid) key)))
+          (with-redefs [lp/db-info (constantly db)
+                        discovery/all-skills (constantly [])]
+            (doseq [[scope id] [["global" nil] ["project" (:id project)]
+                                ["group" (:id group)] ["session" sid]]]
+              (let [params (cond-> {"scope" scope} id (assoc "target_id" (str id)))
+                    response (#'settings-api/list-settings-handler {:query-params params})]
+                (expect (= 200 (:status response)))
+                (expect (not (str/includes? (:body response) (str "\"" key "\""))))))
+            (let [params {"scope" "session" "target_id" (str sid)}
+                  response (#'settings-api/get-setting-handler {:query-params params
+                                                               :path-params {:id key}})]
+              (expect (= 200 (:status response)))
+              (expect (= "normal" (get (json/read-json (:body response)) "value")))
+              (doseq [[saved speeds] [[false ["fast" "ultrafast" "normal"]]
+                                      [true ["ultrafast" "normal" "fast"]]]]
+                (store/db-set-scoped-setting! db "session" sid key saved)
+                (doseq [speed speeds]
+                  (let [response (#'settings-api/set-setting-handler
+                                   {:query-params (assoc params "id" key "action" "cycle")
+                                    :body (java.io.StringReader. "{}")})]
+                    (expect (= 200 (:status response)))
+                    (expect (= speed (get (json/read-json (:body response)) "value")))
+                    (expect (= speed (get (scoped/values db sid) key)))))))))))
   (it
     "keeps false, deletes only the selected override, and observes ancestor edits"
     (with-empty-config

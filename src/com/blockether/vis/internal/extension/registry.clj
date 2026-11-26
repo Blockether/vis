@@ -109,8 +109,8 @@
                                 (\"user\") or Vis (\"agent\") started the call
     :adaptive-reasoning-models  regex source: matching models choose their own
                                 thinking depth, so casual chat carries no level
-    :fast-mode                  {:turn-feature id}: the turn feature that asks for the
-                                faster service tier; Svar owns the tier and its pricing"
+    :fast-mode                  {:turn-feature id}: the turn feature whose value names
+                                the speed. Svar owns the service tiers and their prices."
   [x]
   (and (map? x)
        (optional-valid? x :preset-rank int?)

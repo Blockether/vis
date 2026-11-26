@@ -184,14 +184,14 @@
                  (expect (= :continue (:action (press \3))))
                  (expect (= :continue (:action (press \s \3))))))
 
-;; Regression for #333: the hydra offered Fast mode in sessions that do not use Codex.
-(defdescribe codex-fast-hydra-test
-             (it "shows Fast mode only in a session on OpenAI Codex"
-                 (expect (not (contains? (ids {} :model) :toggle-codex-fast)))
-                 (expect (not (contains? (ids {:codex-session? false} :model) :toggle-codex-fast)))
-                 (expect (contains? (ids {:codex-session? true} :model) :toggle-codex-fast))
+;; Regression for #333: the hydra offered the speed control in sessions that do not use Codex.
+(defdescribe codex-speed-hydra-test
+             (it "offers the speed control only in a session on OpenAI Codex"
+                 (expect (not (contains? (ids {} :model) :cycle-codex-speed)))
+                 (expect (not (contains? (ids {:codex-session? false} :model) :cycle-codex-speed)))
+                 (expect (contains? (ids {:codex-session? true} :model) :cycle-codex-speed))
                  ;; The chord still resolves; its handler gives the reason.
-                 (expect (= :toggle-codex-fast (:action (press \m \f))))))
+                 (expect (= :cycle-codex-speed (:action (press \m \f))))))
 
 (defdescribe view-images-hydra-test
              (it "shows View images only in a graphical terminal, in a session with a picture"

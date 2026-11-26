@@ -1597,63 +1597,75 @@
           str
           str/lower-case))
 
-(defn- fast-mode
-  "The fast mode of `provider`, a keyword or string id, or nil: Svar's service tier
-   and cost multiplier, with the turn feature that the provider's policy names."
-  [provider]
-  (when provider
-    (when-let [fm (svar/provider-fast-mode (keyword provider))]
-      (merge fm (select-keys (:fast-mode (catalog/policy provider)) [:turn-feature])))))
+(defn- fast-mode-name
+  "Map the old boolean opt-in to the name of its mode."
+  [value]
+  (if (true? value) "fast" value))
 
-(defn- fast-mode-requested?
-  "True when this turn asks for `fast-mode`: the provider's own turn feature is
-  on, or a caller-level extra body already names its service tier - the spelling
-  of clients predating the turn feature."
-  [fast-mode extra-body turn-features]
-  (boolean (when fast-mode
-             (or (true? (get turn-features (:turn-feature fast-mode)))
-                 (= (str/lower-case (:service-tier fast-mode)) (service-tier extra-body))))))
+(defn- requested-fast-mode
+  "The requested mode of `provider`, as a map entry from Svar. An explicit turn
+   feature takes precedence over the legacy caller-level `service_tier`."
+  [provider extra-body turn-features]
+  (when provider
+    (let [modes
+          (svar/provider-fast-modes (keyword provider))
+
+          feature
+          (get-in (catalog/policy provider) [:fast-mode :turn-feature])]
+
+      (if (and feature (contains? turn-features feature))
+        (find modes (fast-mode-name (get turn-features feature)))
+        (when-let [tier (service-tier extra-body)]
+          (some #(when (= tier (str/lower-case (:service-tier (val %)))) %) modes))))))
 
 (defn fast-mode-router
   "Put a requested fast service tier only on the router entry of the provider
    that declares it, so Svar fallback cannot carry it to another provider."
   [router extra-body turn-features]
   (svar/fast-mode-router router
-                         (filter #(fast-mode-requested? (fast-mode %) extra-body turn-features)
-                                 (map :id (:providers router)))))
+                         (into {}
+                               (keep (fn [{:keys [id]}]
+                                       (when-let [mode (requested-fast-mode id extra-body
+                                                                             turn-features)]
+                                         [id (key mode)])))
+                               (:providers router))))
 
 (defn provider-extra-body
   "Remove every fast service tier a provider declares from caller-level options
-  after [[fast-mode-router]] scoped it to that provider's router entry. Other
-  tiers and unrelated fields remain."
+   after [[fast-mode-router]] scoped it to that provider's router entry. Other
+   tiers and unrelated fields remain."
   [extra-body]
-  (let [fast-tiers (into #{}
-                         (keep #(some-> (fast-mode %)
-                                        :service-tier
-                                        str/lower-case))
-                         (keys (catalog/policies)))]
+  (if-let [tier (service-tier extra-body)]
     (not-empty (cond-> extra-body
-                 (contains? fast-tiers (service-tier extra-body))
-                 (dissoc "service_tier")))))
+                 (some #(= tier (str/lower-case (:service-tier %)))
+                       (mapcat #(vals (svar/provider-fast-modes %)) (keys (catalog/policies))))
+                 (dissoc "service_tier")))
+    (not-empty extra-body)))
 
 (defn setting-turn-features
-  "The provider fast-mode turn features a resolved setting `snapshot` switches
-   on, JSON-keyed like a caller's `turn_features`, or nil. Each provider policy
-   names its own feature; [[fast-mode-router]] keeps its tier on that provider."
-  [snapshot]
-  (not-empty (into {}
-                   (keep (fn [policy]
-                           (when-let [feature (:turn-feature (:fast-mode policy))]
-                             (when (true? (get snapshot feature)) [feature true]))))
-                   (vals (catalog/policies)))))
+  "The provider fast modes selected in a resolved setting `snapshot`, JSON-keyed
+   like a caller's `turn_features`, or nil. Each provider policy names its own
+   feature; [[fast-mode-router]] keeps its tier on that provider."
+  ([snapshot] (setting-turn-features snapshot nil))
+  ([snapshot extra-body]
+   (not-empty (into {}
+                    (keep (fn [[provider policy]]
+                            (when-let [feature (get-in policy [:fast-mode :turn-feature])]
+                              (let [mode (fast-mode-name (get snapshot feature))]
+                                (when (and (contains? (svar/provider-fast-modes provider) mode)
+                                           (not (requested-fast-mode provider extra-body nil)))
+                                  [feature mode])))))
+                    (catalog/policies)))))
 
 (defn fast-mode-cost-multiplier
-  "The price multiplier of `provider`'s fast mode when this turn requested it,
-  else 1.0. The multiplier stays provider-gated so fast intent cannot change a
-  fallback provider's pricing."
+  "The price multiplier of the fast mode this turn requested for `provider`, else
+   1.0. The multiplier stays provider-gated so fast intent cannot change a fallback
+   provider's pricing."
   [extra-body turn-features provider]
-  (let [fm (fast-mode provider)]
-    (if (fast-mode-requested? fm extra-body turn-features) (double (:cost-multiplier fm)) 1.0)))
+  (double (or (some-> (requested-fast-mode provider extra-body turn-features)
+                      val
+                      :cost-multiplier)
+              1.0)))
 
 (defn declared-model-pricing
   "Rates that `provider-id` itself declared for `model` (a Python provider's

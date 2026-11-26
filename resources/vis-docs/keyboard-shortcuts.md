@@ -131,7 +131,7 @@ To move a command, the extension names its verb id.
 | `cycle-model` | Ctrl+X m m | Use the next model |
 | `pick-model` | Ctrl+X m c | Choose a model |
 | `pick-reasoning` | Ctrl+X m r | Choose the reasoning level |
-| `toggle-codex-fast` | Ctrl+X m f | Turn fast mode on or off |
+| `cycle-codex-speed` | Ctrl+X m f | Choose the next OpenAI Codex speed |
 | `cycle-verbosity` | Ctrl+X m l | Change the answer length |
 | `toggle-thinking-summary` | Ctrl+X m t | Show or hide the thinking summary |
 | `search-open` | Ctrl+X b f | Search the conversation |

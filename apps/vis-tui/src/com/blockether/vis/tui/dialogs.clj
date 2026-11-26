@@ -3832,9 +3832,8 @@
 
 (defn- mirror-setting-value!
   "Mirror ONE catalog row's value onto the process registry when this binary
-   registers that id itself, so local reads (`codex_fast_mode` in the footer)
-   honour what the daemon holds. Ids only the daemon knows stay OUT of the
-   registry: their rows render from the catalog."
+   registers that id itself, so local reads use the daemon's value. The
+   registry does not store ids that only the daemon knows."
   [row]
   (let [id
         (get row "id")
@@ -4048,7 +4047,8 @@
    scoped target marks overrides and offers their reset."
   [groups]
   (vec (mapcat (fn [group]
-                 (let [rows (filterv #(not= "agent_name" (get % "id")) (get group "toggles"))]
+                 (let [rows (filterv #(not (#{"agent_name" "codex_fast_mode"} (get % "id")))
+                                     (get group "toggles"))]
                    (cond (get group "extension") (extension-rows group rows)
                          (seq rows) (cons {:type :section
                                            :label (str (get group "title"))

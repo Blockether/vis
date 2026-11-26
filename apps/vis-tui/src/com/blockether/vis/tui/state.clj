@@ -1527,7 +1527,7 @@
    `virtual/invalidate-heights!` drops every sticky height, the whole
    transcript falls back to estimates and the view visibly jumps while the
    background re-warm lands. Picking reasoning effort with Ctrl+X r must not
-   repaint history. Fast mode is deliberately NOT listed: its footer chip must
+   repaint history. Codex speed is deliberately NOT listed: its footer chip must
    repaint immediately even though it still skips transcript-cache invalidation."
   #{"reasoning_level" "simplified_thinking_modes" "reasoning_effort" "verbosity"
     "thinking_summary"})
@@ -1609,10 +1609,13 @@
                               (cond-> []
                                 k
                                 (conj [k
-                                       (if (= "boolean" (get row "type"))
-                                         (get row "enabled")
-                                         (some-> (get row "value")
-                                                 keyword))])
+                                        (if (= "boolean" (get row "type"))
+                                          (let [enabled (get row "enabled")]
+                                            (if (= id "codex_fast_mode")
+                                              (if enabled :fast :normal)
+                                              enabled))
+                                          (some-> (get row "value")
+                                                  keyword))])
 
                                 (and choices-k (seq (get row "choices")))
                                 (conj [choices-k (mapv str (get row "choices"))])
@@ -1667,11 +1670,11 @@
                   ;; Effect, not an in-swap mutation - see :set-reasoning-choice.
                   {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "verbosity"]]})))
 
-(reg-event-fx :toggle-codex-fast-mode
+(reg-event-fx :cycle-codex-speed
               (fn [db _]
                 (if-not (codex-session? db)
                   {:db db}
-                  {:db db :fx [[:toggle-boolean (get-in db [:session :id]) "codex_fast_mode"]]})))
+                  {:db db :fx [[:cycle-toggle (get-in db [:session :id]) "codex_fast_mode"]]})))
 
 (reg-event-fx :toggle-thinking-summary
               (fn [db _]
@@ -7703,8 +7706,22 @@
 (defn- refresh-session-settings!
   [sid]
   (when sid
-    (let [catalog
-          (vis/gateway-settings :tui {:scope "session" :target-id (str sid)})
+    (let [target
+          {:scope "session" :target-id (str sid)}
+
+          catalog
+          (vis/gateway-settings :tui target)
+
+          ;; Older daemons may still list Codex speed in Settings.
+          rows
+          (letfn [(flat [rows] (mapcat #(cons % (flat (get % "children"))) rows))]
+            (flat (mapcat #(get % "toggles") (get catalog "groups"))))
+
+          speed
+          (when-not (some #(= "codex_fast_mode" (get % "id")) rows)
+            (try (vis/setting "codex_fast_mode" target)
+                 (catch clojure.lang.ExceptionInfo e
+                   (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
           ;; Only the gateway sets simplified thinking modes, so the session catalog
           ;; omits it and every session reads the global row. A session row from an
@@ -7712,10 +7729,7 @@
           global
           (try [(vis/setting "simplified_thinking_modes")] (catch Exception _ nil))]
 
-      ;; Settings nest at any depth in `children`; the lookup by id reads every row.
-      (letfn [(flat [rows] (mapcat #(cons % (flat (get % "children"))) rows))]
-        (dispatch [:session-settings-loaded sid
-                   (concat global (flat (mapcat #(get % "toggles") (get catalog "groups"))))])))))
+      (dispatch [:session-settings-loaded sid (concat global rows (when speed [speed]))]))))
 
 (reg-fx :refresh-session-settings
         (fn [sid]

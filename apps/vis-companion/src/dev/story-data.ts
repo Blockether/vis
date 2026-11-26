@@ -1385,7 +1385,7 @@ export const STORY_RESPONSE_CONTROL_VALUES = {
   reasoning: { label: 'Reasoning', value: 'high', choices: ['low', 'medium', 'high'] },
   verbosity: { label: 'Verbosity', value: 'medium' },
   thinking: { enabled: true },
-  fast: { enabled: true },
+  speed: { label: 'Speed', value: 'ultrafast' },
 } as const;
 
 export const STORY_FILE_SUGGESTIONS: FileSuggestion[] = [

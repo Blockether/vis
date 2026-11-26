@@ -964,13 +964,13 @@
 (def ^:private fast-mode-toggle "codex_fast_mode")
 
 (toggles/register-toggle! {:id fast-mode-toggle
-                           :label "Fast mode"
-                           :description
-                           "Route eligible OpenAI Codex turns through the priority service tier."
-                           :type :boolean
+                           :label "Speed"
+                           :description "Set the response speed for OpenAI Codex turns."
+                           :type :enum
+                           :choices ["normal" "fast" "ultrafast"]
                            :settings? false
-                           :default false
-                           :scopes ["global" "project" "group" "session"]
+                           :default "normal"
+                           :scopes ["session"]
                            :owner "openai-codex"
                            :group :provider
                            :persist? true})
@@ -1005,7 +1005,7 @@
                                                             :openai-codex)}
                         :provider/policy {:preset-rank 3
                                           :title-rank 2
-                                          ;; Fast mode is Priority processing; Svar declares its tier and price.
+                                          ;; Svar declares the fast service tiers and their prices.
                                           :fast-mode {:turn-feature fast-mode-toggle}}
                         :provider/status-fn #'status
                         :provider/logout-fn #'logout!

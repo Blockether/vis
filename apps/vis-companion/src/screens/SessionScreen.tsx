@@ -1708,9 +1708,10 @@ export function SessionScreen({
     client.cachedSetting('verbosity', settingsTarget),
   );
   const [verbosityBusy, setVerbosityBusy] = useState(false);
-  const [codexFast, setCodexFast] = useState<Toggle | null>(() =>
+  const [codexSpeed, setCodexSpeed] = useState<Toggle | null>(() =>
     client.cachedSetting('codex_fast_mode', settingsTarget),
   );
+  const [codexSpeedBusy, setCodexSpeedBusy] = useState(false);
   const [thinkingSummary, setThinkingSummary] = useState<Toggle | null>(() =>
     client.cachedSetting('thinking_summary', settingsTarget),
   );
@@ -1750,7 +1751,7 @@ export function SessionScreen({
         ['reasoning_level', setReasoning],
         ['verbosity', setVerbosity],
         ['thinking_summary', setThinkingSummary],
-        ['codex_fast_mode', setCodexFast],
+        ['codex_fast_mode', setCodexSpeed],
         ['reasoning_effort', setReasoningEffort],
         ['simplified_thinking_modes', setSimplifiedThinking],
       ] as const) {
@@ -1869,8 +1870,23 @@ export function SessionScreen({
     }
   }
 
+  async function cycleCodexSpeed(setting: Toggle) {
+    if (codexSpeedBusy) return;
+    if (setting.type === 'boolean') {
+      return flipSwitch(setting, setting.enabled ?? false, setCodexSpeed);
+    }
+    setCodexSpeedBusy(true);
+    try {
+      setCodexSpeed(await client.setSetting(setting.id, 'cycle', undefined, settingsTarget));
+    } catch (e) {
+      setComposerNotice((e as Error).message);
+    } finally {
+      setCodexSpeedBusy(false);
+    }
+  }
+
   const activeProvider = modelPref?.provider ?? defaultPref?.provider;
-  const codexFastAvailable = activeProvider === 'openai-codex' && codexFast;
+  const codexSpeedAvailable = activeProvider === 'openai-codex' ? codexSpeed : null;
   const selectedModel = modelPref?.model ?? defaultPref?.model;
   // Match the TUI resolver: session provider/model, then the provider's default.
   // Capabilities belong to the model's wire, never to a provider name.
@@ -5059,12 +5075,14 @@ export function SessionScreen({
             ),
         }
       : undefined,
-    fast: codexFastAvailable
+    speed: codexSpeedAvailable
       ? {
-          enabled: codexFastAvailable.enabled ?? false,
-          busy: false,
-          toggle: () =>
-            flipSwitch(codexFastAvailable, codexFastAvailable.enabled ?? false, setCodexFast),
+          label: 'Speed',
+          value: typeof codexSpeedAvailable.value === 'string'
+            ? codexSpeedAvailable.value
+            : codexSpeedAvailable.enabled ? 'fast' : 'normal',
+          busy: codexSpeedBusy,
+          cycle: () => cycleCodexSpeed(codexSpeedAvailable),
         }
       : undefined,
     branch:

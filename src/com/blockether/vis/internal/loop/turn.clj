@@ -1544,14 +1544,15 @@
 (defn- with-setting-defaults
   "Fill the response options a caller left unset from the turn's resolved
    setting `snapshot`: `reasoning_level` becomes the base reasoning level and
-   each provider fast mode switched on becomes a turn feature, so project, group
+   each selected provider fast mode becomes a turn feature, so project, group
    and session values reach every channel. With `simplified_thinking_modes` off,
    `reasoning_effort` becomes the preferred provider rung: svar sends the nearest
    rung of each attempted model, and a model without rungs keeps the base level.
-   An explicit caller value wins, including a feature set to false."
+   An explicit caller value wins, including a feature set to false or a speed
+   requested through the legacy `service_tier`."
   [opts snapshot]
   (let [features
-        (loop-router/setting-turn-features snapshot)
+        (loop-router/setting-turn-features snapshot (:extra-body opts))
 
         caller-depth?
         (some some? (map opts [:reasoning-default :reasoning-effort :preferred-reasoning-effort]))

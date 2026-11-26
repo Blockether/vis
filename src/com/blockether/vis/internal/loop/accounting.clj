@@ -65,8 +65,8 @@
 
 (defn pricing
   "Pricing context of a turn. `model` and `provider` price a response that names no
-   serving route; `extra-body` and `turn-features` select a provider's fast-mode
-   price multiplier."
+   serving route; `extra-body` and `turn-features` select the price multiplier
+   of the requested speed on the provider that served the response."
   [model provider extra-body turn-features]
   {:model model :provider provider :extra-body extra-body :turn-features turn-features})
 

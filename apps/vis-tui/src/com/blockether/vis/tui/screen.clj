@@ -9406,7 +9406,7 @@
   [^TerminalScreen screen db r]
   (if-not (:prefix (:state r))
     r
-    ;; The band shows Fast mode only for a Codex session (#333), and View images
+    ;; The band offers the speed control only for a Codex session (#333), and View images
     ;; only when the session has a picture to show.
     (let [sid
           (get-in db [:session :id])
@@ -10999,8 +10999,8 @@
                     :pick-reasoning
                     (show-reasoning-picker!)
 
-                    :toggle-codex-fast
-                    (state/dispatch [:toggle-codex-fast-mode])
+                    :cycle-codex-speed
+                    (state/dispatch [:cycle-codex-speed])
 
                     :cycle-verbosity
                     (state/dispatch [:cycle-verbosity])
@@ -11233,8 +11233,8 @@
         :pick-reasoning
         (do (show-reasoning-picker!) ::recur)
 
-        :toggle-codex-fast
-        (do (state/dispatch [:toggle-codex-fast-mode]) ::recur)
+        :cycle-codex-speed
+        (do (state/dispatch [:cycle-codex-speed]) ::recur)
 
         :cycle-verbosity
         (do (state/dispatch [:cycle-verbosity]) ::recur)

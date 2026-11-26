@@ -1177,13 +1177,22 @@ example to turn off the process jail for one session.
 Paths and access rows use guided editors, and their changes apply on the next turn. To edit
 configuration files directly, use a text editor outside the Companion app or the terminal.
 
-Vis captures reasoning, verbosity, thinking summary, and fast mode when you submit a message. Later
-edits do not change running or queued responses.
+Vis captures reasoning, verbosity, thinking summary, and response speed when you submit a message.
+Later edits do not change running or queued responses.
 
 Skill and MCP availability applies to the next lookup or call, also to a call by a name that the
 agent already knows. An external call that already runs can finish. Turn a skill off globally or
 locally to remove it from discovery, `doc()`, prompt inventories, and slash entry points. The
 change does not erase text that the agent already read, and it does not deny filesystem access.
+
+### OpenAI Codex speed
+
+Use the **Speed** control below the message input in an OpenAI Codex session. In the terminal,
+press `Ctrl+X m f` to select the next speed. The change applies only to this session.
+
+- **Normal** uses the standard service tier.
+- **Fast** uses the priority service tier. Vis estimates 2 times the standard cost.
+- **Ultrafast** uses the ultrafast service tier. Vis estimates 6 times the standard cost.
 
 ### Thinking modes
 

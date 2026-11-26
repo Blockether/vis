@@ -34,10 +34,10 @@ const meta = {
         busy: false,
         toggle: fn(),
       },
-      fast: {
-        ...STORY_RESPONSE_CONTROL_VALUES.fast,
+      speed: {
+        ...STORY_RESPONSE_CONTROL_VALUES.speed,
         busy: false,
-        toggle: fn(),
+        cycle: fn(),
       },
     },
   },
