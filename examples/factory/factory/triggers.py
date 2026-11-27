@@ -14,7 +14,7 @@ from vis_optmem.shared import Absent, Equals, Table
 from factory import settings
 from factory.records import Document, Records, Refused, pack, unpack
 from factory.runs import Runs
-from factory.workflows import source
+from factory.workflows.store import Workflows
 
 EVENT = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+")
 SCHEDULE = "cursor/cron"
@@ -88,11 +88,11 @@ class Cron:
 
 
 class Triggers:
-    """Process the triggers in workflow files and the events in the table."""
+    """Process the triggers of the workflows and the events in the table."""
 
-    def __init__(self, table: Table, runs: Runs) -> None:
+    def __init__(self, table: Table, runs: Runs, store: Workflows) -> None:
         """Use the table of the run manager, so a mark and a run can share a write."""
-        self.records, self.table, self.runs = Records(table), table, runs
+        self.records, self.table, self.runs, self.store = Records(table), table, runs, store
         self.lock = threading.Lock()
 
     def emit(self, kind: str, data: Document) -> str:
@@ -103,16 +103,15 @@ class Triggers:
                 return event_id
 
     def workflows(self) -> list[tuple[Document, str]]:
-        """Read each valid source and its trigger list from the same file version."""
+        """Read each workflow that has triggers, with the source of the same version."""
         found = []
-        for row in source.listing():
+        for row in self.store.listing():
             if not row["triggers"]:
                 continue
             try:
-                text = source.read(row["name"])
-                found.append((source.describe(row["name"], text), text))
+                found.append(self.store.current(row["name"]))
             except Refused:
-                continue  # the file changed while this tick read it
+                continue  # a person removed the workflow while this tick read it
         return found
 
     def listing(self, now: float | None = None) -> list[Document]:

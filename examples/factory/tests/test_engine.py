@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -13,8 +13,8 @@ import pytest
 from factory import settings
 from factory.api import App
 from factory.records import Refused
+from factory.runs import Starter
 from factory.triggers import Cron
-from factory.workflows import source
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
 SIMPLE = "from factory.workflows import workflow\n\n@workflow()\ndef review(ctx):\n    pass\n"
@@ -36,7 +36,7 @@ def test_cron_match():
 def test_two_ticks_fire_one_run_for_one_cron_slot(engine, monkeypatch):
     """Two schedulers that both read a due slot must record just one run."""
     text = "from factory.workflows import cron, workflow\n\n@workflow(triggers=[cron('* * * * *', input={'reason': 'schedule'})])\ndef review(ctx, reason):\n    pass\n"
-    assert engine.call("PUT", "workflows/review", {"source": text})[0] == 200
+    engine.write("review", text)
     peer = App(engine.table, None, engine.gateway, type(engine.starter)())
     barrier = Barrier(2)
     write = engine.table.transact
@@ -65,7 +65,7 @@ def test_two_ticks_fire_one_run_for_one_cron_slot(engine, monkeypatch):
     assert engine.app.runs.source(first_run["id"]) == text
     engine.app.triggers.tick([], now + 120)
     assert len(engine.app.runs.listing()) == 3
-    engine.call("PUT", "workflows/new", {"source": text})
+    engine.write("new", text)
     engine.app.triggers.tick([], now + 120)
     assert len(engine.app.runs.listing(workflow="new")) == 1
 
@@ -74,7 +74,7 @@ def test_hook_and_trigger_input(engine, monkeypatch):
     """A valid hook records any JSON value. Only workflow inputs reach the run."""
     monkeypatch.setattr(settings, "TOKEN", "hook-test")
     script = "from factory.workflows import on, workflow\n\n@workflow(triggers=[on('webhook.github', input={'reason':'push'})])\ndef review(ctx, body, reason):\n    pass\n"
-    engine.call("PUT", "workflows/review", {"source": script})
+    engine.write("review", script)
     assert engine.call("POST", "hooks/github", [3])[0] == 401
     status, result = engine.call("POST", "hooks/github", [3], {"X-Factory-Token": "hook-test"})
     assert status == 200
@@ -89,7 +89,7 @@ def test_hook_and_trigger_input(engine, monkeypatch):
 def test_run_input_must_fit_the_workflow(engine):
     """A run does not start without a necessary input or with a value of the wrong simple type."""
     script = "from factory.workflows import workflow\n\n@workflow()\ndef review(ctx, body: str, count: int = 1):\n    pass\n"
-    engine.call("PUT", "workflows/review", {"source": script})
+    engine.write("review", script)
     for given in ({}, {"body": 123}, {"body": "x", "count": True}, {"body": "x", "other": 1}):
         assert engine.call("POST", "runs", {"workflow": "review", "input": given})[0] == 400, given
     assert engine.call("POST", "runs", {"workflow": "review", "input": {"body": "x", "count": 2}})[0] == 200
@@ -99,7 +99,7 @@ def test_session_idle_events(engine):
     """Only a person's idle session makes an event, once for each turn count."""
     now = time.time()
     text = "from factory.workflows import on, workflow\n\n@workflow(triggers=[on('session.idle', input={'title':'Follow-up'})])\ndef review(ctx, session, title):\n    pass\n"
-    engine.call("PUT", "workflows/review", {"source": text})
+    engine.write("review", text)
     idle = {"id": SESSION, "title": "Chat", "group": None, "updated": now - settings.IDLE_S - 1, "turns": 2, "busy": False}
     engine.gateway.rows = [
         idle,
@@ -119,7 +119,7 @@ def test_session_idle_events(engine):
 
 def test_gate_and_restart(engine):
     """A gate decision returns a waiting run to work; a new factory can resume it."""
-    engine.call("PUT", "workflows/review", {"source": SIMPLE})
+    engine.write("review", SIMPLE)
     status, run = engine.call("POST", "runs", {"workflow": "review"})
     assert status == 200
     path = f"runs/{run['id']}"
@@ -172,30 +172,170 @@ def test_suggestion_decision_and_discussion(engine):
     assert [event["kind"] for event in engine.call("GET", "events")[1]["events"]] == ["suggestion.accepted", "suggestion.created"]
 
 
-def test_workflow_save_checks_its_base(engine):
-    """An editor cannot overwrite a workflow that changed after its read."""
-    assert engine.call("PUT", "workflows/review", {"source": SIMPLE})[0] == 200
+def test_file_change_becomes_a_version(engine):
+    """A changed file of the workflow project is the next version, and a run uses it."""
+    engine.write("review", SIMPLE)
     changed = SIMPLE.replace("@workflow()", "@workflow(title='New')")
-    assert engine.call("PUT", "workflows/review", {"source": changed, "base": SIMPLE})[0] == 200
-    assert engine.call("PUT", "workflows/review", {"source": SIMPLE + "\n", "base": SIMPLE})[0] == 409
-    assert source.read("review") == changed
+    engine.gateway.is_editing = True
+    (engine.workflows / "review.py").write_text(changed, encoding="utf-8")
+    engine.app.tick()
+    assert engine.call("GET", "workflows/review")[1]["version"] == 1  # the session did not complete its change
+    engine.gateway.is_editing = False
+    engine.app.tick()
+    engine.app.tick()
+    shown = engine.call("GET", "workflows/review")[1]
+    assert (shown["version"], shown["title"], shown["source"]) == (2, "New", changed)
+    assert [(row["version"], row["origin"]) for row in shown["versions"]] == [(2, "project"), (1, "project")]
+    assert engine.call("GET", "workflows/review?version=1")[1]["source"] == SIMPLE
+    run = engine.call("POST", "runs", {"workflow": "review"})[1]
+    assert run["version"] == 2
+    assert engine.app.runs.source(run["id"]) == changed
+    assert engine.call("PUT", "workflows/review", {"source": SIMPLE})[0] == 404  # the API does not take source
 
 
-@pytest.mark.skipif(shutil.which("git") is None, reason="This test needs Git.")
-def test_git_save_commits_only_the_workflow(engine):
-    """Saving a workflow does not commit another file that a person staged."""
-    project = engine.workflows.parent
-    assert source.git(project, "init").returncode == 0
-    (project / "OTHER").write_text("Another file", encoding="utf-8")
-    assert source.git(project, "add", "OTHER").returncode == 0
-    status, saved = engine.call("PUT", "workflows/review", {"source": SIMPLE})
-    assert status == 200
-    assert saved["committed"]
-    assert source.git(project, "show", "HEAD:workflows/review.py").stdout == SIMPLE
-    assert source.git(project, "show", "HEAD:OTHER").returncode != 0
-    assert source.git(project, "diff", "--cached", "--name-only").stdout.splitlines() == ["OTHER"]
-    assert engine.call("DELETE", "workflows/review")[0] == 200
-    assert source.git(project, "show", "HEAD:workflows/review.py").returncode != 0
+def test_file_that_does_not_load_keeps_the_version(engine):
+    """A file with an error makes no version. The page gets the error, and a run uses the last version."""
+    engine.write("review", SIMPLE)
+    engine.write("review", "def review(:\n")
+    (row,) = engine.call("GET", "workflows")[1]["workflows"]
+    assert row["version"] == 1
+    assert row["draft"]
+    run = engine.call("POST", "runs", {"workflow": "review"})[1]
+    assert engine.app.runs.source(run["id"]) == SIMPLE
+    engine.write("review", "return 1\n" + SIMPLE)  # the parser accepts this, a run does not
+    assert engine.call("GET", "workflows/review")[1]["draft"] == "line 1: 'return' outside function"
+    engine.starter.fault = "ModuleNotFoundError: No module named 'absent'"
+    engine.write("review", "import absent\n" + SIMPLE)
+    engine.app.tick()
+    shown = engine.call("GET", "workflows/review")[1]
+    assert (shown["version"], shown["draft"]) == (1, engine.starter.fault)
+    assert engine.starter.checked.count("review") == 2  # the first version, then one check of the refused file
+    engine.starter.fault = ""
+    engine.write("review", SIMPLE + "\n")
+    (row,) = engine.call("GET", "workflows")[1]["workflows"]
+    assert (row["version"], row["draft"]) == (2, None)
+
+
+def test_child_load_finds_what_the_parser_accepts(engine):
+    """The check loads the source in a child as a run does, so a missing module is a fault before a run."""
+    Starter().check("review", SIMPLE)
+    with pytest.raises(Refused, match="ModuleNotFoundError"):
+        Starter().check("review", "import absent_module_of_the_factory_test\n" + SIMPLE)
+
+
+def test_file_written_during_a_look_is_not_lost(engine, monkeypatch):
+    """A file that appears after the factory read the directory stays, and becomes a version."""
+    engine.write("review", SIMPLE)
+    (engine.workflows / "review.py").unlink()
+    changed = SIMPLE.replace("@workflow()", "@workflow(title='New')")
+    raw = engine.app.store.raw
+
+    def late(name):
+        """Answer that no file is there, then let an editor write one."""
+        monkeypatch.setattr(engine.app.store, "raw", raw)
+        (engine.workflows / "review.py").write_text(changed, encoding="utf-8")
+
+    monkeypatch.setattr(engine.app.store, "raw", late)
+    engine.app.tick()
+    engine.app.tick()
+    assert (engine.workflows / "review.py").read_text() == changed
+    assert engine.call("GET", "workflows/review")[1]["version"] == 2
+
+
+@pytest.mark.parametrize("call", [("POST", "workflows/review/restore", {"version": 1}), ("DELETE", "workflows/review", None)])
+def test_late_edit_survives_a_restore_and_a_removal(engine, monkeypatch, call):
+    """An edit that lands after the factory read the file is not overwritten or removed. It is the next version."""
+    engine.write("review", SIMPLE)
+    engine.write("review", SIMPLE + "\n")
+    edit = SIMPLE.replace("@workflow()", "@workflow(title='Late')")
+    raw, reads = engine.app.store.raw, []
+
+    def late(name):
+        """Give the content of the file, then let an editor change the file after the last read of the call."""
+        found = raw(name)
+        reads.append(found)
+        if len(reads) == 2:
+            (engine.workflows / "review.py").write_text(edit, encoding="utf-8")
+        return found
+
+    monkeypatch.setattr(engine.app.store, "raw", late)
+    assert engine.call(*call)[0] == 200
+    monkeypatch.setattr(engine.app.store, "raw", raw)
+    engine.app.tick()
+    engine.app.tick()
+    assert (engine.workflows / "review.py").read_text() == edit
+    shown = engine.call("GET", "workflows/review")[1]
+    assert (shown["version"], shown["source"], shown["deleted"]) == (4, edit, False)
+    assert sorted(path.name for path in engine.workflows.iterdir()) == ["review.py"]
+
+
+def test_restore_is_a_new_version_and_survives_a_stop(engine, monkeypatch):
+    """A restore writes the table first. A stop before the file write does not make the old file a version."""
+    engine.write("review", SIMPLE)
+    changed = SIMPLE.replace("@workflow()", "@workflow(title='New')")
+    engine.write("review", changed)
+    write = engine.app.store.write
+
+    def stop(name, source, before):
+        """Fail as a full disk does."""
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(engine.app.store, "write", stop)
+    assert engine.call("POST", "workflows/review/restore", {"version": 1})[1]["version"] == 3
+    assert (engine.workflows / "review.py").read_text() == changed
+    monkeypatch.setattr(engine.app.store, "write", write)
+    engine.app.tick()
+    engine.app.tick()
+    shown = engine.call("GET", "workflows/review")[1]
+    assert (shown["version"], shown["origin"], shown["source"], shown["draft"]) == (3, "restore", SIMPLE, None)
+    assert (engine.workflows / "review.py").read_text() == SIMPLE
+    assert engine.call("POST", "workflows/review/restore", {"version": 3})[0] == 400
+    assert engine.call("POST", "workflows/review/restore", {"version": 9})[0] == 404
+    for value in (0, -1, 1.5, 1e999, True, "x", "1", None, [1]):
+        assert engine.call("POST", "workflows/review/restore", {"version": value})[0] == 400, value
+    assert engine.call("GET", "workflows/review?version=1e999")[0] == 400
+
+
+def test_removed_workflow_keeps_its_versions(engine):
+    """A removed workflow does not run and has no file. A person can restore it, or a session can write it again."""
+    text = "from factory.workflows import cron, workflow\n\n@workflow(triggers=[cron('* * * * *')])\ndef review(ctx):\n    pass\n"
+    engine.write("review", text)
+    assert engine.call("DELETE", "workflows/review")[1] == {"removed": "review"}
+    assert not (engine.workflows / "review.py").exists()
+    engine.app.tick()
+    assert engine.app.runs.listing() == []
+    assert engine.call("POST", "runs", {"workflow": "review"})[0] == 404
+    (row,) = engine.call("GET", "workflows")[1]["workflows"]
+    assert (row["deleted"], row["version"], row["triggers"]) == (True, 2, [])
+    engine.write("review", text)
+    assert engine.call("GET", "workflows/review")[1]["version"] == 3
+    engine.call("DELETE", "workflows/review")
+    assert engine.call("POST", "workflows/review/restore", {"version": 1})[1]["version"] == 5
+    assert (engine.workflows / "review.py").read_text() == text
+
+
+def test_new_machine_gets_the_files_from_the_table(engine, tmp_path, monkeypatch):
+    """The table is the store: an empty workflow project gets each current version as a file."""
+    engine.write("review", SIMPLE)
+    monkeypatch.setattr(settings, "WORKFLOWS", str(tmp_path / "other"))
+    App(engine.table, None, engine.gateway, type(engine.starter)()).tick()
+    assert (tmp_path / "other" / "review.py").read_text() == SIMPLE
+    assert engine.call("GET", "workflows/review")[1]["version"] == 1
+
+
+def test_new_database_gets_the_first_workflows_one_time(engine):
+    """A new database gets the first workflows. A later start does not bring a removed one back."""
+    first = Path(__file__).resolve().parents[1] / "workflows"
+    engine.app.store.seed(first)
+    engine.app.tick()
+    rows = engine.call("GET", "workflows")[1]["workflows"]
+    assert {(row["name"], row["version"], row["draft"]) for row in rows} == {("implement", 1, None), ("remember", 1, None), ("suggest", 1, None)}
+    assert (engine.workflows / "suggest.py").read_text() == (first / "suggest.py").read_text()
+    engine.call("DELETE", "workflows/suggest")
+    engine.app.store.seed(first)
+    engine.app.tick()
+    assert engine.call("GET", "workflows/suggest")[1]["deleted"]
+    assert not (engine.workflows / "suggest.py").exists()
 
 
 def test_factory_comment_is_replay_safe(engine):

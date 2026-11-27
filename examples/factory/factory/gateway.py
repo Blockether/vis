@@ -18,10 +18,17 @@ class Gateway:
         self.registered = False
 
     def register(self, client: GatewayClient) -> None:
-        """Give the project to the gateway one time, so Vis web shows it before its first session."""
+        """Give the two projects to the gateway one time, so Vis web shows them before their first session."""
         if not self.registered:
             client.routes.post_projects_ensure(body={"root": settings.PROJECT, "name": settings.NAME})
+            client.routes.post_projects_ensure(body={"root": settings.WORKFLOWS, "name": settings.WORKFLOWS_NAME})
             self.registered = True
+
+    def editing(self) -> bool:
+        """Tell if a session of the workflow project has a turn in progress. Its files can change then."""
+        with self.client() as client:
+            self.register(client)
+            return any(row.get("status") != "idle" or row.get("current_turn_id") for row in self.session_rows(client, root=settings.WORKFLOWS))
 
     def client(self) -> GatewayClient:
         """Open a client with the local gateway token."""

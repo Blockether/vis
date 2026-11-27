@@ -22,10 +22,11 @@ DATABASE = ENV.get("FACTORY_DATABASE") or f"sqlite:///{HOME}/factory.db"
 D1_TOKEN = ENV.get("CLOUDFLARE_API_TOKEN", "")
 # The project directory. Each session and each run works in it.
 PROJECT = os.path.expanduser(ENV.get("FACTORY_PROJECT") or f"{HOME}/project")
-# The directory of the workflow files, `<name>.py`. A file is the one source of a workflow and of its triggers.
-WORKFLOWS = os.path.expanduser(ENV.get("FACTORY_WORKFLOWS") or f"{PROJECT}/workflows")
-# The author of each commit that the factory makes for a saved workflow.
-GIT_NAME, GIT_EMAIL = "Factory", "factory@blockether.com"
+# The Vis project of the workflow code, with one file `<name>.py` for each workflow. A session changes a file there.
+# The table keeps each change as a version, and a run uses the newest version.
+WORKFLOWS = os.path.expanduser(ENV.get("FACTORY_WORKFLOWS") or f"{HOME}/workflows")
+# The name of that project in Vis.
+WORKFLOWS_NAME = "Workflows"
 
 # -- the server ----------------------------------------------------------------------
 
@@ -56,7 +57,7 @@ TOKEN_FILE = os.path.expanduser(ENV.get("VIS_GATEWAY_TOKEN_FILE", "~/.vis/gatewa
 # The provider and the model of a run whose workflow names a model. Without `@workflow(model=)`, a run uses the model of the gateway.
 PROVIDER = ENV.get("FACTORY_PROVIDER", "")
 # The session group of the runs, and the group of the sessions that the factory starts for a talk about a suggestion.
-RUNS_GROUP, TALKS_GROUP = "Workflows", "Suggestions"
+RUNS_GROUP, TALKS_GROUP = "Runs", "Suggestions"
 
 # -- the workflow runs ---------------------------------------------------------------
 
@@ -66,6 +67,8 @@ PARALLEL = int(ENV.get("FACTORY_PARALLEL", "3"))
 STEPS, STARTS = 1000, 50
 # The time that one turn of a run can take, and one call of the factory API.
 TURN_S, API_S = 900, 120
+# The time that the load of a workflow source can take, before the source becomes a version.
+LOAD_S = 60
 # The correction requests that a session gets for an answer that does not fit its model.
 CORRECTIONS = 2
 # The runs that the API lists.

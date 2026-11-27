@@ -10,6 +10,7 @@ from vis_optmem.shared import MemoryTable
 
 from factory import settings
 from factory.api import App
+from factory.records import Refused
 
 SESSION = "12345678-1234-1234-1234-123456789abc"
 
@@ -36,14 +37,20 @@ class Starter:
     """Give each run a fake child process."""
 
     def __init__(self):
-        """Record all starts."""
-        self.started = []
+        """Record all starts and all checks."""
+        self.started, self.checked, self.fault = [], [], ""
 
     def start(self, run_id):
         """Record a start and return its process."""
         process = Process()
         self.started.append((run_id, process))
         return process
+
+    def check(self, name, source):
+        """Record a check. Refuse the source when the test set a fault."""
+        self.checked.append(name)
+        if self.fault:
+            raise Refused(400, self.fault)
 
 
 class Gateway:
@@ -52,10 +59,15 @@ class Gateway:
     def __init__(self):
         """Start without any sessions."""
         self.rows, self.talks, self.cancelled = [], [], []
+        self.is_editing = False
 
     def sessions(self):
         """List the fake sessions."""
         return self.rows
+
+    def editing(self):
+        """Return whether a session of the workflow project has a running turn."""
+        return self.is_editing
 
     def busy(self, session):
         """Return whether the session has a running turn."""
@@ -84,7 +96,8 @@ def engine(monkeypatch, tmp_path):
     """Set up the engine with a real table contract and fake services."""
     workflows = tmp_path / "workflows"
     workflows.mkdir()
-    monkeypatch.setattr(settings, "PROJECT", str(tmp_path))
+    (tmp_path / "project").mkdir()
+    monkeypatch.setattr(settings, "PROJECT", str(tmp_path / "project"))
     monkeypatch.setattr(settings, "WORKFLOWS", str(workflows))
     monkeypatch.setattr(settings, "PARALLEL", 3)
     table, starter, gateway = MemoryTable(), Starter(), Gateway()
@@ -96,4 +109,9 @@ def engine(monkeypatch, tmp_path):
         status, _, raw = app.handle(method, f"/factory/api/{path}", body, headers or {})
         return status, json.loads(raw)
 
-    return SimpleNamespace(table=table, app=app, starter=starter, gateway=gateway, workflows=workflows, call=call)
+    def write(name, source):
+        """Change a workflow file as a session does, and let the factory look at it."""
+        (workflows / f"{name}.py").write_text(source, encoding="utf-8")
+        app.store.sync()
+
+    return SimpleNamespace(table=table, app=app, starter=starter, gateway=gateway, workflows=workflows, call=call, write=write)

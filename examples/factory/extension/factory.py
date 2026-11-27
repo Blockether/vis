@@ -59,6 +59,13 @@ class StartResult(TypedDict):
     text: str
 
 
+class CheckResult(TypedDict):
+    """What a workflow source says about itself, and what to do next."""
+
+    workflow: dict[str, Any]
+    text: str
+
+
 class _NoRedirect(request.HTTPRedirectHandler):
     """Do not send Factory credentials to a redirect target."""
 
@@ -137,13 +144,19 @@ class Factory:
         run = _run(_api("POST", "runs", started.model_dump(mode="json")))
         return {"run": run, "text": f"Run {run['id']} is {run['status']}. Open Runs to follow it."}
 
+    @vis.method(activity=vis.Activity(label="Check workflow", show_start=False))
+    def check(self, name: str, source: str) -> CheckResult:
+        """Check the source of the workflow `name` before the turn ends. An error names the fault. The check keeps nothing."""
+        about = _api("POST", "workflows/check", {"name": name, "source": source})
+        return {"workflow": about, "text": f"The source loads. After the turn, the factory keeps the file {name}.py of the Workflows project as a new version."}
+
 
 vis.register_extension(
     vis.Extension(
         name="factory",
         alias="factory",
         env=["FACTORY_URL", "FACTORY_TOKEN"],
-        description="Read Factory sessions, store suggestions, and start and follow workflows.",
+        description="Read Factory sessions, store suggestions, check workflow code, and start and follow workflows.",
         symbols=[vis.Symbol(Factory(), name="factory")],
     )
 )

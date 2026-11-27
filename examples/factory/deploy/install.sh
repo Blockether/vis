@@ -20,7 +20,8 @@
 # The files in <root>:
 #   app/      the code of the factory          site/     its Python packages
 #   home/     the home of the Vis gateway      data/     the database and the logs
-#   project/  the Git repository with the workflows, where each session works
+#   project/  the Git repository where each session and each run works
+#   workflows/  the Vis project of the workflow code; the database keeps each version
 #   env       the settings                     secret.env   the token of the factory
 set -euo pipefail
 umask 077
@@ -87,6 +88,7 @@ FACTORY_DATABASE=$DATABASE
 FACTORY_PROVIDER=$PROVIDER
 FACTORY_HOME=$ROOT/data
 FACTORY_PROJECT=$ROOT/project
+FACTORY_WORKFLOWS=$ROOT/workflows
 VIS_GATEWAY_URL=http://127.0.0.1:$GATEWAY_PORT
 VIS_GATEWAY_TOKEN_FILE=$ROOT/home/.vis/gateway.token
 EOF
@@ -148,13 +150,11 @@ if [[ "$APP" != "$ROOT/app" ]]; then
   rm -rf "$ROOT/app" && mv "$ROOT/app.new" "$ROOT/app"
 fi
 
-# -- the project: the workflows and the settings of each session ----------------------
-mkdir -p "$ROOT/project/workflows"
-# A workflow that a person changed stays.
-for file in "$ROOT/app/workflows/"*.py; do
-  [[ -e "$ROOT/project/workflows/${file##*/}" ]] || cp "$file" "$ROOT/project/workflows/"
-done
-[[ -f "$ROOT/project/vis.yml" ]] || cat > "$ROOT/project/vis.yml" <<EOF
+# -- the two Vis projects: the work of the factory, and the code of its workflows ------
+mkdir -p "$ROOT/project" "$ROOT/workflows"
+# The factory gives the workflow project its files: the database keeps the workflow code.
+for project in project workflows; do
+  [[ -f "$ROOT/$project/vis.yml" ]] || cat > "$ROOT/$project/vis.yml" <<EOF
 # Each session of the factory reads and writes the memories of the factory.
 environment:
   FACTORY_URL: {literal: "$LOCAL_URL"}
@@ -165,6 +165,7 @@ environment:
   MEMORY_TEAM_STORE_CONFIG: {literal: '{"url": "$LOCAL_URL/factory/api/memory", "memory": "team"}'}
   MEMORY_STORE_TOKEN: {env: FACTORY_TOKEN}
 EOF
+done
 if [[ ! -d "$ROOT/project/.git" ]]; then
   git init --quiet "$ROOT/project"
   git -C "$ROOT/project" add --all

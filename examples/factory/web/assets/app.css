@@ -200,7 +200,8 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .gate { padding: 12px; border: 1px solid var(--warn-line); background: var(--cream-light); display: grid; gap: 8px; }
 .status-line { padding: 6px 14px; margin: 0; }
 .status-line:empty, .trigger-status:empty { display: none; }
-textarea.source { min-height: 300px; white-space: pre; overflow: auto; tab-size: 4; }
+pre.source { max-height: 62vh; white-space: pre; overflow: auto; tab-size: 4; line-height: 1.5; }
+select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 8px; }
 .trigger, .entry, .comment { padding: 10px 12px; border: 1px solid var(--line); background: var(--cream); }
 .comment p { white-space: pre-wrap; margin: 4px 0 0; }
 .entry pre { margin-top: 6px; }
@@ -220,7 +221,6 @@ textarea.source { min-height: 300px; white-space: pre; overflow: auto; tab-size:
   .hub { padding: 16px 10px 28px; }
   .filters { align-items: end; }
   form .filters { grid-template-columns: minmax(0, 1fr); }
-  textarea.source { min-height: 230px; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .workspace.has-detail > aside { display: none; }
   .workspace:not(.has-detail) > .detail { display: none; }

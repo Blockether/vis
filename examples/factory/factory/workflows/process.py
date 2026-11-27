@@ -1,4 +1,4 @@
-"""Work on one run: `python -m factory.workflows.process <run id>`."""
+"""Work on one run: `python -m factory.workflows.process <run id>`. With `--check <name>`, only load the source on the standard input."""
 
 from __future__ import annotations
 
@@ -26,6 +26,16 @@ def load(name: str, source: str) -> tuple[Callable[..., object], Marks]:
     if len(found) != 1:
         raise ValueError("a workflow file needs exactly one function with @workflow")
     return found[0]
+
+
+def loads(name: str) -> int:
+    """Load the source on the standard input as a run does. Write the fault, if there is one."""
+    try:
+        load(name, sys.stdin.buffer.read().decode())
+    except (Exception, SystemExit) as failure:
+        print(f"{type(failure).__name__}: {failure}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(run_id: str) -> int:
@@ -81,4 +91,4 @@ def main(run_id: str) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(loads(sys.argv[2]) if sys.argv[1] == "--check" else main(sys.argv[1]))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
 from factory import settings
@@ -20,6 +21,10 @@ def main() -> None:
     Path(settings.PROJECT).mkdir(parents=True, exist_ok=True)
     Path(settings.WORKFLOWS).mkdir(parents=True, exist_ok=True)
     app = App(open_table("factory"), Memories(), Gateway(), Starter())
+    # The first workflows of a new database, and the guide of the workflow project.
+    first = Path(__file__).resolve().parents[1] / "workflows"
+    app.store.seed(first)
+    shutil.copyfile(first / "AGENTS.md", Path(settings.WORKFLOWS) / "AGENTS.md")
     try:
         serve(app)
     finally:

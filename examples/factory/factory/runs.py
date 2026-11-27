@@ -39,16 +39,33 @@ class Starts(Protocol):
     def start(self, run_id: str) -> Process:
         """Start the run and return its process."""
 
+    def check(self, name: str, source: str) -> None:
+        """Load a workflow source as a run does. Refuse a source that does not load."""
+
 
 class Starter:
     """Start each run in the project directory."""
 
-    def start(self, run_id: str) -> subprocess.Popen[bytes]:
-        """Start a child with the factory API address and token."""
+    def environment(self) -> dict[str, str]:
+        """Return the environment of a child, with the factory API address and token."""
         example = str(Path(__file__).resolve().parents[1])
         pythonpath = os.pathsep.join(part for part in (example, settings.ENV.get("PYTHONPATH", "")) if part)
-        env = {**settings.ENV, "PYTHONPATH": pythonpath, "PYTHONUNBUFFERED": "1", "FACTORY_URL": settings.LOCAL_URL, "FACTORY_TOKEN": settings.TOKEN}
-        return subprocess.Popen([sys.executable, "-m", "factory.workflows.process", run_id], cwd=settings.PROJECT, env=env)
+        return {**settings.ENV, "PYTHONPATH": pythonpath, "PYTHONUNBUFFERED": "1", "FACTORY_URL": settings.LOCAL_URL, "FACTORY_TOKEN": settings.TOKEN}
+
+    def start(self, run_id: str) -> subprocess.Popen[bytes]:
+        """Start a child for one run."""
+        return subprocess.Popen([sys.executable, "-m", "factory.workflows.process", run_id], cwd=settings.PROJECT, env=self.environment())
+
+    def check(self, name: str, source: str) -> None:
+        """Load a source in a child, as a run does. The factory itself never runs workflow code."""
+        command = [sys.executable, "-m", "factory.workflows.process", "--check", name]
+        try:
+            done = subprocess.run(command, input=source.encode(), cwd=settings.PROJECT, env=self.environment(), capture_output=True, timeout=settings.LOAD_S, check=False)
+        except subprocess.TimeoutExpired:
+            raise Refused(400, f"the workflow does not load in {settings.LOAD_S} seconds") from None
+        if done.returncode:
+            lines = done.stderr.decode(errors="replace").strip().splitlines()
+            raise Refused(400, (lines[-1] if lines else "the workflow does not load")[:300])
 
 
 class Runs:
@@ -98,6 +115,7 @@ class Runs:
                 doc = {
                     "id": run_id,
                     "workflow": workflow,
+                    "version": about.get("version"),
                     "title": about["title"],
                     "input": given,
                     "status": "queued",

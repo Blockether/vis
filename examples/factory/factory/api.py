@@ -21,6 +21,7 @@ from factory.runs import Runs, Starts
 from factory.suggestions import Suggestions, text
 from factory.triggers import Triggers
 from factory.workflows import source
+from factory.workflows.store import Workflows
 
 JSON = "application/json; charset=utf-8"
 Answer = tuple[int, str, bytes]
@@ -39,15 +40,18 @@ class App:
         self.memories, self.gateway = memories, gateway
         self.records = Records(table)
         self.runs = Runs(table, starter, gateway.busy)
-        self.triggers = Triggers(table, self.runs)
+        self.store = Workflows(table, starter.check)
+        self.triggers = Triggers(table, self.runs, self.store)
         self.suggestions = Suggestions(table, gateway.discuss)
         self.started = time.time()
+        # A session of the workflow project has a turn in progress: the factory reads the files after it.
+        self.editing = False
         routes: list[tuple[str, str, Callable[..., Any]]] = [
             ("GET", r"status", self.status),
             ("GET", r"workflows", self.workflows),
             ("POST", r"workflows/check", self.check),
             ("GET", r"workflows/(\w+)", self.workflow),
-            ("PUT", r"workflows/(\w+)", self.save),
+            ("POST", r"workflows/(\w+)/restore", self.restore),
             ("DELETE", r"workflows/(\w+)", self.remove),
             ("GET", r"runs", self.list_runs),
             ("POST", r"runs", self.run),
@@ -111,8 +115,12 @@ class App:
         """Check for due work and give it to the run processes."""
         try:
             sessions = self.sessions()
+            self.editing = self.gateway.editing()
         except (GatewayError, TransportError, Refused):
-            sessions = []  # gateway unavailability does not stop time and webhook triggers
+            # gateway unavailability does not stop time and webhook triggers, and no session changes a file then
+            sessions, self.editing = [], False
+        if not self.editing:
+            self.store.sync()
         self.triggers.tick(sessions)
         self.runs.fill()
 
@@ -121,13 +129,13 @@ class App:
         self.runs.stop()
 
     def status(self, **_: Any) -> Document:
-        """Return the factory release, gateway state and count of live runs."""
+        """Return the two projects, the gateway state and the count of live runs."""
         gateway, models = self.gateway.status()
         kind = urlsplit(settings.DATABASE).scheme
         return {
             "name": settings.NAME,
             "project": settings.PROJECT,
-            "release": source.release(),
+            "workflows": settings.WORKFLOWS,
             "models": models,
             "started": self.started,
             "live_runs": self.runs.live(),
@@ -136,29 +144,28 @@ class App:
         }
 
     def workflows(self, **_: Any) -> Document:
-        """List the workflow files and what they say about themselves."""
-        return {"workflows": source.listing()}
+        """List the workflows and what their current versions say about themselves."""
+        return {"workflows": self.store.listing(), "project": settings.WORKFLOWS_NAME, "editing": self.editing}
 
-    def workflow(self, name: str, **_: Any) -> Document:
-        """Return a workflow and its source."""
-        value = source.read(name)
-        return {**source.describe(name, value), "source": value}
+    def workflow(self, name: str, query: dict[str, str], **_: Any) -> Document:
+        """Return the current version of a workflow, or the version that the query names."""
+        given = query.get("version")
+        if given is not None and not (given.isascii() and given.isdigit() and len(given) <= 8):
+            raise Refused(400, "the version is not valid")
+        return self.store.detail(name, None if given is None else int(given))
 
     def check(self, payload: Document, **_: Any) -> Document:
-        """Describe a source without saving it."""
-        return source.describe("draft", workflow_text(payload))
+        """Describe a source without keeping it. The source has the name of its function."""
+        name = payload.get("name", "draft")
+        return self.store.check(need(NAME, name, "the workflow name"), workflow_text(payload))
 
-    def save(self, name: str, payload: Document, **_: Any) -> Document:
-        """Save a workflow unless its base changed."""
-        base = payload.get("base")
-        if base is not None and not isinstance(base, str):
-            raise Refused(400, "the base must be text")
-        return source.save(name, workflow_text(payload), base)
+    def restore(self, name: str, payload: Document, **_: Any) -> Document:
+        """Make an old version the current one."""
+        return self.store.restore(name, payload.get("version"))
 
     def remove(self, name: str, **_: Any) -> Document:
-        """Remove one workflow file."""
-        source.remove(name)
-        return {"removed": name}
+        """Remove one workflow. Its versions stay."""
+        return self.store.remove(name)
 
     def list_runs(self, query: dict[str, str], **_: Any) -> Document:
         """List the newest runs, with optional workflow and status filters."""
@@ -175,8 +182,7 @@ class App:
     def run(self, payload: Document, **_: Any) -> Document:
         """Record a run for the given workflow."""
         name = need(NAME, payload.get("workflow"), "the workflow name")
-        value = source.read(name)
-        about = source.describe(name, value)
+        about, value = self.store.current(name)
         given = payload.get("input", {})
         if isinstance(given, str):
             given = source.inputs(about, given)
