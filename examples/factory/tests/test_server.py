@@ -193,6 +193,8 @@ def test_vis_launch_keeps_the_gateway_token_on_the_server(factory, monkeypatch, 
         monkeypatch.setattr(settings, "GATEWAY_URL", f"http://127.0.0.1:{port}")
         status, headers, page = request(factory, "GET", "/factory/vis", headers=bearer())
         assert status == 200 and b"one-time-code" in page and b"gateway-test-token" not in page
+        # Vis web gets the way back to the factory pages.
+        assert b'href: "/factory"' in page
         assert "sandbox" not in headers["content-security-policy"]
         status, _, grant = request(factory, "POST", "/v1/web/launches/redeem", '{"code":"one-time-code"}', bearer())
         assert status == 200 and json.loads(grant) == {"gateway_id": "gateway-id", "token": "", "require_token": False}

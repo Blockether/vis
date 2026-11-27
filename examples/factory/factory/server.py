@@ -144,6 +144,25 @@ def gateway_headers(headers: dict[str, str]) -> dict[str, str]:
     return clean
 
 
+def factory_link() -> bytes:
+    """Return the script that keeps a link to the factory pages after the wordmark of Vis web.
+
+    Vis web has no setting for such a link. It draws its header again when the layout
+    changes, so the script looks at the header after each change of the page.
+    """
+    label = json.dumps(f"Open {settings.NAME}").replace("<", "\\u003c")
+    style = "margin-left:4px;padding:3px 10px;border:1px solid;font-size:12px;font-weight:600;color:inherit;text-decoration:none;white-space:nowrap"
+    return (
+        "<script>{const place = () => {"
+        "const mark = document.querySelector('[data-app-header] [data-wordmark]');"
+        "if (!mark || mark.parentNode.querySelector('[data-factory]')) return;"
+        f"const link = Object.assign(document.createElement('a'), {{href: {json.dumps(BASE)}, textContent: {label}}});"
+        f"link.dataset.factory = ''; link.style.cssText = {json.dumps(style)};"
+        "mark.after(link);};"
+        "new MutationObserver(place).observe(document.documentElement, {childList: true, subtree: true});}</script>"
+    ).encode()
+
+
 def launch_script() -> bytes:
     """Let Vis web pair with this origin and keep a session link open."""
     connection = gateway_connection()
@@ -250,9 +269,7 @@ def handler(app: App, web: Path = WEB) -> type[BaseHTTPRequestHandler]:
                         return self.answer(200, "application/json", json.dumps({**safe, "token": "", "require_token": False}).encode())
                     if path == VIS and status == 200 and self.command == "GET" and response.getheader("content-type", "").startswith("text/html"):
                         page = response.read()
-                        script = launch_script()
-                        if script and b"<head>" in page:
-                            page = page.replace(b"<head>", b"<head>" + script, 1)
+                        page = page.replace(b"<head>", b"<head>" + launch_script() + factory_link(), 1)
                         return self.answer(200, "text/html; charset=utf-8", page, **{"content-security-policy": WEB_POLICY})
                     headers = {name.lower(): value for name, value in response.getheaders() if name.lower() in RELAYED}
                     trusted = self.command in ("GET", "HEAD") and (path == VIS or path == "/index.html" or path.startswith("/assets/"))

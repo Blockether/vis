@@ -11,7 +11,8 @@ Factory is one small Python process next to one Vis gateway. It gives a team:
 - **A dashboard.** The pages show the current runs and the past runs, the workflows, the
   suggestions and the memory.
 - **Chats.** The same address serves Vis web. Each run and each talk is a session that
-  you can open and continue.
+  you can open and continue. **Open Vis** in the header of a factory page goes there,
+  and **Open Factory** in the header of Vis web goes back.
 - **Memory.** A team memory and a personal memory, which each session reads and writes
   with the `vis-optmem` extension.
 - **Suggestions.** When a session becomes idle, a workflow reads it and suggests
