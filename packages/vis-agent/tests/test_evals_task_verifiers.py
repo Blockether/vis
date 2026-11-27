@@ -376,6 +376,7 @@ def test_host_capture_uses_only_the_trial_session_journal_and_questions(tmp_path
         "aliased",
         "inline",
         "contains",
+        "snapshot",
         "dead",
         "unrelated-wait",
         "logs-only",
@@ -392,7 +393,11 @@ def test_shell_needs_live_control_and_real_terminal_events(tmp_path, case):
         wait = "from asyncio import wait as pause\nhandles = {sh}\ndone, pending = await pause(handles, timeout=.2)"
     elif case == "unrelated-wait":
         wait = "done, pending = await other.wait([sh], timeout=.2)"
-    output = {"aliased": 'sh.get("out")', "logs-only": "sh.logs().out"}.get(
+    output = {
+        "aliased": 'sh.get("out")',
+        "logs-only": "sh.logs().out",
+        "snapshot": "sh.snapshot().out",
+    }.get(
         case, "sh.out"
     )
     running = {
@@ -454,7 +459,7 @@ print(json.dumps(report))
         block1,
         block2,
         host={"events": events, "shells": shells},
-    ) is (case in {"live", "aliased", "inline", "contains"})
+    ) is (case in {"live", "aliased", "inline", "contains", "snapshot"})
     assert not check(tmp_path, "task-shell-lifecycle", block1, block2)
 
 

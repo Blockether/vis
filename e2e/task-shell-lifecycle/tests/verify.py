@@ -189,11 +189,15 @@ def report_checks(nodes, waits, task):
 
 def reads_output(node, task):
     if isinstance(node, ast.Attribute):
-        return (
-            isinstance(node.value, ast.Name)
-            and node.value.id == task
-            and node.attr == "out"
-        )
+        owner = node.value
+        # `sh.snapshot().out` reads the live output too.
+        if (
+            isinstance(owner, ast.Call)
+            and isinstance(owner.func, ast.Attribute)
+            and owner.func.attr == "snapshot"
+        ):
+            owner = owner.func.value
+        return isinstance(owner, ast.Name) and owner.id == task and node.attr == "out"
     if isinstance(node, ast.Subscript):
         owner, key = node.value, node.slice
     elif (
