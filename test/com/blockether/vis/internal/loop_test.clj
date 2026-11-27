@@ -5425,6 +5425,7 @@
                                   :user-request "follow up"
                                   :request-kind :user
                                   :council-entry-id nil
+                                  :council-later-entry-ids nil
                                   :status :running}
                                  opts))
                       "turn-3")
