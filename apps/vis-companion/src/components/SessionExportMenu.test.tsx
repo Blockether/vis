@@ -37,6 +37,7 @@ afterEach(() => {
 describe('the export choice of a session', () => {
   it('saves a Markdown export and says where it is', async () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
+    const shown = '~/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
     const invoke = vi.fn(async () => ({ revealed: true, path }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
     const client = { transcriptMarkdown: vi.fn(async () => new Blob(['# Turn 1'])) } as unknown as GatewayClient;
@@ -46,7 +47,7 @@ describe('the export choice of a session', () => {
     fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
 
     expect(screen.queryByRole('dialog', { name: 'Export Stalled stream' })).toBeNull();
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(`Markdown file saved to ${path}.`));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(`Markdown file saved to ${shown}.`));
     expect(invoke).toHaveBeenCalledExactlyOnceWith(
       'reveal_artifact',
       expect.objectContaining({ filename: 'stalled-stream-123e4567.md' }),
@@ -87,8 +88,10 @@ describe('the export choice of a session', () => {
   });
 
   // The desktop toast named the saved path as plain text. A press on the path shows the file.
+  // The toast shows the home folder as ~, but the press gives the full path.
   it('makes the saved path a link that shows the file in the file manager', async () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
+    const shown = '~/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
     const invoke = vi.fn(async (command: string) =>
       command === 'reveal_artifact' ? { revealed: true, path } : true,
     );
@@ -98,15 +101,16 @@ describe('the export choice of a session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
     fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
 
-    fireEvent.click(await screen.findByRole('button', { name: path }));
+    fireEvent.click(await screen.findByRole('button', { name: shown }));
     expect(invoke).toHaveBeenLastCalledWith('reveal_kept_artifact', { path });
     // The file is there, so the toast stays as it is.
     await waitFor(() => expect(invoke.mock.results.at(-1)?.type).toBe('return'));
-    expect(screen.getByRole('status')).toHaveTextContent(`Markdown file saved to ${path}.`);
+    expect(screen.getByRole('status')).toHaveTextContent(`Markdown file saved to ${shown}.`);
   });
 
   it('says where the file is when the file manager does not show it', async () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
+    const shown = '~/Downloads/Vis Artifacts/1/stalled-stream-123e4567.md';
     const invoke = vi.fn(async (command: string) => {
       if (command === 'reveal_artifact') return { revealed: true, path };
       throw new Error('Expected a file in Vis Artifacts');
@@ -117,9 +121,9 @@ describe('the export choice of a session', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export' }));
     fireEvent.click(formats().getByRole('button', { name: /^Markdown/ }));
 
-    fireEvent.click(await screen.findByRole('button', { name: path }));
+    fireEvent.click(await screen.findByRole('button', { name: shown }));
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent(`The file manager did not show the file. Look for it at ${path}`),
+      expect(screen.getByRole('status')).toHaveTextContent(`The file manager did not show the file. Look for it at ${shown}`),
     );
   });
 

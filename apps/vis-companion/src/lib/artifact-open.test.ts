@@ -177,7 +177,7 @@ describe('archive file hand-off', () => {
     const invoke = vi.fn(async () => ({ revealed: true, path: '/home/ada/Downloads/Vis Artifacts/1/bundle.zip' }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
     expect(await keepArchive(archive(), '../bundle.zip', 'application/zip')).toBe(
-      'Archive saved to /home/ada/Downloads/Vis Artifacts/1/bundle.zip.',
+      'Archive saved to ~/Downloads/Vis Artifacts/1/bundle.zip.',
     );
     expect(invoke).toHaveBeenCalledExactlyOnceWith('reveal_artifact', {
       filename: 'bundle.zip',

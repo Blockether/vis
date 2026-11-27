@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { downloadArtifact, shareArtifact, sharedFilename } from './artifact-share';
 import { isArchiveMedia, isXlsxMedia, XLSX_MEDIA } from './artifacts';
 import { desktopInvoke } from './desktop';
+import { homeifyPath } from './path';
 
 /** Browsers can save a workbook, but cannot launch an installed desktop app. */
 export function spreadsheetOpenVerb(): 'Open in app' | 'Download' {
@@ -46,7 +47,8 @@ export type KeptFileWords = { noun: string; dialogTitle: string };
 
 /**
  * What happened to one kept file. `text` says it, and it is '' when the person closed the
- * sheet. `path` is where the desktop host saved the file; no other host knows a path.
+ * sheet. `text` shows the home folder as `~`. `path` is the full path where the desktop host
+ * saved the file; no other host knows a path.
  */
 export type KeptFile = { text: string; path?: string };
 
@@ -68,10 +70,9 @@ export async function keepFile(
       filename,
       data: Array.from(new Uint8Array(await blob.arrayBuffer())),
     })) as { revealed: boolean; path: string };
+    const shown = homeifyPath(result.path);
     return {
-      text: result.revealed
-        ? `${noun} saved to ${result.path}.`
-        : `${noun} saved to ${result.path}. Open that folder to find it.`,
+      text: result.revealed ? `${noun} saved to ${shown}.` : `${noun} saved to ${shown}. Open that folder to find it.`,
       path: result.path,
     };
   }

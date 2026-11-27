@@ -134,8 +134,6 @@ export function useSessionExport(notices: Notices): {
     const id = `export:${session.id}:${format}`;
     if (running.current.has(id)) return;
     running.current.add(id);
-    // The pending toast stays until the result replaces it.
-    push({ id, kind: 'neutral', title, text: `Exporting ${session.title.trim() || 'the session'}…`, durationMs: 120_000 });
     try {
       const blob = await readExport(client, session, format);
       const ways = exportWays(session, format);

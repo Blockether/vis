@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { revealKeptFile } from '../lib/artifact-open';
+import { homeifyPath } from '../lib/path';
 import type { Notices } from '../lib/use-notices';
 import { useOpenPath } from '../lib/open-path';
 import { fileUrlLink, linkedText, type OpenPath } from './linked-text';
@@ -9,9 +10,11 @@ import { Toast } from './ui';
 /**
  * The text of a notice. Each bare URL is a link. The path of a kept file is a link too: a
  * press shows the file in the file manager, and `onLost` runs when the file is not there.
+ * The text shows the path with `~` for the home folder.
  */
 function noticeText(text: string, path: string | undefined, openPath: OpenPath | null, onLost: () => void): ReactNode {
-  const at = path ? text.indexOf(path) : -1;
+  const shown = homeifyPath(path);
+  const at = path ? text.indexOf(shown) : -1;
   if (!path || at < 0) return linkedText(text, openPath);
   const show = () => {
     void revealKeptFile(path).then((isShown) => {
@@ -21,8 +24,8 @@ function noticeText(text: string, path: string | undefined, openPath: OpenPath |
   return (
     <>
       {text.slice(0, at)}
-      {fileUrlLink(path, path, show)}
-      {text.slice(at + path.length)}
+      {fileUrlLink(path, shown, show)}
+      {text.slice(at + shown.length)}
     </>
   );
 }
@@ -53,7 +56,7 @@ export function NoticeToast({ notices }: { notices: Notices }) {
           id: `${notice.id}:lost`,
           kind: 'warn',
           title: notice.title,
-          text: `The file manager did not show the file. Look for it at ${notice.path}`,
+          text: `The file manager did not show the file. Look for it at ${homeifyPath(notice.path)}`,
         }),
       )}
     </Toast>

@@ -64,7 +64,10 @@ describe('a session export on each host', () => {
     const path = '/home/ada/Downloads/Vis Artifacts/1/fix-the-stalled-stream-123e4567.vissnap';
     const invoke = vi.fn(async () => ({ revealed: true, path }));
     vi.stubGlobal('__TAURI__', { core: { invoke } });
-    expect(await exportSession(gateway(), 'vissnap')).toEqual({ text: `Snapshot saved to ${path}.`, path });
+    expect(await exportSession(gateway(), 'vissnap')).toEqual({
+      text: 'Snapshot saved to ~/Downloads/Vis Artifacts/1/fix-the-stalled-stream-123e4567.vissnap.',
+      path,
+    });
     expect(invoke).toHaveBeenCalledExactlyOnceWith('reveal_artifact', {
       filename: 'fix-the-stalled-stream-123e4567.vissnap',
       data: Array.from(bytes),
