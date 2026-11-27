@@ -2,6 +2,9 @@
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 from blockether.vis.evals import (
@@ -253,3 +256,14 @@ def test_read_tasks_reads_the_task_folders_of_a_dataset(tmp_path):
     assert (found["bare"].instruction, found["bare"].agent_timeout_sec) == ("", None)
     with pytest.raises(FileNotFoundError):
         read_tasks(tmp_path / "missing")
+
+
+def test_harbor_run_sends_no_usage_report():
+    # `harbor run --agent blockether.vis.evals.agent:VisAgent` loads the agent like this.
+    probe = (
+        "import blockether.vis.evals.agent\n"
+        "from harbor.telemetry import _telemetry_disabled\n"
+        "assert _telemetry_disabled()\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "HARBOR_TELEMETRY"}
+    subprocess.run([sys.executable, "-c", probe], env=env, check=True, timeout=120)

@@ -64,6 +64,15 @@ exec "$VIS_HARBOR_PYTHON" -m blockether.vis.evals.grade "$VIS_HARBOR_TESTS/check
 """
 
 
+def disable_telemetry() -> None:
+    """Turn off Harbor usage reports. Harbor reads the variable when it sends."""
+    os.environ["HARBOR_TELEMETRY"] = "off"
+
+
+# `harbor run --agent blockether.vis.evals.agent:VisAgent` imports this module.
+disable_telemetry()
+
+
 @dataclass(frozen=True, slots=True)
 class HarborTrial:
     """One Harbor trial, read from its `result.json`.
@@ -626,7 +635,7 @@ def run_tasks(
         raise ValueError(f"no Harbor tasks in {root}")
     if problems := [problem for folder in folders for problem in task_problems(folder)]:
         raise ValueError("fix the tasks before a paid run:\n" + "\n".join(problems))
-    os.environ["HARBOR_TELEMETRY"] = "off"
+    disable_telemetry()
     config = JobConfig(
         jobs_dir=Path(jobs_dir),
         n_attempts=attempts,
