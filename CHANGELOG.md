@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Live speech: speech no longer falls behind when one local speech model step takes more than 2 seconds. The gateway keeps all admitted speech. The Companion tells you that the local speech model prepares until live speech is ready.
 - Subagents: a child that a provider failure other than a 429 stopped now has `error` with the code `provider_failed`, the provider message and the working `alternatives`. Before, its `error` was empty.
 - Session introspection: `doc("read_session")` and `doc("list_sessions")` show their keys again (`view`, `turn`, `iteration`, `block`, `offset`, `limit` and `cursor`). Before, the signature named only the first argument.
+- Council: the agent guidance tells how to add to a thread (`thread_id`) and read it. Before, the agent used `reply_to` for its own thread and Council refused the message.
 
 ## [v0.5.35] - 2026-11-27
 

@@ -95,7 +95,7 @@
                     (constantly "off")]
 
         (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
-          (expect (str/includes? prompt "## Subagents (Council)")))))
+          (expect (str/includes? prompt "## Council: lead")))))
   (it "is the manifest's single initializer for core facilities"
       (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
