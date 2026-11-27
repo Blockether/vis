@@ -6,7 +6,7 @@ import {
 
 const state = { name: selection("memory"), query: "", pattern: "", memories: [], detailRead: 0 };
 const title = (name) => name === "team" ? "Team memory" : name === "personal" ? "Personal memory" : name;
-const view = panes("Memory", "Read the newest entries or find entries by text and pattern.", h("h2", { text: "Memories" }));
+const view = panes("Memory", "Read the newest entries or find entries by text and pattern.");
 const head = h("h2");
 const facts = h("div", { class: "row wrap" });
 const search = h("input", { class: "input", type: "search", placeholder: "Words to find" });

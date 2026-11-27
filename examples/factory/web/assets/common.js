@@ -505,14 +505,15 @@ export function select(label, rows, change) {
   return h("select", { class: "input", "aria-label": label, onchange: (event) => change(event.currentTarget.value) }, rows.map(([value, text]) => h("option", { value, text })));
 }
 
-/** Make a page with a list and a panel that can take its place on a phone. */
+/** Make a page that fills the window, as Vis web does: a list column and the open row. On a phone, one takes the place of the other. */
 export function panes(title, text, controls) {
   const workspace = h("div", { class: "workspace" });
   const message = h("p", { class: "status-line bad-text", role: "status" });
   const list = h("div", { class: "list" }, loading("Loading…"));
   const detail = h("section", { class: "panel detail" });
-  workspace.append(h("aside", { class: "panel", "aria-label": title }, h("div", { class: "panel-head stack" }, controls), message, list), detail);
-  fill(document.querySelector("#page"), h("div", { class: "intro" }, h("h1", { text: title }), h("p", { class: "muted", text })), workspace);
+  const head = h("div", { class: "panel-head stack" }, h("div", { class: "intro" }, h("h1", { text: title }), h("p", { class: "muted", text })), controls);
+  workspace.append(h("aside", { class: "panel", "aria-label": title }, head, message, list), detail);
+  fill(document.querySelector("#page"), workspace);
   function reveal(open) {
     workspace.classList.toggle("has-detail", open);
   }

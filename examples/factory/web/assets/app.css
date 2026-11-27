@@ -180,29 +180,32 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .brand { min-width: 0; }
 .brand span { overflow: hidden; text-overflow: ellipsis; }
 .bar .vis-link { height: 28px; }
-.hub { max-width: 1300px; margin: 0 auto; padding: 24px 24px 50px; }
-.intro { margin-bottom: 18px; }
-.intro p { margin: 6px 0 0; }
-.workspace { display: grid; grid-template-columns: minmax(245px, 1fr) minmax(0, 2.3fr); align-items: start; gap: 16px; }
+/* A page fills the window, as Vis web does. The list is a column at the left edge, and the open row has the other space. */
+.hub { display: flex; flex-direction: column; }
+.intro p { margin: 4px 0 0; }
+.workspace { display: grid; grid-template-columns: clamp(280px, 32.5vw, 416px) minmax(0, 1fr); align-items: stretch; flex: 1; min-height: 0; }
 .workspace > section { min-width: 0; }
+.workspace > .panel { border: 0; }
+.workspace > aside.panel { background: var(--page); }
+.workspace > .detail { background: var(--cream); }
 .panel { border: 1px solid var(--line-strong); background: var(--input); min-width: 0; }
 .panel-head { padding: 12px 14px; background: var(--page); border-bottom: 1px solid var(--line-strong); }
 .panel-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 14px; }
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
-.list { max-height: min(63dvh, 600px); }
 .item[aria-current="true"] { background: var(--cream); box-shadow: inset 3px 0 0 var(--amber); }
 .item .title, .panel-body, .wrap-word { overflow-wrap: anywhere; }
 .item .row > :first-child { min-width: 0; }
-.item:last-child { border-bottom: 0; }
 .actions { flex-wrap: wrap; }
 .meta { color: var(--muted); font-size: 11px; }
 .file-row { padding: 8px 10px; }
 .gate { padding: 12px; border: 1px solid var(--warn-line); background: var(--cream-light); display: grid; gap: 8px; }
 .status-line { padding: 6px 14px; margin: 0; }
 .status-line:empty, .trigger-status:empty { display: none; }
+.panel-body > .status-line { padding: 0; }
 pre.source { max-height: 62vh; white-space: pre; overflow: auto; tab-size: 4; line-height: 1.5; }
 select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 30px 0 8px; }
+.panel-body > .field > select.input { max-width: 520px; }
 .trigger, .entry, .comment { padding: 10px 12px; border: 1px solid var(--line); background: var(--cream); }
 .comment p { white-space: pre-wrap; margin: 4px 0 0; }
 .entry pre { margin-top: 6px; }
@@ -219,16 +222,23 @@ select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 30px 0 
   .nav { grid-row: 2; grid-column: 1 / -1; margin: 0; gap: 3px; }
   .nav a { flex: 1; justify-content: center; padding: 0 4px; }
   .gateway { padding: 0 6px; }
-  .hub { padding: 16px 10px 28px; }
   .filters { align-items: end; }
   form .filters { grid-template-columns: minmax(0, 1fr); }
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .workspace.has-detail > aside { display: none; }
   .workspace:not(.has-detail) > .detail { display: none; }
-  .list { max-height: none; }
   .fold-body { margin-left: 0; }
   .act .line .fold-note { display: none; }
   .toasts { right: 12px; }
   dialog { width: calc(100vw - 16px); }
 }
-@media (min-width: 701px) { .phone { display: none; } }
+@media (min-width: 701px) {
+  .phone { display: none; }
+  /* Each column scrolls by itself, so the bar and the head of the open row stay in view. */
+  body { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  .hub { flex: 1; min-height: 0; }
+  .workspace > aside.panel { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line-strong); }
+  .list { min-height: 0; }
+  .workspace > .detail { overflow-y: auto; min-height: 0; }
+  .detail .panel-head { position: sticky; top: 0; z-index: 2; }
+}

@@ -7,7 +7,7 @@ import {
 // `version` is the version on the page. Without it, the page follows the current version.
 // `models` is the list of the gateway. It is null until the first read.
 const state = { name: selection("workflow"), version: null, project: "Workflows", list: [], triggers: [], models: null, about: null, listRead: 0, detailRead: 0 };
-const view = panes("Workflows", "See the code of a workflow and its versions, check its triggers or start a run.", h("h2", { text: "Workflows" }));
+const view = panes("Workflows", "See the code of a workflow and its versions, check its triggers or start a run.");
 const failure = h("p", { class: "status-line bad-text", role: "status" });
 const body = h("div");
 const waiting = h("p", { class: "status-line", role: "status" });

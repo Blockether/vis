@@ -85,7 +85,7 @@ function draw(run) {
   const active = current && current === document.activeElement;
   const caret = active ? [current.selectionStart, current.selectionEnd] : null;
   const draft = body.dataset.gate === `${run.id}/${waiting?.key}` ? current?.value : "";
-  redraw(body, body, "details", () => update(body, run, () => panel(
+  redraw(body, view.detail, "details", () => update(body, run, () => panel(
     [h("div", { class: "row wrap" }, back(() => open("")), status(run.status)), h("h2", { text: run.title || run.workflow }),
       h("span", { class: "meta", text: [run.workflow, run.version && `version ${run.version}`, run.uses?.model && `model ${run.uses.model}`, date(run.created), run.trigger?.id].filter(Boolean).join(" · ") }),
       h("div", { class: "row actions" },
