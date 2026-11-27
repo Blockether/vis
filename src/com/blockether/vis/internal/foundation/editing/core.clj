@@ -176,7 +176,7 @@
    `:timed-out?` says so.
 
    Returns `{:items [fff-item …] :degraded? BOOL :timed-out? BOOL}`."
-  [idx ^String query is-regex?]
+  [idx directory ^String query is-regex?]
   (loop [offset
          0
 
@@ -192,6 +192,7 @@
     (let [{:keys [matches next-file-offset regex-fallback-error]}
           (fff/grep idx
                     {:query query
+                     :directory directory
                      :mode (if is-regex? :regex :plain)
                      :file-offset offset
                      :page-limit rg-fff-grep-page-limit
@@ -247,14 +248,14 @@
    the native regex prefilter could not run the pattern, so these candidates are
    NOT the universe the pattern really matches, and `:timed-out?` when native
    grep stopped at its time budget (see `rg-fff-grep-files`)."
-  [idx ^File base query is-regex?]
+  [idx ^File base directory query is-regex?]
   (let [path-items
         (when (and (not is-regex?) (not (rg-needle-hostile-to-fff? query)))
-          (->> (:items (fff/search idx {:query query :page-size 1000}))
-               (filter #(rg-fff-path-hit? query %))))
+          (->> (:items (fff/search idx {:query query :directory directory :page-size 1000}))
+               (filter #(rg-fff-path-hit? query (fff-index/scope-relative-item directory %)))))
 
         {:keys [items degraded? timed-out?]}
-        (rg-fff-grep-files idx query is-regex?)]
+        (rg-fff-grep-files idx directory query is-regex?)]
 
     {:files (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base items))
      :degraded? (boolean degraded?)
@@ -289,30 +290,31 @@
     {:files [root] :degraded? false}
 
     :dir
-    (fff-index/with-index
-      [idx (fff-index/lease root (not is-ignored?) overlay)]
-      (let [base
-            (.getCanonicalFile root)
+    (fff-index/with-scoped-index*
+      root
+      (not is-ignored?)
+      overlay
+      (fn [idx base directory]
+        (let [wide?
+              (and is-regex? (boolean (some native-regex-unsupported? needles)))
 
-            wide?
-            (and is-regex? (boolean (some native-regex-unsupported? needles)))
+              per-needle
+              (when-not wide? (mapv #(rg-fff-query-files idx base directory % is-regex?) needles))
 
-            ;; doall: realize the lazy hits INSIDE with-open, before the fresh
-            ;; instance is closed.
-            per-needle
-            (when-not wide? (doall (mapv #(rg-fff-query-files idx base % is-regex?) needles)))
+              degraded?
+              (or wide? (boolean (some :degraded? per-needle)))]
 
-            degraded?
-            (or wide? (boolean (some :degraded? per-needle)))]
-
-        (if degraded?
-          {:files (vec (rg-fff-rel-files
-                         base
-                         (:items (fff/search idx {:query "" :page-size rg-fff-wide-page-size}))))
-           :degraded? true}
-          {:files (vec (mapcat :files per-needle))
-           :degraded? false
-           :timed-out? (boolean (some :timed-out? per-needle))})))
+          (if degraded?
+            {:files (vec (rg-fff-rel-files base
+                                           (:items (fff/search idx
+                                                               {:query ""
+                                                                :directory directory
+                                                                :page-size
+                                                                rg-fff-wide-page-size}))))
+             :degraded? true}
+            {:files (vec (mapcat :files per-needle))
+             :degraded? false
+             :timed-out? (boolean (some :timed-out? per-needle))}))))
 
     {:files [] :degraded? false}))
 
@@ -765,33 +767,11 @@
 
     (if (neg? i) n (recur (.indexOf p "/" (unchecked-inc i)) (unchecked-inc n)))))
 
-(def ^:private glob-syntax-chars
-  "Characters fff's glob parser reads as PATTERN syntax. A directory whose path
-   contains one has no literal prefix pattern, so `ls` scans the file index and
-   compares prefixes itself instead of handing fff something it would reinterpret."
-  #{\* \? \[ \] \{ \} \\})
-
-(defn- fff-ls-file-pages
-  "Page fetcher for fff's FILE index, prefix-filtered NATIVELY when it can be.
-
-   `glob` costs the MATCHES rather than the tree: listing `src` asks fff for
-   `src/**` instead of paging every indexed file and dropping most of them here.
-   The workspace root (empty prefix) and a prefix carrying glob syntax have no
-   literal pattern, so those page the whole file index and lean on the keeper."
-  [idx ^String prefix]
-  (if (and (seq prefix) (not-any? glob-syntax-chars prefix))
-    (fn [offset]
-      (fff/glob idx {:pattern (str prefix "**") :page-index offset :page-size fff-ls-page-size}))
-    (fn [offset]
-      (fff/search idx {:query "" :page-index offset :page-size fff-ls-page-size}))))
-
-(defn- fff-ls-dir-pages
-  "Page fetcher for fff's DIRECTORY index. It has no glob surface, so the prefix
-   test stays in `fff-ls-keeper` — cheap, since directories are the small side of
-   the index."
-  [idx]
+(defn- fff-ls-pages
+  "Page one native index within a literal directory."
+  [search idx directory]
   (fn [offset]
-    (fff/search-directories idx {:query "" :page-index offset :page-size fff-ls-page-size})))
+    (search idx {:directory directory :page-index offset :page-size fff-ls-page-size})))
 
 (defn- fff-ls-scan
   "Stream one native index through `keep-fn`, page by page.
@@ -829,15 +809,10 @@
       (if (or (empty? page) (>= seen (long total))) (persistent! acc) (recur seen acc)))))
 
 (defn- fff-ls-records
-  "Every indexed record under one listed directory, taken from BOTH native indexes.
-
-   fff keeps files and directories apart, and `search-mixed` returns exactly this
-   union only after merging and re-ranking them. Measured on this repo (1215
-   records): `search-mixed` 3.3 ms, the two direct calls 1.8 ms, and 0.8 ms once
-   the file side is a native `glob` prefix — same rows, no merge tax."
-  [idx prefix keep-fn]
-  (into (fff-ls-scan (fff-ls-file-pages idx prefix) false keep-fn)
-        (fff-ls-scan (fff-ls-dir-pages idx) true keep-fn)))
+  "Every file and directory indexed under the listed directory."
+  [idx directory keep-fn]
+  (into (fff-ls-scan (fff-ls-pages fff/search idx directory) false keep-fn)
+        (fff-ls-scan (fff-ls-pages fff/search-directories idx directory) true keep-fn)))
 
 (defn- fff-ls-keeper
   "The per-record filter handed to `fff-ls-scan`, rebasing each kept record's
@@ -884,50 +859,27 @@
             (update :exclude-globs rebase)
             (update :unignore-globs rebase))))
 
-(defn- workspace-relative-address?
-  "True when `rel-path` rendered a RELATIVE address for the listed directory, so
-   `target-rel` is a usable PREFIX into the workspace index's own records.
-
-   Other roots use absolute or `~/…` addresses, so they cannot reuse
-   relative index records."
-  [target-rel]
-  (let [s (str target-rel)]
-    (not (or (str/starts-with? s "/") (= s "~") (str/starts-with? s "~/")))))
-
-(defn- warm-ls-lease
-  "Lease the workspace index only when `grep` or `find` already built it.
-   Cold listings use a bounded walk without an index or watcher."
-  []
-  (let [lease
-        (fff-index/lease (.getCanonicalFile (io/file (workspace/cwd))) true (fff-ignore-overlay))]
-    (when (fff-index/warm? lease) lease)))
-
 (def ^:private ls-workspace-reuse-limit
   "Maximum directory count for warm index reuse. Larger indexes use a bounded listing."
   20000)
 
 (defn- fff-ls-workspace-items
-  "Use the warm workspace index when it covers this directory and is small enough."
+  "Use the warm repository index when it covers this directory and is small enough."
   [^File root target-rel ^long levels is-hidden?]
-  (when (and (seq target-rel) (workspace-relative-address? target-rel))
-    (when-let [lease (warm-ls-lease)]
-      (let [prefix (str target-rel "/")
-            keep-fn (fff-ls-keeper root prefix levels is-hidden?)
-            covered? (volatile! false)
-            rows (fff-index/with-index
-                   [idx lease]
-                   (when (<= (long (or (:total-matched
-                                         (fff/search-directories idx {:query "" :page-size 1}))
-                                       0))
-                             (long ls-workspace-reuse-limit))
-                     (fff-ls-records idx
-                                     prefix
-                                     (fn [{:keys [relative-path] :as item} directory?]
-                                       (if (= target-rel relative-path)
-                                         (do (vreset! covered? true) nil)
-                                         (keep-fn item directory?))))))]
-
-        (when (and (some? rows) (or @covered? (seq rows))) rows)))))
+  (when (seq target-rel)
+    (when-let [{:keys [lease directory]} (fff-index/covering-lease root true (fff-ignore-overlay))]
+      (when (fff-index/warm? lease)
+        (fff-index/with-index
+          [idx lease]
+          (when (and (or (nil? directory) (fff/contains-directory? idx directory))
+                     (<= (long (or (:total-matched
+                                     (fff/search-directories idx {:query "" :page-size 1}))
+                                   0))
+                         (long ls-workspace-reuse-limit)))
+            (fff-ls-records
+              idx
+              directory
+              (fff-ls-keeper root (if directory (str directory "/") "") levels is-hidden?))))))))
 
 (defn- fff-ls-target-items
   "List the named workspace directory with rebased ignore rules and no index."
@@ -1341,12 +1293,18 @@
       (when (>= (double score) (double find-min-score)) [(assoc item :score score)]))
 
     :dir
-    (fff-index/with-index [idx (fff-index/lease root (not is-ignored?) overlay)]
-                          (let [base (.getCanonicalFile root)]
-                            ;; doall: realize hits INSIDE with-open, before the fresh instance is closed.
-                            (doall (->> (:items
-                                          (fff/search idx {:query query :page-size candidate-page}))
-                                        (keep #(find-scan-item base query is_hidden %))))))
+    (fff-index/with-scoped-index*
+      root
+      (not is-ignored?)
+      overlay
+      (fn [idx _ directory]
+        (let [base (.getCanonicalFile root)]
+          (into
+            []
+            (keep
+              #(find-scan-item base query is_hidden (fff-index/scope-relative-item directory %)))
+            (:items (fff/search idx
+                                {:query query :directory directory :page-size candidate-page}))))))
 
     []))
 
@@ -1414,11 +1372,16 @@
     [(find-direct-file-item root)]
 
     :dir
-    (fff-index/with-index
-      [idx (fff-index/lease root (not is-ignored?) overlay)]
-      (let [base (.getCanonicalFile root)]
-        (doall (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
-                    (keep #(find-ls-item base is_hidden %))))))
+    (fff-index/with-scoped-index*
+      root
+      (not is-ignored?)
+      overlay
+      (fn [idx _ directory]
+        (let [base (.getCanonicalFile root)]
+          (into []
+                (keep #(find-ls-item base is_hidden (fff-index/scope-relative-item directory %)))
+                (:items (fff/search idx
+                                    {:directory directory :page-size (max (long limit) 300)}))))))
 
     []))
 

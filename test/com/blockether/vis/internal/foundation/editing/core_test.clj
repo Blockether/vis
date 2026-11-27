@@ -92,6 +92,141 @@
     (fs/create-dirs rel)
     rel))
 
+(defn- scope-repository!
+  [dir]
+  (fs/create-dirs dir)
+  (let [builder (doto (ProcessBuilder. ^java.util.List ["git" "init" "--quiet"])
+                  (.directory (fs/file dir)))]
+    (assert (zero? (.waitFor (.start builder))))))
+
+(defn- with-scope-repository
+  [f]
+  (let [root (fs/create-temp-dir {:prefix "vis-fff-scope-"})]
+    (try (scope-repository! root)
+         (scope-repository! (fs/path root "nested"))
+         (doseq [[path text] {".gitignore" "ignored/\n/src/parent-skip.txt\n"
+                              ".rgignore" "overlay-ignored/\n"
+                              "src/.gitignore" "skip.txt\n"
+                              "src/skip.txt" "SCOPEPROBE\n"
+                              "src/parent-skip.txt" "SCOPEPROBE\n"}
+                 :let [file (fs/path root path)]]
+
+           (fs/create-dirs (fs/parent file))
+           (spit (fs/file file) text))
+         (doseq [scope ["src" "src2" "space [x]" "ignored" "overlay-ignored" ".cache" "nested/src"]
+                 filename ["scopeprobe-a.txt" "scopeprobe-b.txt" ".scopeprobe.txt"]
+                 :let [file (fs/path root scope filename)]]
+
+           (fs/create-dirs (fs/parent file))
+           (spit (fs/file file) "SCOPEPROBE\n"))
+         (binding [workspace/*workspace-root* (str root)]
+           (with-redefs [config/search-overlay (constantly nil)]
+             (f root)))
+         (finally (fs/delete-tree root)))))
+
+(defdescribe
+  repository-scope-reuse-test
+  (it
+    "agrees with direct scoped grep, find and ls, including ignored scopes"
+    (with-scope-repository
+      (fn [root]
+        (let [overlay
+              {:custom-ignore-filenames [".rgignore"]}
+
+              grep
+              (private-fn "rg-fff-root-files")
+
+              find
+              (private-fn "find-scan-root")
+
+              list-items
+              (private-fn "list-dir")
+
+              direct
+              (fn [scope respect? overlay f]
+                (fff-index/with-index* (fff-index/lease scope respect? overlay) #(f % scope nil)))
+
+              search
+              (fn [dir ignored?]
+                [(into #{} (map str) (:files (grep dir ["SCOPEPROBE"] false ignored? overlay)))
+                 (mapv #(select-keys % [:path :size :score])
+                       (find dir "scopeprobe" false ignored? 300 overlay))])]
+
+          (fff-index/with-index* (fff-index/lease (fs/file root) true overlay) (constantly nil))
+          (doseq [scope
+                  ["src" "src2" "space [x]" "ignored" "overlay-ignored" ".cache" "nested/src"]
+
+                  :let [dir
+                        (.getCanonicalFile (fs/file root scope))]]
+
+            (doseq [ignored? [false true]]
+              (let [actual (search dir ignored?)
+                    expected (with-redefs [fff-index/with-scoped-index* direct]
+                               (search dir ignored?))]
+
+                (expect (= expected actual))
+                (expect (seq (first expected)))))
+            (expect (= (with-redefs [fff-index/warm? (constantly false)]
+                         (list-items dir {:depth 2}))
+                       (list-items dir {:depth 2}))))))))
+  (it "keeps the direct scope when the covering index cannot be built"
+      (with-scope-repository
+        (fn [root]
+          (let [base
+                (.getCanonicalFile (fs/file root))
+
+                scope
+                (.getCanonicalFile (fs/file root "src"))
+
+                grep
+                (private-fn "rg-fff-root-files")
+
+                create
+                fff/create]
+
+            (with-redefs [fff/create (fn [{:keys [base-path] :as options}]
+                                       (if (= (.getPath base) base-path)
+                                         (throw (ex-info "Repository index unavailable" {}))
+                                         (create options)))]
+              (expect (seq (:files (grep scope ["SCOPEPROBE"] false false nil)))))))))
+  (it
+    "creates one native index for searches in several directories of one repository"
+    (with-scope-repository
+      (fn [root]
+        (let [created
+              #(get-in (fff-index/pool-stats) [:counters :events :create] 0)
+
+              before
+              (created)
+
+              grep
+              (private-fn "rg-fff-root-files")
+
+              overlay
+              {:custom-ignore-filenames [".rgignore"]}]
+
+          (doseq [scope ["src" "src2" "space [x]" "src"]]
+            (expect (seq (:files (grep (.getCanonicalFile (fs/file root scope))
+                                       ["SCOPEPROBE"]
+                                       false
+                                       false
+                                       overlay)))))
+          (let [file (fs/file root "src/new.txt")]
+            (spit file "NEWSCOPENEEDLE\n")
+            (fff-index/note-fs-write! file)
+            (expect (= #{(.getCanonicalPath file)}
+                       (into #{}
+                             (map str)
+                             (:files (grep (.getCanonicalFile (fs/file root "src"))
+                                           ["NEWSCOPENEEDLE"]
+                                           false
+                                           false
+                                           overlay))))))
+          (expect (= 1 (- (created) before)))
+          (expect (= 1
+                     (count (filter #(= (.getCanonicalPath (fs/file root)) (first (:pool-key %)))
+                                    (:entries (fff-index/pool-stats)))))))))))
+
 (defdescribe
   rg-simplified-api-test
   ;; NEW simplified rg grammar: `query` canonical, `any`/`all` accepted aliases

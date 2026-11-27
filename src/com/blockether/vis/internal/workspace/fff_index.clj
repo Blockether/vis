@@ -19,10 +19,12 @@
    - filesystem mutations call `note-fs-write!` with the changed path so the
      next search refreshes that path and reads its own writes. A refresh does not
      rescan the tree."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File]))
 
@@ -700,11 +702,24 @@
     (try (record-event! :acquire (entry-data entry))
          (when reused? (record-event! :reuse (entry-data entry)))
          (start-idle-reaper!)
-         (let [idx (try @(:idx entry)
-                        (catch Throwable t (retire-failed! entry :build-failed) (throw t)))]
-           (sweep! k)
-           (when-not (false? (:resync? lease)) (resync! entry idx))
-           (f idx))
+         (let [fallback
+               (::build-failure-result lease)
+
+               idx
+               (try @(:idx entry)
+                    (catch Throwable t
+                      (retire-failed! entry :build-failed)
+                      (if (and fallback
+                               (contains? #{:ext.foundation.editing/invalid-rg-root
+                                            :ext.foundation.editing/fff-unavailable
+                                            :ext.foundation.editing/fff-scan-timeout}
+                                          (:type (ex-data t))))
+                        fallback
+                        (throw t))))]
+
+           (if (identical? idx fallback)
+             fallback
+             (do (sweep! k) (when-not (false? (:resync? lease)) (resync! entry idx)) (f idx))))
          (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
                   (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
                   (record-event! :release (entry-data entry))
@@ -739,6 +754,51 @@
       :overlay (when (some seq (vals overlay)) overlay)
       :content-indexing? (not (false? content-indexing?))
       :resync? (not (false? resync?))})))
+
+(defn covering-lease
+  "Return the repository lease and literal directory for a safe reuse candidate.
+   Keep the scope lease when the repository is outside the allowed roots or the
+   overlay has globs whose meaning can change with the index base."
+  [^File scope respect-ignore-files? overlay]
+  (when-not (or (seq (:exclude-globs overlay)) (seq (:unignore-globs overlay)))
+    (when-let [^File root (paths/nearest-ancestor #(.exists (io/file % ".git")) scope)]
+      (when (some (fn [allowed]
+                    (.startsWith (.toPath root) (.toPath (io/file allowed))))
+                  (workspace/allowed-roots))
+        {:lease (lease root respect-ignore-files? overlay)
+         :directory (when-not (= root scope)
+                      (str (.relativize (.toPath root) (.toPath scope))))}))))
+
+(defn with-scoped-index*
+  "Call `f` with an index, its base and an optional literal scope. The root index
+   must contain an exact live entry for the directory. Ignored or pruned scopes
+   keep their direct lease."
+  [^File scope respect-ignore-files? overlay f]
+  (let [scope
+        (.getCanonicalFile scope)
+
+        uncovered
+        (Object.)
+
+        result
+        (if-let [{:keys [lease directory]} (covering-lease scope respect-ignore-files? overlay)]
+          (with-index* (cond-> lease
+                         directory
+                         (assoc ::build-failure-result uncovered))
+                       (fn [idx]
+                         (if (or (nil? directory) (fff/contains-directory? idx directory))
+                           (f idx (:root lease) directory)
+                           uncovered)))
+          uncovered)]
+
+    (if (identical? result uncovered)
+      (with-index* (lease scope respect-ignore-files? overlay) #(f % scope nil))
+      result)))
+
+(defn scope-relative-item
+  "Rebase an item returned by a scoped native query to that scope."
+  [directory item]
+  (if directory (update item :relative-path subs (inc (count directory))) item))
 
 (defmacro with-index
   "`(with-index [idx (lease root respect?)] body…)` — body runs with a
