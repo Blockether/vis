@@ -5,6 +5,7 @@
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.persistance.core :as persistance]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.workspace.fff-index :as index]
             [lazytest.core :refer [defdescribe expect it]]
             [taoensso.telemere :as tel]))
@@ -27,7 +28,8 @@
                      #'index/pool-size test-pool-size
                      #'index/idle-reaper reaper
                      #'index/idle-reap-interval-ms 10
-                     #'index/lifecycle-counters (atom {})}
+                     #'index/lifecycle-counters (atom {})
+                     #'index/failed-covers (atom {})}
       (fn []
         (try (f pool reaper)
              (finally (when-let [^Thread runner @reaper]
@@ -38,6 +40,183 @@
                         (#'index/retire! entry))))))))
 
 (defn- lease [] (index/lease (java.io.File. ".") true))
+
+(defdescribe
+  scoped-snapshot-lifecycle-test
+  (it
+    "closes a snapshot when the search throws or is interrupted"
+    (with-pool
+      (fn [pool _]
+        (let [root
+              (fs/file (fs/create-temp-dir {:prefix "vis-fff-close-"}))
+
+              scope
+              (.getCanonicalFile (io/file root "src"))
+
+              closed
+              (atom 0)
+
+              watches
+              (atom [])]
+
+          (try (fs/create-dirs scope)
+               (binding [workspace/*workspace-root* (str root)]
+                 (with-redefs [fff/create (fn [opts]
+                                            (swap! watches conj (:watch? opts))
+                                            (reify
+                                              java.io.Closeable
+                                                (close [_] (swap! closed inc))))
+                               fff/refresh-git-status! (constantly 0)
+                               fff/wait-for-scan (constantly true)]
+
+                   (doseq [failure [(ex-info "query failed" {})
+                                    (InterruptedException. "cancelled")]]
+                     (expect (identical? failure
+                                         (try (index/with-scoped-index* scope
+                                                                        true
+                                                                        nil
+                                                                        (fn [& _]
+                                                                          (throw failure)))
+                                              (catch Exception e e)))))
+                   (expect (= [false false] @watches))
+                   (expect (= 2 @closed))
+                   (expect (empty? @pool))))
+               (finally (fs/delete-tree root)))))))
+  (it "keeps the watched index of a repository root whose overlay has globs"
+      (with-pool
+        (fn [pool _]
+          (let [root
+                (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-root-"})))
+
+                watches
+                (atom [])]
+
+            (try (fs/create-dirs (io/file root ".git"))
+                 (binding [workspace/*workspace-root* (str root)]
+                   (with-redefs [fff/create (fn [opts]
+                                              (swap! watches conj (:watch? opts))
+                                              (reify
+                                                java.io.Closeable
+                                                  (close [_])))
+                                 fff/refresh-git-status! (constantly 0)
+                                 fff/wait-for-scan (constantly true)]
+
+                     (dotimes [_ 2]
+                       (expect (= root
+                                  (index/with-scoped-index* root
+                                                            true
+                                                            {:exclude-globs ["/skip"]}
+                                                            (fn [_ base _]
+                                                              base)))))
+                     (expect (= [true] @watches))
+                     (expect (= 1 (count @pool)))))
+                 (finally (fs/delete-tree root)))))))
+  (it
+    "does not retry a timed-out covering build on each scoped search"
+    (with-pool
+      (fn [pool _]
+        (let [root
+              (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-timeout-"})))
+
+              scope
+              (io/file root "src")
+
+              opened
+              (atom [])]
+
+          (try (fs/create-dirs (io/file root ".git"))
+               (fs/create-dirs scope)
+               (binding [workspace/*workspace-root* (str root)]
+                 (with-redefs [fff/create (fn [{:keys [base-path] :as opts}]
+                                            (swap! opened conj opts)
+                                            (reify
+                                              java.io.Closeable
+                                                (close [_])
+                                              clojure.lang.IDeref
+                                                (deref [_] base-path)))
+                               fff/refresh-git-status! (constantly 0)
+                               fff/wait-for-scan (fn [idx _]
+                                                   (not= (str root) @idx))]
+
+                   (dotimes [_ 3]
+                     (expect (= (str scope)
+                                (index/with-scoped-index* scope
+                                                          true
+                                                          nil
+                                                          (fn [idx _ _]
+                                                            @idx)))))
+                   (expect (= [[(str root) true] [(str scope) false] [(str scope) false]
+                               [(str scope) false]]
+                              (mapv (juxt :base-path :watch?) @opened)))
+                   (expect (= 1 (get-in (index/pool-stats) [:counters :events :create])))
+                   (expect (empty? @pool))))
+               (finally (fs/delete-tree root)))))))
+  (it
+    "retries a covering build after cancellation instead of opening a snapshot"
+    (with-pool
+      (fn [_ _]
+        (let [root
+              (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-interrupt-"})))
+
+              scope
+              (io/file root "src")
+
+              opened
+              (atom [])
+
+              cancelled
+              (InterruptedException. "cancelled")]
+
+          (try (fs/create-dirs (io/file root ".git"))
+               (fs/create-dirs scope)
+               (binding [workspace/*workspace-root* (str root)]
+                 (with-redefs [fff/create (fn [opts]
+                                            (when (= 1
+                                                     (count (swap! opened conj (:base-path opts))))
+                                              (throw cancelled))
+                                            (reify
+                                              java.io.Closeable
+                                                (close [_])))
+                               fff/refresh-git-status! (constantly 0)
+                               fff/wait-for-scan (constantly true)
+                               fff/contains-directory? (constantly true)]
+
+                   (let [search #(index/with-scoped-index* scope
+                                                           true
+                                                           nil
+                                                           (fn [_ base _]
+                                                             base))]
+                     (expect (identical? cancelled (try (search) (catch Exception e e))))
+                     (expect (= root (search))))
+                   (expect (= [(str root) (str root)] @opened))))
+               (finally (fs/delete-tree root)))))))
+  (it "shares the watched index of an explicitly allowed non-Git root"
+      (with-pool
+        (fn [pool _]
+          (let [root
+                (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-root-"})))
+
+                opened
+                (atom [])]
+
+            (try (binding [workspace/*filesystem-roots* [{:root (str root)}]]
+                   (with-redefs [fff/create (fn [opts]
+                                              (swap! opened conj (:watch? opts))
+                                              (reify
+                                                java.io.Closeable
+                                                  (close [_])))
+                                 fff/refresh-git-status! (constantly 0)
+                                 fff/wait-for-scan (constantly true)]
+
+                     (let [lease-root #(index/with-scoped-index* root
+                                                                 true
+                                                                 nil
+                                                                 (fn [idx _ _]
+                                                                   idx))]
+                       (expect (identical? (lease-root) (lease-root))))
+                     (expect (= [true] @opened))
+                     (expect (= [[(str root) true nil true]] (vec (keys @pool))))))
+                 (finally (fs/delete-tree root))))))))
 
 (defdescribe idle-index-is-released-without-another-search-test
              (it "idle index is released without another search"
@@ -556,6 +735,7 @@
                                                 (throw (java.io.IOException.
                                                          "fixture creation failed"))
                                                 (fake-index)))
+                                 fff/refresh-git-status! (constantly 0)
                                  fff/wait-for-scan (fn [& _]
                                                      (= outcome :ready))]
 
@@ -684,33 +864,77 @@
 ;; Regression: the fff watcher dropped every event when the index base sat inside a
 ;; gitignored directory (`target/` here). The first scan indexed the files, then a
 ;; file written outside Vis never reached grep until the index closed.
-(defdescribe index-below-an-ignored-directory-sees-outside-writes-test
-             (it "a file written below target/ outside Vis is found without a rescan"
-                 (let [dir (fs/file "target" "fff-index-watch" (str (System/nanoTime)))]
-                   (fs/create-dirs dir)
-                   (spit (fs/file dir "old.txt") "ZZOLDZZ\n")
-                   (try
-                     (with-pool
-                       (fn [_ _]
-                         (let [lease (index/lease dir true)
-                               hits (fn [query]
-                                      (index/with-index*
-                                        lease
-                                        (fn [idx]
-                                          (count (:matches (fff/grep idx {:query query}))))))
-                               eventually (fn [query]
-                                            (loop [tries 0]
-                                              (let [n (hits query)]
-                                                (if (or (pos? n) (= tries 100))
-                                                  n
-                                                  (do (Thread/sleep 50) (recur (inc tries)))))))]
+(defdescribe
+  index-below-an-ignored-directory-sees-outside-writes-test
+  (it "a file written below target/ outside Vis is found without a rescan"
+      (let [dir (fs/file "target" "fff-index-watch" (str (System/nanoTime)))]
+        (fs/create-dirs dir)
+        (spit (fs/file dir "old.txt") "ZZOLDZZ\n")
+        (try (with-pool
+               (fn [_ _]
+                 (let [lease (index/lease dir true)
+                       hits (fn [query]
+                              (index/with-index* lease
+                                                 (fn [idx]
+                                                   (count (:matches (fff/grep idx
+                                                                              {:query query}))))))
+                       eventually (fn [query write!]
+                                    (loop [tries 0]
+                                      (let [_ (write!)
+                                            n (hits query)]
 
-                           (expect (= 1 (hits "ZZOLDZZ")))
-                           ;; Let the watcher start before the write.
-                           (Thread/sleep 300)
-                           (spit (fs/file dir "new.txt") "ZZFRESHZZ\n")
-                           (fs/create-dirs (fs/file dir "sub"))
-                           (spit (fs/file dir "sub" "deep.txt") "ZZDEEPZZ\n")
-                           (expect (= 1 (eventually "ZZFRESHZZ")))
-                           (expect (= 1 (eventually "ZZDEEPZZ"))))))
-                     (finally (fs/delete-tree dir))))))
+                                        (if (or (pos? n) (= tries 100))
+                                          n
+                                          (do (Thread/sleep 50) (recur (inc tries)))))))]
+
+                   (expect (= 1 (hits "ZZOLDZZ")))
+                   ;; The watcher can start after the path scan. Repeat the same
+                   ;; external write until the watcher processes it.
+                   (expect
+                     (= 1 (eventually "ZZFRESHZZ" #(spit (fs/file dir "new.txt") "ZZFRESHZZ\n"))))
+                   (fs/create-dirs (fs/file dir "sub"))
+                   (spit (fs/file dir "sub" "deep.txt") "ZZDEEPZZ\n")
+                   (expect (= 1 (eventually "ZZDEEPZZ" (constantly nil)))))))
+             (finally (fs/delete-tree dir))))))
+
+;; Regression: FFF applies the Git status on a background worker after the scan
+;; reports ready. The first search of a fresh index saw every file as `clean`, and
+;; an uncovered scope has a fresh index on every search.
+(defdescribe
+  fresh-index-knows-the-git-status-test
+  (it
+    "the first search of a fresh index reports the Git status"
+    (let [root
+          (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-status-"})))
+
+          git
+          (doto (ProcessBuilder. ^java.util.List [(require-executable "git") "init" "--quiet"])
+            (.directory root))
+
+          status
+          (fn [scope overlay]
+            (index/with-scoped-index*
+              scope
+              true
+              overlay
+              (fn [idx _ _]
+                (->> (:items (fff/search idx {:query "statusprobe-0000" :page-size 5}))
+                     (filter #(= "statusprobe-0000.txt" (:file-name %)))
+                     (map :git-status)))))]
+
+      (try
+        (doseq [i
+                (range 2000)
+
+                :let [file
+                      (fs/file root "src" (str "d" (mod i 20)) (format "statusprobe-%04d.txt" i))]]
+
+          (fs/create-dirs (fs/parent file))
+          (spit file "x\n"))
+        (expect (zero? (.waitFor (.start git))))
+        (with-pool (fn [_ _]
+                     (binding [workspace/*workspace-root* (str root)]
+                       (expect (= ["untracked"]
+                                  (status (fs/file root "src") {:exclude-globs ["/nothing.txt"]})))
+                       (expect (= ["untracked"] (status root nil))))))
+        (finally (fs/delete-tree root))))))

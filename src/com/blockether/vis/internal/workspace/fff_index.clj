@@ -1,24 +1,15 @@
 (ns com.blockether.vis.internal.workspace.fff-index
-  "THE canonical way vis talks to fff.
+  "Create and lease native FFF indexes.
 
-   Every fff instance in this process is born here and lives in ONE pool keyed
-   by `[canonical-root respect-ignore-files? ignore-overlay]`. Nothing else may call
-   `fff/create` — a second, unpooled instance would duplicate a whole tree's
-   native path+content index, spin its own watcher threads, and go stale on our
-   own writes.
+   The process-wide pool owns the long-lived watched indexes. Scoped searches
+   share the nearest authorized repository index, with one index per compatible
+   ignore policy, overlay and content setting. An explicitly allowed non-Git
+   root keeps its own watched index. Other scoped searches use a watcher-free
+   snapshot at the exact scope and close it when the search ends.
 
-   Contract for callers:
-
-     (fff-index/with-index [idx (fff-index/lease root respect-ignore-files? overlay)]
-       (fff/search idx …) (fff/grep idx …))
-
-   - the index is watcher-live (`:watch? true`) and resynced before the body
-     runs when this process wrote inside its tree since it was last synced,
-   - all gateway workers share the pool and the same root/policy index,
-   - the body must NOT close `idx`; borrowed indexes cannot be evicted,
-   - filesystem mutations call `note-fs-write!` with the changed path so the
-     next search refreshes that path and reads its own writes. A refresh does not
-     rescan the tree."
+   Do not close a borrowed index. Call `note-fs-write!` after a filesystem
+   change so the next pooled search sees the write. A snapshot scans the
+   current files on each call."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.fff :as fff]
@@ -40,17 +31,7 @@
    budget on every native page (issue #438)."
   30000)
 
-;; rg is fff-first: fff owns workspace discovery/ranking, this namespace only
-;; re-reads returned candidate files to preserve exact line semantics + patch
-;; anchors. Instances are POOLED per (root, ignore-policy) by `with-index`
-;; and kept current by fff's own filesystem watcher (`:watch? true`) — the
-;; earlier "never cache" rule existed only because a `:watch? false` snapshot
-;; silently went stale (the `rg returns nothing that should not be empty` bug).
-;; A cold build + first grep of this repo costs ~450ms; the SAME grep on the
-;; pooled, page-cache-warm instance costs ~11ms, so pooling is the difference
-;; between a third of a second and instant on every search after the first.
-;; fff's on-disk mmap cache stays OFF (`:enable-mmap-cache? false`): that one
-;; persists ACROSS processes with no watcher behind it.
+;; The disk cache stays off. It persists across processes and has no watcher.
 
 (def ^:private fff-scan-pool-width
   "How many fresh fff scans can actually be RUNNING at once on this machine: the
@@ -105,7 +86,7 @@
   (try (thunk) (finally (.release ^java.util.concurrent.Semaphore scan-semaphore))))
 
 (def max-content-file-size
-  "Largest file whose CONTENT the pooled index will read, in bytes (256 MiB).
+  "Largest file whose CONTENT an index will read, in bytes (256 MiB).
 
    fff's own default is 10 MB (`MAX_FFFILE_SIZE`), and everything above it was
    skipped SILENTLY: a needle sitting in a 20 MB log, dump or generated source
@@ -137,7 +118,7 @@
                                 (= event :scan)
                                 (update-in [:scans (:reason data) (:status data)] (fnil inc 0)))))
   ;; A successful rescan after a write and the per-lease events repeat on every edit.
-  (tel/log! {:level (if (or (#{:create :close :evict} event)
+  (tel/log! {:level (if (or (#{:create :close :evict :snapshot} event)
                             (and (= :scan event)
                                  (or (= :initial (:reason data)) (= :failed (:status data)))))
                       :info
@@ -145,6 +126,13 @@
              :id ::lifecycle
              :data (assoc data :event event)}
             "FFF index lifecycle"))
+
+(defn- cancelled-cause
+  [^Throwable error]
+  (some #(when (or (instance? InterruptedException %)
+                   (instance? java.util.concurrent.CancellationException %))
+           %)
+        (take-while some? (iterate #(.getCause ^Throwable %) error))))
 
 (defn- open!
   "Create a FRESH fff instance scoped to `root`, blocking until its initial
@@ -189,6 +177,9 @@
   (^java.io.Closeable [^File root respect-ignore-files? overlay event-data]
    (open! root respect-ignore-files? overlay event-data true))
   (^java.io.Closeable [^File root respect-ignore-files? overlay event-data content-indexing?]
+   (open! root respect-ignore-files? overlay event-data content-indexing? nil))
+  (^java.io.Closeable
+   [^File root respect-ignore-files? overlay event-data content-indexing? snapshot-reason]
    (when-not (.isDirectory root)
      (throw (ex-info (str "File index root must be a directory: " (.getPath root))
                      {:type :ext.foundation.editing/invalid-rg-root :path (.getPath root)})))
@@ -198,84 +189,83 @@
          (let [queued-ms (quot (- (System/nanoTime) requested-at) 1000000)
                k (.getCanonicalPath root)
                scan-started-at (System/nanoTime)
-               idx (try
-                     (fff/create
-                       {:base-path k
-                        :watch? true
-                        :ai-mode? true
-                        :enable-content-indexing? (boolean content-indexing?)
-                        :enable-mmap-cache? false
-                        ;; content budget: fff skips files past this SILENTLY,
-                        ;; and its 10 MB default made grep miss needles that
-                        ;; live in big logs/dumps (issue #63 follow-up).
-                        :cache-budget-max-file-size max-content-file-size
-                        ;; see docstring — never open fff's LMDB dbs.
-                        :frecency-db-path nil
-                        :history-db-path nil
-                        :respect-ignore-files? (boolean respect-ignore-files?)
-                        ;; ignore overlay — fff honors it in BOTH the scan
-                        ;; walk and the live watcher, which is why vis no
-                        ;; longer walks trees in Clojure for `.rgignore` or
-                        ;; the `:grep` config overlay.
-                        :custom-ignore-filenames (:custom-ignore-filenames overlay)
-                        :exclude-globs (:exclude-globs overlay)
-                        :unignore-globs (:unignore-globs overlay)})
-                     (catch Throwable t
-                       (record-event! :scan
-                                      (merge event-data
-                                             {:root k
-                                              :reason :initial
-                                              :status :failed
-                                              :queued-ms queued-ms
-                                              :scan-ms (quot (- (System/nanoTime) scan-started-at)
-                                                             1000000)}))
-                       (throw (ex-info (str "Cannot build the file index for " k)
-                                       {:type :ext.foundation.editing/fff-unavailable :path k}
-                                       t))))]
+               record-scan!
+               (fn [status]
+                 (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)]
+                   (if snapshot-reason
+                     (record-event!
+                       :snapshot
+                       {:root k :reason snapshot-reason :scan-ms scan-ms :status status})
+                     (record-event! :scan
+                                    (merge event-data
+                                           {:root k
+                                            :reason :initial
+                                            :status status
+                                            :queued-ms queued-ms
+                                            :scan-ms scan-ms})))))
+               idx (try (fff/create
+                          {:base-path k
+                           :watch? (nil? snapshot-reason)
+                           :ai-mode? true
+                           :enable-content-indexing? (boolean content-indexing?)
+                           :enable-mmap-cache? false
+                           ;; content budget: fff skips files past this SILENTLY,
+                           ;; and its 10 MB default made grep miss needles that
+                           ;; live in big logs/dumps (issue #63 follow-up).
+                           :cache-budget-max-file-size max-content-file-size
+                           ;; see docstring — never open fff's LMDB dbs.
+                           :frecency-db-path nil
+                           :history-db-path nil
+                           :respect-ignore-files? (boolean respect-ignore-files?)
+                           ;; ignore overlay — fff honors it in BOTH the scan
+                           ;; walk and the live watcher, which is why vis no
+                           ;; longer walks trees in Clojure for `.rgignore` or
+                           ;; the `:grep` config overlay.
+                           :custom-ignore-filenames (:custom-ignore-filenames overlay)
+                           :exclude-globs (:exclude-globs overlay)
+                           :unignore-globs (:unignore-globs overlay)})
+                        (catch Throwable t
+                          (record-scan! :failed)
+                          (throw (or (cancelled-cause t)
+                                     (ex-info (str "Cannot build the file index for " k)
+                                              {:type :ext.foundation.editing/fff-unavailable
+                                               :path k}
+                                              t)))))]
 
-           (try (when-not (fff/wait-for-scan idx scan-timeout-ms)
-                  (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
-                        in-flight (- (long scan-max-concurrency)
-                                     (long (.availablePermits ^java.util.concurrent.Semaphore
-                                                              scan-semaphore)))]
+           (try (let [ready? (fff/wait-for-scan idx scan-timeout-ms)]
+                  (when-not ready?
+                    (let [scan-ms (quot (- (System/nanoTime) scan-started-at) 1000000)
+                          in-flight (- (long scan-max-concurrency)
+                                       (long (.availablePermits ^java.util.concurrent.Semaphore
+                                                                scan-semaphore)))]
 
-                    (throw
-                      (ex-info (str "File index scan did not complete in time for "
-                                    k
-                                    " — queued "
-                                    queued-ms
-                                    "ms for one of "
-                                    scan-max-concurrency
-                                    " scan permits, then "
-                                    scan-ms
-                                    "ms scanning with "
-                                    in-flight
-                                    " scan(s) in flight")
-                               {:type :ext.foundation.editing/fff-scan-timeout
-                                :path k
-                                :timeout-ms scan-timeout-ms
-                                :queued-ms queued-ms
-                                :scan-ms scan-ms
-                                :scans-in-flight in-flight}))))
-                (record-event! :scan
-                               (merge event-data
-                                      {:root k
-                                       :reason :initial
-                                       :status :ready
-                                       :queued-ms queued-ms
-                                       :scan-ms (quot (- (System/nanoTime) scan-started-at)
-                                                      1000000)}))
+                      (throw
+                        (ex-info (str "File index scan did not complete in time for "
+                                      k
+                                      " — queued "
+                                      queued-ms
+                                      "ms for one of "
+                                      scan-max-concurrency
+                                      " scan permits, then "
+                                      scan-ms
+                                      "ms scanning with "
+                                      in-flight
+                                      " scan(s) in flight")
+                                 {:type :ext.foundation.editing/fff-scan-timeout
+                                  :path k
+                                  :timeout-ms scan-timeout-ms
+                                  :queued-ms queued-ms
+                                  :scan-ms scan-ms
+                                  :scans-in-flight in-flight})))))
+                ;; FFF applies the Git status on a background worker after the scan
+                ;; reports ready. Apply it here, or the first search sees every file
+                ;; as `clean` and ranks a modified file as an unchanged one.
+                (fff/refresh-git-status! idx)
+                (record-scan! :ready)
                 idx
                 (catch Throwable t
                   (.close ^java.io.Closeable idx)
-                  (record-event! :scan
-                                 (merge event-data
-                                        {:root k
-                                         :reason :initial
-                                         :status :failed
-                                         :queued-ms queued-ms
-                                         :scan-ms (quot (- (System/nanoTime) scan-started-at)
-                                                        1000000)}))
+                  (record-scan! :failed)
                   (throw t)))))))))
 
 (def ^:private pool-size
@@ -286,8 +276,7 @@
    Sized to the working set a gateway really holds, because every capacity eviction
    is repaid as a full rescan: the next search of that root blocks until its index
    rebuilds, which for this repository is 681 ms at the median and 2855 ms at worst.
-   Every search SCOPE is its own key, not every repository, so that set is wider than
-   it looks: one measured three-hour gateway touched 70 distinct keys, 9 of them
+   Before repository sharing, one measured three-hour gateway touched 70 distinct keys, 9 of them
    inside a median idle-TTL window and 27 inside the busiest, and evicted 111 entries
    for capacity against 26 for idleness — at six slots the budget, not the TTL, was
    retiring live indexes. Retention is the cheap side of the trade: 23 concurrent
@@ -305,6 +294,14 @@
   ;; Claiming a slot/lease and selecting eviction victims share this monitor.
   ;; Native construction, scanning and closing always happen outside it.
   (atom {}))
+
+(def ^:private cover-cooldown-ms
+  "How long a scoped search skips a repository index whose build failed."
+  60000)
+
+(def ^:private cover-cooldown-limit "Maximum number of failed repository indexes to remember." 64)
+
+(defonce ^:private failed-covers (atom {}))
 
 (defonce ^:private index-sequence (java.util.concurrent.atomic.AtomicLong. 0))
 
@@ -529,18 +526,40 @@
         (record-event! :invalidate (entry-data entry)))))
   nil)
 
+(defn- cover-build-failed?
+  [error]
+  (contains? #{:ext.foundation.editing/fff-unavailable :ext.foundation.editing/fff-scan-timeout}
+             (:type (ex-data error))))
+
+(defn- remember-cover-failure!
+  "Called under the pool lock before the failed entry is removed."
+  [k]
+  (let [now (quot (System/nanoTime) 1000000)]
+    (swap! failed-covers (fn [failures]
+                           (let [recent (into {k (+ now (long cover-cooldown-ms))}
+                                              (filter (fn [[key until]]
+                                                        (and (not= key k) (> (long until) now))))
+                                              failures)]
+                             (if (> (count recent) cover-cooldown-limit)
+                               (dissoc recent (key (apply min-key val recent)))
+                               recent))))))
+
 (defn- retire-failed!
-  "Take a failed entry out of the pool, so that the next lease builds a fresh index.
-   Current borrowers keep the old instance, and the last release closes it."
-  [entry reason]
-  (let [k
-        (:key entry)
+  "Remove a failed entry. The last borrower closes it."
+  ([entry reason] (retire-failed! entry reason false))
+  ([entry reason remember?]
+   (let [k
+         (:key entry)
 
-        removed?
-        (locking pool (when (identical? (get @pool k) entry) (swap! pool dissoc k) true))]
+         removed?
+         (locking pool
+           (when (identical? (get @pool k) entry)
+             (when remember? (remember-cover-failure! k))
+             (swap! pool dissoc k)
+             true))]
 
-    (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
-    (when removed? (record-event! :evict (assoc (entry-data entry) :reason reason)))))
+     (.set ^java.util.concurrent.atomic.AtomicBoolean (:dead entry) true)
+     (when removed? (record-event! :evict (assoc (entry-data entry) :reason reason))))))
 
 (defn- resync!
   "Apply this process's writes to a shared index, so that the body reads its own
@@ -680,52 +699,57 @@
 
 (defn with-index*
   "Call `f` with the process-wide index shared by every worker for this root and
-   ignore policy. Borrowed indexes remain in the pool under capacity pressure.
-   Failed builds are removed so a later call can retry."
+   ignore policy. Borrowed indexes remain in the pool under capacity pressure."
   [lease f]
   (let [k
         (pool-key lease)
 
+        fallback
+        (::build-failure-result lease)
+
         [entry reused?]
         (locking pool
-          (let [existing
-                (get @pool k)
+          (let [existing (get @pool k)]
+            (when (or existing
+                      (not (and fallback
+                                (> (long (get @failed-covers k Long/MIN_VALUE))
+                                   (quot (System/nanoTime) 1000000)))))
+              (let [entry (or existing (new-entry lease k))]
+                (when-not existing (swap! pool assoc k entry))
+                (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
+                (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
+                [entry (some? existing)]))))]
 
-                entry
-                (or existing (new-entry lease k))]
+    (if-not entry
+      fallback
+      (try (record-event! :acquire (entry-data entry))
+           (when reused? (record-event! :reuse (entry-data entry)))
+           (start-idle-reaper!)
+           (let [idx (try @(:idx entry)
+                          (catch Throwable t
+                            (let [cancelled (or (cancelled-cause t)
+                                                (when (.isInterrupted (Thread/currentThread))
+                                                  (InterruptedException.
+                                                    "File index build interrupted")))
+                                  failed? (and (not cancelled) (cover-build-failed? t))]
 
-            (when-not existing (swap! pool assoc k entry))
-            (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
-            (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
-            [entry (some? existing)]))]
-
-    (try (record-event! :acquire (entry-data entry))
-         (when reused? (record-event! :reuse (entry-data entry)))
-         (start-idle-reaper!)
-         (let [fallback
-               (::build-failure-result lease)
-
-               idx
-               (try @(:idx entry)
-                    (catch Throwable t
-                      (retire-failed! entry :build-failed)
-                      (if (and fallback
-                               (contains? #{:ext.foundation.editing/invalid-rg-root
-                                            :ext.foundation.editing/fff-unavailable
-                                            :ext.foundation.editing/fff-scan-timeout}
-                                          (:type (ex-data t))))
-                        fallback
-                        (throw t))))]
-
-           (if (identical? idx fallback)
-             fallback
-             (do (sweep! k) (when-not (false? (:resync? lease)) (resync! entry idx)) (f idx))))
-         (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
-                  (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
-                  (record-event! :release (entry-data entry))
-                  (when (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry))
-                    (retire! entry))
-                  (sweep! nil)))))
+                              (retire-failed! entry :build-failed failed?)
+                              (if (and fallback
+                                       (not cancelled)
+                                       (or failed?
+                                           (= :ext.foundation.editing/invalid-rg-root
+                                              (:type (ex-data t)))))
+                                fallback
+                                (throw (or cancelled t))))))]
+             (if (identical? idx fallback)
+               fallback
+               (do (sweep! k) (when-not (false? (:resync? lease)) (resync! entry idx)) (f idx))))
+           (finally (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
+                    (.decrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases entry))
+                    (record-event! :release (entry-data entry))
+                    (when (.get ^java.util.concurrent.atomic.AtomicBoolean (:dead entry))
+                      (retire! entry))
+                    (sweep! nil))))))
 
 (defn lease
   "One pool key: which root, under which ignore policy, with which ignore
@@ -755,45 +779,77 @@
       :content-indexing? (not (false? content-indexing?))
       :resync? (not (false? resync?))})))
 
+(defn- repository-root [^File scope] (paths/nearest-ancestor #(.exists (io/file % ".git")) scope))
+
+(defn- base-relative-overlay?
+  [overlay]
+  (or (seq (:exclude-globs overlay)) (seq (:unignore-globs overlay))))
+
+(defn- repository-lease
+  [^File root ^File scope respect-ignore-files? overlay]
+  (when (some (fn [allowed]
+                (.startsWith (.toPath root) (.toPath (io/file allowed))))
+              (workspace/allowed-roots))
+    {:lease (lease root respect-ignore-files? overlay)
+     :directory (when-not (= root scope) (str (.relativize (.toPath root) (.toPath scope))))}))
+
 (defn covering-lease
-  "Return the repository lease and literal directory for a safe reuse candidate.
-   Keep the scope lease when the repository is outside the allowed roots or the
-   overlay has globs whose meaning can change with the index base."
+  "Return the authorized repository lease and literal directory, if the
+   overlay does not depend on the scope base."
   [^File scope respect-ignore-files? overlay]
-  (when-not (or (seq (:exclude-globs overlay)) (seq (:unignore-globs overlay)))
-    (when-let [^File root (paths/nearest-ancestor #(.exists (io/file % ".git")) scope)]
-      (when (some (fn [allowed]
-                    (.startsWith (.toPath root) (.toPath (io/file allowed))))
-                  (workspace/allowed-roots))
-        {:lease (lease root respect-ignore-files? overlay)
-         :directory (when-not (= root scope)
-                      (str (.relativize (.toPath root) (.toPath scope))))}))))
+  (when-not (base-relative-overlay? overlay)
+    (when-let [root (repository-root scope)]
+      (repository-lease root scope respect-ignore-files? overlay))))
+
+(defn- with-snapshot*
+  [{:keys [root respect-ignore-files? overlay content-indexing?]} reason f]
+  (with-open [idx (open! root respect-ignore-files? overlay nil content-indexing? reason)]
+    (f idx root nil)))
 
 (defn with-scoped-index*
-  "Call `f` with an index, its base and an optional literal scope. The root index
-   must contain an exact live entry for the directory. Ignored or pruned scopes
-   keep their direct lease."
+  "Call `f` with an index, its base and an optional literal scope. A repository
+   root and an allowed root keep their watched index. Any other scope that no
+   watched index covers is scanned once without a watcher."
   [^File scope respect-ignore-files? overlay f]
   (let [scope
         (.getCanonicalFile scope)
 
+        root
+        (repository-root scope)
+
+        direct
+        #(lease scope respect-ignore-files? overlay)
+
+        watched
+        #(with-index* (direct)
+                      (fn [idx]
+                        (f idx scope nil)))
+
         uncovered
-        (Object.)
+        (fn [reason]
+          (if (some #{(.getPath scope)} (workspace/allowed-roots))
+            (watched)
+            (with-snapshot* (direct) reason f)))]
 
-        result
-        (if-let [{:keys [lease directory]} (covering-lease scope respect-ignore-files? overlay)]
-          (with-index* (cond-> lease
-                         directory
-                         (assoc ::build-failure-result uncovered))
-                       (fn [idx]
-                         (if (or (nil? directory) (fff/contains-directory? idx directory))
-                           (f idx (:root lease) directory)
-                           uncovered)))
-          uncovered)]
+    (cond
+      ;; A root is the base of its own index, so overlay globs keep their meaning.
+      (= root scope) (watched)
+      (base-relative-overlay? overlay) (uncovered :overlay-globs)
+      (nil? root) (uncovered :no-repository)
+      :else (if-let [{:keys [lease directory]}
+                     (repository-lease root scope respect-ignore-files? overlay)]
+              (let [not-covered (Object.)
+                    cover-failed (Object.)
+                    result (with-index* (assoc lease ::build-failure-result cover-failed)
+                                        (fn [idx]
+                                          (if (fff/contains-directory? idx directory)
+                                            (f idx (:root lease) directory)
+                                            not-covered)))]
 
-    (if (identical? result uncovered)
-      (with-index* (lease scope respect-ignore-files? overlay) #(f % scope nil))
-      result)))
+                (cond (identical? result not-covered) (uncovered :not-covered)
+                      (identical? result cover-failed) (uncovered :cover-failed)
+                      :else result))
+              (uncovered :not-covered)))))
 
 (defn scope-relative-item
   "Rebase an item returned by a scoped native query to that scope."

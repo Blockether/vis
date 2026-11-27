@@ -125,6 +125,69 @@
          (finally (fs/delete-tree root)))))
 
 (defdescribe
+  scoped-snapshot-rows-test
+  (it
+    "preserves grep and find rows without retaining an exceptional scope"
+    (with-scope-repository
+      (fn [repo]
+        (let [plain
+              (fs/create-temp-dir {:prefix "vis-fff-plain-"})
+
+              grep
+              (private-fn "rg-fff-root-files")
+
+              find
+              (private-fn "find-scan-root")
+
+              blank-find
+              (private-fn "find-ls-root")
+
+              direct
+              (fn [scope respect? overlay f]
+                (with-open [idx (#'fff-index/open! scope respect? overlay)]
+                  (f idx scope nil)))
+
+              search
+              (fn [dir overlay]
+                [(mapv str (:files (grep dir ["SCOPEPROBE"] false false overlay)))
+                 (find dir "scopeprobe" false false 300 overlay)
+                 (blank-find dir 300 false false overlay)])
+
+              pool-state
+              (fn []
+                (let [{:keys [entries counters]} (fff-index/pool-stats)]
+                  [(set (map :pool-key entries)) (get-in counters [:events :create] 0)]))]
+
+          (try (fs/create-dirs (fs/path plain "src"))
+               (spit (fs/file plain "src/scopeprobe.txt") "SCOPEPROBE\n")
+               (fff-index/with-index* (fff-index/lease (fs/file repo) true) (constantly nil))
+               (doseq [[dir overlay]
+                       [[(fs/file repo "ignored") nil] [(fs/file repo ".cache") nil]
+                        [(fs/file plain "src") nil]
+                        [(fs/file repo "src") {:exclude-globs ["/scopeprobe-a.txt"]}]]
+
+                       :let [dir
+                             (.getCanonicalFile dir)
+
+                             expected
+                             (with-redefs [fff-index/with-scoped-index* direct]
+                               (search dir overlay))
+
+                             before
+                             (pool-state)
+
+                             snapshots
+                             (get-in (fff-index/pool-stats) [:counters :events :snapshot] 0)]]
+
+                 (expect (every? seq expected))
+                 (expect (= expected (search dir overlay)))
+                 (expect (= before (pool-state)))
+                 (expect (= 3
+                            (- (get-in (fff-index/pool-stats) [:counters :events :snapshot] 0)
+                               snapshots))))
+               (finally (fs/delete-tree plain))))))))
+
+(defdescribe
   repository-scope-reuse-test
   (it
     "agrees with direct scoped grep, find and ls, including ignored scopes"
@@ -1828,14 +1891,15 @@
           (expect (= "grep: use only one key for \"include\"." (ex-message e)))))
     (it "before_context and after_context give separate context windows"
         (write-temp! "aliasctx/a.txt" "l1\nl2\nl3\nNEEDLE\nl5\nl6\nl7\n")
-        (let [hit
-              (-> (:result (grep {"query" "NEEDLE" "paths" [(temp-dir-path "aliasctx")]
-                                  "before_context" 1 "after_context" 3}))
-                  (get "matches")
-                  vals
-                  first
-                  vals
-                  first)]
+        (let [hit (-> (:result (grep {"query" "NEEDLE"
+                                      "paths" [(temp-dir-path "aliasctx")]
+                                      "before_context" 1
+                                      "after_context" 3}))
+                      (get "matches")
+                      vals
+                      first
+                      vals
+                      first)]
           (expect (= ["l3"] (mapv #(get % "text") (get hit "before"))))
           (expect (= ["l5" "l6" "l7"] (mapv #(get % "text") (get hit "after"))))))))
 
@@ -2975,7 +3039,10 @@
 
                           fff/wait-for-scan
                           (fn [_idx _timeout]
-                            true)]
+                            true)
+
+                          fff/refresh-git-status!
+                          (constantly 0)]
 
               (open-index! (java.io.File. ".")))
             ;; one permit taken while the (stubbed) scan ran
@@ -3053,46 +3120,53 @@
     "pooled fff index"
     (it
       "is REUSED across searches and still sees a file written microseconds ago"
-      (let [_
-            (write-temp! "fffpool/seed.txt" "seed marker zzpoolseed\n")
+      (let [dir
+            (test-temp/temp-dir "vis-fffpool-")
 
-            dir
-            (temp-dir-path "fffpool")
+            _
+            (spit (fs/file dir "seed.txt") "seed marker zzpoolseed\n")
 
             rg
             (private-fn "rg-search")
 
-            pool
-            (fff-index-fn "pool")
+            root
+            (.getCanonicalPath (fs/file dir))
+
+            creates
+            #(get-in (fff-index/pool-stats) [:counters :events :create] 0)
+
+            before
+            (creates)
 
             files
             (fn [q]
-              (set (:files (rg {"query" q "paths" [dir] "is_files_only" true}))))
+              (binding [workspace/*filesystem-roots* [{:root root}]]
+                (set (:files (rg {"query" q "paths" [root] "is_files_only" true})))))
 
             _
             (files "zzpoolseed")
 
             pooled
-            (count @pool)
+            (creates)
 
             fresh
             (str "zzpoolfresh" (System/nanoTime))
 
             _
-            (write-temp! "fffpool/fresh.txt" (str "hello " fresh "\n"))
+            (spit (fs/file dir "fresh.txt") (str "hello " fresh "\n"))
 
             ;; every Vis write path calls this; it is what makes the NEXT search
             ;; rescan instead of waiting on the (async, ~100ms) watcher
             _
-            ((fff-index-fn "note-fs-write!") (fs/file (temp-root) "fffpool/fresh.txt"))
+            ((fff-index-fn "note-fs-write!") (fs/file dir "fresh.txt"))
 
             hit
             (files fresh)]
 
         ;; the search left a live index in the pool …
-        (expect (pos? pooled))
+        (expect (= 1 (- pooled before)))
         ;; … and the NEXT search reuses it instead of building another
-        (expect (= pooled (count @pool)))
+        (expect (= pooled (creates)))
         ;; … yet a file written after that index was built is still found,
         ;; because the write bumped the epoch and the lease resynced
         (expect (some (fn [p]
@@ -3100,11 +3174,11 @@
                       hit))))
     (it
       "does NOT rescan when nothing was written between searches"
-      (let [_
-            (write-temp! "fffnoscan/seed.txt" "zznoscanseed\n")
+      (let [dir
+            (test-temp/temp-dir "vis-fffnoscan-")
 
-            dir
-            (temp-dir-path "fffnoscan")
+            _
+            (spit (fs/file dir "seed.txt") "zznoscanseed\n")
 
             rg
             (private-fn "rg-search")
@@ -3115,16 +3189,20 @@
             note!
             (fff-index-fn "note-fs-write!")
 
+            root
+            (.getCanonicalPath (fs/file dir))
+
             run
             (fn []
-              (rg {"query" "zznoscanseed" "paths" [dir]}))
+              (binding [workspace/*filesystem-roots* [{:root root}]]
+                (rg {"query" "zznoscanseed" "paths" [root]})))
 
             _
             (run)
 
             entry
             (some (fn [[[p _] e]]
-                    (when (re-find #"fffnoscan" p) e))
+                    (when (= root p) e))
                   @pool)
 
             ^java.util.concurrent.atomic.AtomicLong synced
@@ -3140,7 +3218,7 @@
             (.get synced)
 
             _
-            (do (note! (fs/file (temp-root) "fffnoscan/seed.txt")) (run))
+            (do (note! (fs/file dir "seed.txt")) (run))
 
             after
             (.get synced)]
