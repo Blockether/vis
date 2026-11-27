@@ -72,6 +72,7 @@
               (expect (document/valid-json? "gateway" (declared :get "/v1/sessions/:sid/events-since") (:body initial)))
               (expect (= [(:id row)] (mapv #(get % "id") (get-in initial [:body "events" 0 "tasks"]))))
               (complete! (constantly {:state :done :value "ready"}))
+              (task/at-publication-cursor sid #(state/current-seq sid))
               (let [after (call handler :get (str uri cursor))
                     events (get-in after [:body "events"])]
                 (expect (= 200 (:status after)))
