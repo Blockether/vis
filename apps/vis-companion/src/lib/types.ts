@@ -1110,7 +1110,7 @@ export interface SessionGroup {
   project_id: string | null;
   name: string;
   color: string;
-  /** When the group last moved, epoch ms. The gateway lists the freshest group first. */
+  /** When the group last moved, epoch ms. The gateway lists groups by name. */
   active_at?: number;
   session_count: number;
   created_at?: number;

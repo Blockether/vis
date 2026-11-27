@@ -799,8 +799,8 @@ export const ProjectGroup = memo(function ProjectGroup({
   const archived: ArchiveView = isSessionRevealing ? 'only' : 'exclude';
   const groupArchived: ArchiveView = isGroupRevealing ? 'only' : 'exclude';
   // ONLY THE ARCHIVED WALL OF BANDS IS PAGED, and by a NUMBER rather than a cursor: the
-  // gateway orders groups by when each last moved, and archived groups rarely move, so the
-  // third page of them names the same shelves tomorrow (`state/list-session-groups-page`).
+  // gateway orders groups by name, so the third page of them names the same shelves
+  // tomorrow (`state/list-session-groups-page`).
   // The live wall is never paged: every live group is read, with every session filed under it.
   const [groupPage, setGroupPage] = useState(1);
   // One window cuts both the group names and their rows. The live wall is not paged.

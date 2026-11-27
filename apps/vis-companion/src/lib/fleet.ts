@@ -699,9 +699,9 @@ export interface ProjectGroupView {
 }
 
 /**
- * A machine's projects in canonical root order, matching the gateway contract.
- * Apply it to cached overviews and local-only roots too: response order, activity
- * and a root gaining an overview must not move existing headers.
+ * A machine's projects by name (`byProjectName`). Apply it to cached overviews and
+ * local-only roots too: response order, activity and a root gaining an overview
+ * must not move existing headers.
  * The gateway owns counts, NEW included; roots absent from its overview use the rows
  * on screen. `isReadSince` names the rows read here since the gateway counted them
  * (`readSinceCounted`); `isStoppedReadSince` names the same for STOPPED
@@ -768,7 +768,15 @@ export function projectGroups(
           return takenLabels.has(group.label) ? { ...group, label: rootLabel(root) } : group;
         }),
     )
-    .sort((left, right) => (left.root < right.root ? -1 : left.root > right.root ? 1 : 0));
+    .sort(byProjectName);
+}
+
+/** By the name the header wears, case-insensitive; equal names fall back to the root. */
+function byProjectName(left: ProjectGroupView, right: ProjectGroupView): number {
+  return (
+    left.label.localeCompare(right.label, undefined, { sensitivity: 'base', numeric: true }) ||
+    (left.root < right.root ? -1 : left.root > right.root ? 1 : 0)
+  );
 }
 
 /**
@@ -779,7 +787,9 @@ export function searchGroups(
   rows: Session[],
   isUnread: (session: Session) => boolean = () => false,
 ): ProjectGroupView[] {
-  return groupByWorkDir(rows).map(([root, sessions]) => localGroup(root, sessions, isUnread));
+  return groupByWorkDir(rows)
+    .map(([root, sessions]) => localGroup(root, sessions, isUnread))
+    .sort(byProjectName);
 }
 
 /** A group nobody else counted: its own rows are the whole of it. */

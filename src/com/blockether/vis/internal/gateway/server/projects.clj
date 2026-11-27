@@ -218,7 +218,7 @@
 (defn- list-session-groups-handler
   "GET /v1/session-groups?project=<pid>|root=<path>[&owner=…&archived=exclude|include|only]
                          [&limit=<n>&offset=<n>]
-   — the groups inside ONE project, freshest first, like sessions.
+   — the groups inside ONE project, by name.
 
    `root` is accepted because a client can group its list by WORKSPACE ROOT
    without ever holding a project id (the companion does). A root with no project

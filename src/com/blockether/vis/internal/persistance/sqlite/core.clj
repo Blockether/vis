@@ -3758,7 +3758,7 @@
 
 (defn db-list-session-groups
   "List the `session_group`s of `project-id`, each with a live `:session-count`,
-   freshest first (see `session-group-activity`). Returns `[]` when there are
+   by name, case-insensitive. Activity never moves a group. Returns `[]` when there are
    none - a project without groups is the normal case, not an error.
 
    `:archived` says which groups answer, in the ONE archive vocabulary sessions
@@ -3785,7 +3785,7 @@
                                               [[:not= :g.archived_at nil]]
 
                                               [[:= :g.archived_at nil]]))
-                               :order-by [[:active_at :desc] [:g.created_at :desc] [:g.rowid :desc]]}))]
+                               :order-by [[[:lower :g.name] :asc] [:g.name :asc] [:g.rowid :asc]]}))]
       (if all? (read-at-version db-info [:session-groups (or archived :exclude)] read) (read)))
     []))
 

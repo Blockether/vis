@@ -10719,7 +10719,7 @@
                      ;; A palette TOKEN, never a hex string: the TUI paints it on a
                      ;; terminal and the app out of a theme, from the SAME value.
                      :color (:color g)
-                     ;; When the group LAST MOVED: the order of the list, freshest first.
+                     ;; When the group LAST MOVED. The list is ordered by name, not by this.
                      :active_at (:active-at g)
                      :session_count (:session-count g)
                      :created_at (:created-at g)
@@ -10729,7 +10729,7 @@
                      :archived_at (:archived-at g)})))
 
 (defn list-session-groups
-  "Wire groups of one project, freshest first. `[]` when it has none.
+  "Wire groups of one project, by name. `[]` when it has none.
 
    `opts`: `:archived` - the ONE archive vocabulary (`:exclude` (the default),
    `:include` or `:only`, what a reveal asks for)."
@@ -10737,7 +10737,7 @@
   ([pid opts] (mapv session-group-wire (lp/session-groups pid opts))))
 
 (defn live-session-groups
-  "Wire groups that are not archived, of every project, freshest first inside each
+  "Wire groups that are not archived, of every project, by name inside each
    project: every live wall the session-list head carries."
   []
   (mapv session-group-wire (lp/live-session-groups)))
@@ -10752,9 +10752,8 @@
   "One WINDOW of a project's groups, with the facts a pager prints:
    `{:groups … :total … :session-total … :limit … :offset … :has-more …}`.
 
-   Bands are ordered by when each LAST MOVED, like sessions, so an offset is a
-   window over the current order. Only the archive is paged, and its groups
-   rarely move. `nil` limit means \"the rest\", so a caller that names no window
+   Bands are ordered by name, so activity never moves them and an offset is a
+   stable window. Only the archive is paged. `nil` limit means \"the rest\", so a caller that names no window
    still reads the whole wall.
 
    `:total` counts the BANDS and `:session-total` the sessions filed across ALL of

@@ -459,7 +459,7 @@ describe('projectGroups', () => {
     expect(projectGroups(null, [])).toEqual([]);
   });
 
-  it('orders gateway projects by canonical root without changing their counts or the snapshot', () => {
+  it('orders gateway projects by name without changing their counts or the snapshot', () => {
     const overview: GatewayOverview = {
       projects: [
         {
@@ -531,13 +531,13 @@ describe('projectGroups', () => {
     };
     const local = session('d', { workspace: { root: '/local/x' } });
     const groups = projectGroups(overview, [local]);
-    expect(groups.map((group) => group.root)).toEqual(['/local/x', '/repo/a']);
-    expect(groups[0]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0, stopped: 0 });
-    expect(groups[0]?.sessions).toEqual([local]);
+    expect(groups.map((group) => group.root)).toEqual(['/repo/a', '/local/x']);
+    expect(groups[1]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0, stopped: 0 });
+    expect(groups[1]?.sessions).toEqual([local]);
     overview.projects.unshift({
       root: '/local/x',
       project_id: 'p-d',
-      name: 'Local',
+      name: 'X',
       session_count: 1,
       live_count: 0,
       awaiting_count: 0,
@@ -545,8 +545,20 @@ describe('projectGroups', () => {
     });
     const refreshed = projectGroups(overview, [local]);
     expect(refreshed.map((group) => group.root)).toEqual(groups.map((group) => group.root));
-    expect(refreshed[0]?.projectId).toBe('p-d');
-    expect(refreshed[0]?.sessions).toEqual([local]);
+    expect(refreshed[1]?.projectId).toBe('p-d');
+    expect(refreshed[1]?.sessions).toEqual([local]);
+  });
+
+  // User report: project headers stood in folder-path order, which reads as random.
+  it('orders projects alphabetically by name, whatever their folder paths say', () => {
+    const project = (root: string, name: string) => ({
+      root, project_id: root, name, session_count: 1, live_count: 0, awaiting_count: 0, last_activity_ms: 1,
+    });
+    const overview: GatewayOverview = {
+      projects: [project('/a/zeta', 'zeta'), project('/b/Alpha', 'Alpha'), project('/c/beta', 'beta')],
+      project_count: 3, session_count: 3, live_count: 0, awaiting_count: 0,
+    };
+    expect(projectGroups(overview, []).map((group) => group.label)).toEqual(['Alpha', 'beta', 'zeta']);
   });
 });
 

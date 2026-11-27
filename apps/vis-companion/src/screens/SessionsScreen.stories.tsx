@@ -56,12 +56,14 @@ export const Default: Story = {
     // This first assertion waits for the screen's asynchronous gateway fixture.
     await expect(await page.findByText('uberworkspace')).toBeVisible();
     await expect(await page.findByText('svar')).toBeVisible();
-    // Response order must not determine which repository appears first.
-    const roots = Array.from(
+    // Projects stand alphabetically by name, whatever order the gateway answered in.
+    const names = Array.from(
       canvasElement.querySelectorAll<HTMLElement>('[data-project-root]'),
-    ).map((group) => group.dataset.projectRoot);
-    await expect(roots).toHaveLength(4);
-    await expect(roots).toEqual([...roots].sort());
+    ).map((group) => (group.getAttribute('aria-label') ?? '').replace(/ sessions(, selected)?$/, ''));
+    await expect(names).toHaveLength(4);
+    await expect(names).toEqual(
+      [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })),
+    );
     const expand = page.queryByRole('button', { name: 'Expand uberworkspace' });
     if (expand) await userEvent.click(expand);
     await expect(
