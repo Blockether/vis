@@ -1,0 +1,30 @@
+[project]
+name = "factory"
+version = "0.1.0"
+description = "A minimal durable software factory on one Vis gateway."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.11",
+  "vis-agent>=0.5.35",
+  "vis-optmem>=0.7.0",
+]
+
+[project.optional-dependencies]
+# Only a factory that keeps its tables in PostgreSQL needs this driver.
+postgres = ["psycopg[binary]>=3.2"]
+
+[dependency-groups]
+dev = ["pytest>=9", "ruff>=0.17"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# In a copy of the Vis repository, the SDK is the one of that copy.
+vis-agent = { path = "../../packages/vis-agent", editable = true }
+# The commit of the release 0.7.3, the same one that `deploy/install.sh` installs.
+vis-optmem = { git = "https://github.com/Blockether/vis-optmem", rev = "0a4083c23299bc715d94ca79bf379184b5e6fbc4" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

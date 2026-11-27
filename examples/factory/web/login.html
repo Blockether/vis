@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Factory</title>
+  <link rel="stylesheet" href="/factory/assets/app.css">
+</head>
+<body>
+  <main class="panel sign-in">
+    <div class="panel-head"><h1>Sign in to the factory</h1></div>
+    <form class="panel-body" action="/factory/login" method="post">
+      <!-- Sign-in error -->
+      <label class="field"><span>Factory token</span><input class="input" type="password" name="token" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>

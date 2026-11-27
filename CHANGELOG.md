@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Extensions: `vis.Extension(prompt_audience="leader")` keeps the prompt of an extension out of each subagent. Use it for instructions that only the session of the person can follow, such as the rules of a memory across sessions. `prompt_audience="subagent"` gives the prompt only to subagents, for instructions about delegated work. The default `"all"` gives the prompt to each session. An application extension of the SDK can set it too.
+- Examples: `examples/factory/` is a minimal durable software factory: one Python process next to one Vis gateway. It has workflows with cron and event triggers in their code, pages for the runs, the workflows, the suggestions and the memory, Vis web for the sessions, a team memory and a personal memory for `vis-optmem`, and typed tools for a session. A workflow reads each idle session and suggests follow-up work, which a person can discuss, accept or decline. One database holds all records: SQLite, PostgreSQL or Cloudflare D1. `deploy/install.sh` installs it on one Linux machine with systemd.
 
 ### Changed
 
