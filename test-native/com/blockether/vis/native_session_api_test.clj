@@ -54,6 +54,16 @@
         request
         (str (get last-message "content"))
 
+        ;; The Council ping of a child's task follows the task and omits its text.
+        asked-text
+        (str/join "\n"
+                  (for [message
+                        messages
+
+                        :when (and (= "user" (get message "role")) (not (tool-result? message)))]
+
+                    (str (get message "content"))))
+
         stream?
         (str/includes? (str/replace body " " "") "\"stream\":true")
 
@@ -63,7 +73,7 @@
 
     (cond (tool-result? last-message) (text "block-done")
           (str/includes? request "e2e-follow-up") (text "follow-up-done")
-          (re-find #"child-e\d+" request) (#'binary/python-tool-body child-code 3 stream?)
+          (re-find #"child-e\d+" asked-text) (#'binary/python-tool-body child-code 3 stream?)
           (str/includes? request "e2e-parent") (#'binary/python-tool-body parent-code 1 stream?)
           (str/includes? request "e2e-probe") (#'binary/python-tool-body probe-code 2 stream?)
           :else (text "idle"))))
