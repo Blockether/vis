@@ -23,13 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Apps: the new `media` node (`vis.ui.media`) plays a sound or a video from bytes, a file or a web address in the terminal, the Companion and the web app. With `before`, it also plays the old version. One sound or video holds at most 8 MiB, and all media in one app hold at most 16 MiB. Review plays the old and the new version of a changed sound or video.
 - Apps: a `diff` node takes `previews` (`vis.ui.diff.preview(path, node)`). Each client shows the picture, sound or video of a changed file under the header of that file. Review shows its changed pictures, sounds and videos there and no longer has a separate list of them.
 - Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.249.
-- Gateway: `POST /v1/sessions/:sid/tasks/:task-id/acknowledge` marks a finished Task receipt as read. The Python sandbox can call it as the `vis.task.acknowledge` Activity.
+- Gateway: `POST /v1/sessions/:sid/tasks/:task-id/acknowledge` marks a finished Task receipt as read. The Python sandbox marks receipts as read when it reads the Task outcome.
 
 ### Changed
 
 - Apps: the `group` node is removed. Use the layout nodes `flex`, `grid`, `section`, `collapsible` and `card`. Section, card, dialog and Ask frames have square corners in the Companion, the web app and the terminal app.
 - Python SDK: the `multiselect` field and `vis.ui.select.many` are removed. Use `select` with `is_multiple=True`. Its answer is a list of option values in option order. The Companion and the terminal app use the option value, not the label, to keep a selection.
-- Tasks: shell handle fields now give the current process state on each read. Sandbox shell and subagent Tasks no longer have a `wait` method. Read `child.record()` for the current subagent record.
+- Tasks: shell handle fields give the start or final snapshot. Call `sh.snapshot()` for the current process state. Sandbox shell and subagent Tasks no longer have a `wait` method. Read `child.record()` for the current subagent record.
 - Python SDK: use `await asyncio.wait([sh], timeout=seconds)` for shell handles in async code, as in the sandbox. Use `concurrent.futures.wait([sh], timeout=seconds)` in a plain `def`.
 - Live views: wait for `view.changed()` with `asyncio.wait`. `view.events()` now reads new events without waiting.
 - Gateway: a turn cancel when no turn runs, or when the turn already ended, returns `accepted: false` with the reason `no_running_turn` or `not_running`. The terminal app, the Companion and the Python SDK show this answer.

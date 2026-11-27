@@ -16,6 +16,9 @@
                 [["grep({'query': 'x', 'paths': ['resources'], 'wat': True})"
                   "grep: unknown keys: wat. See doc(\"grep\")."]
                  ["await shell('')" "shell: command required; use shell(command)."]
+                 ["await shell('true', stdin='bad')" "shell: stdin must be \"tty\" or \"null\"."]
+                 ["await shell('true', wait=0)"
+                   "shell: use `result = await sh` or `asyncio.wait([sh], timeout=seconds)` instead of `wait`."]
                  ["await _shell_logs('missing-handle')"
                   "shell: unknown id 'missing-handle'; use the handle returned by shell()."]
                  ["await council.read()"

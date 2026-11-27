@@ -37,6 +37,7 @@
             [com.blockether.vis.internal.session.model :as smodel]
             [com.blockether.vis.internal.workspace.core :as workspace]
             [com.blockether.vis.internal.util :as util]
+            [com.blockether.vis.internal.task :as task]
             [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]
             [com.blockether.vis.internal.gateway.event-check :as event-check]
             [taoensso.telemere :as tel]))
@@ -7459,6 +7460,18 @@
                  (expect (true? (deref stopped 5000 false)))
                  (expect (true? (deref closed 5000 false))))))
            (finally (deliver release true) (swap! registry dissoc sid)))))
+  (it "removes Task receipts by session ID even without a live sandbox"
+      (let [sid (str (random-uuid))
+            id (get-in (task/start-manual! sid {:name "watch"} (fn [_])) [:row :id])]
+        (try
+          (task/sweep! sid :worker-death)
+          (expect (= "worker_death" (get-in (task/status sid id true) [:task :cancel-reason])))
+          (with-redefs [lp/db-info (constantly :db)
+                        lp/close! (fn [_])
+                        persistance/db-delete-session-tree! (fn [_ _])]
+            (.get ^java.util.concurrent.Future (state/close-session! sid)))
+          (expect (nil? (task/status sid id true)))
+          (finally (task/sweep! sid :session-close)))))
   ;; #347: spill files of a deleted session can hold 128 MiB, so the delete removes them.
   (it "deletes the sandbox snapshot after the live runtime is closed"
       (let [sid

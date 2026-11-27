@@ -505,7 +505,15 @@
                                                       "assert watch.done()\n"
                                                       "assert (await watch)['requests'][0]['session_id'] == " (pr-str first-child) "\n"
                                                       "assert (await council.changed()) == watch.result()\n"
-                                                      "print('ready')")))]
+                                                      "later = council.changed(after=watch.result()['cursor'])\n"
+                                                      "for _ in range(2):\n"
+                                                      "    done, pending = await asyncio.wait([watch, later], return_when=asyncio.FIRST_COMPLETED)\n"
+                                                      "    assert done == {watch} and pending == {later}\n"
+                                                      "assert later.cancel()\n"
+                                                      "try:\n"
+                                                      "    await later\n"
+                                                      "except asyncio.CancelledError:\n"
+                                                      "    print('ready')")))]
                                   (expect (= "ready\n" (:stdout answer)) (pr-str answer)))
                                 (finally (python-env/dispose-python-context! ctx))))
                             (expect (= "For docs" (get-in (agents/open-request second-child) [:files :reason])))

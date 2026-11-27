@@ -226,9 +226,15 @@ a live view can give a normal result instead of cancelling its Task.
 
 `await asyncio.wait(tasks, timeout=seconds)` gives `(done, pending)` without cancelling the
 Tasks. `concurrent.futures.wait(tasks, timeout=seconds)` does the same but blocks the calling
-thread. Include `council.changed()` in the wait to detect an open Council
-request. The readiness Task is done at once if a request is already open. Pass its
-result's cursor as `after` on the next watch.
+thread.
+
+To detect an open Council request, save `watch = council.changed()`. Include `watch`
+in the wait and set `return_when=asyncio.FIRST_COMPLETED`. If a child finishes first,
+use the same pending watch in the next wait. Call `watch.cancel()` when you no longer
+need it.
+
+The readiness Task is done at once if a request is already open. Pass its result's
+cursor as `after` on the next watch.
 
 A direct await of a detachable Task can give you the Task itself instead of its result.
 Answer the open request, then await the same Task. The Task and its live views can continue

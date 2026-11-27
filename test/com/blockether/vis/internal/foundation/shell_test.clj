@@ -2189,6 +2189,30 @@
         (if (< n 160) (do (Thread/sleep 25) (recur (inc n))) false)
         true))))
 
+(defdescribe shell-attach-signature-test
+  (it "binds the keyword-only attach call before recovering a live alias"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (ep/set-python-binding-signature! ctx 'shell (extension/symbol-signature shell/shell-symbol))
+          (expect (= "attach-test"
+                     (py ctx (str "import inspect\n"
+                                  "sh = await shell('sleep 10', id='attach-test')\n"
+                                  "args = inspect.signature(shell).bind(op='attach', id='attach-test')\n"
+                                  "attached = await shell(*args.args, **args.kwargs)\n"
+                                  "attached.id"))))))))
+
+(defdescribe shell-send-recovery-test
+  (it "offers a runnable command when there is no shell to receive input"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (let [out (ep/run-python-block ctx "await _shell_type('missing-shell', 'text')")
+                example (second (re-find #"(?s)start one with `?(.+?)`?\."
+                                         (get-in out [:error :message] "")))]
+            (expect example (pr-str out))
+            (let [replay (ep/run-python-block ctx (str example "\nsh.type('text')\nprint(sh.id, (await sh).exit)"))]
+              (expect (nil? (:error replay)) (pr-str replay))
+              (expect (= "example-shell 0\n" (:stdout replay)))))))))
+
 (defdescribe shell-observed-completion-fields-test
   (it "reads final fields after an observation-only wait"
       (with-shell-task-context

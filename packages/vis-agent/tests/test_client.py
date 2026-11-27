@@ -910,6 +910,24 @@ def test_task_observer_retries_only_transient_pages_from_its_cursor(code):
     assert cursors == (["-1", "7"] if code == 403 else ["-1", "7", "7"])
 
 
+def test_acknowledge_task_receipt_through_routes():
+    from blockether.vis._contracts import validate
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        assert (method, path, body) == (
+            "POST",
+            "/v1/sessions/s/tasks/t/acknowledge",
+            b"",
+        )
+        return 200, {"acknowledged": True}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        receipt = client.routes.post_session_task_acknowledge("s", "t")
+        assert validate("gateway", "task_acknowledgement", receipt)["acknowledged"]
+
+
 def test_turn_wait_repairs_an_elided_terminal_frame():
     from blockether.vis.engine import Turn
 

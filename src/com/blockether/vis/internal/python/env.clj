@@ -1588,7 +1588,7 @@ def __vis_bind_ctx__(g, data, fallback, home, Path=__import__('pathlib').Path, s
   [session]
   (when session
     (swap! disposed-sessions conj session)
-    (task/sweep! (python-host/task-session session) :session-close)
+    (task/sweep! (python-host/task-session session) :worker-death)
     (swap! restore-reports dissoc session)
     (discard-block-stdout! session)
     (python-host/forget-session! session)

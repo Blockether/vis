@@ -3,6 +3,9 @@
             [clojure.java.io :as io]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.python.env :as python-env]
+            [com.blockether.vis.internal.python.host :as python-host]
+            [com.blockether.vis.internal.python.worker :as python-worker]
             [com.blockether.vis.internal.session.cancellation :as cancellation]
             [com.blockether.vis.internal.task :as task]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -102,6 +105,56 @@
           (expect (= {:reason :interrupted} (deref ended 1000 nil)))
           (expect (nil? (task/state sid id)))
           (finally (deliver finish true) (task/sweep! sid :session-close))))))
+
+(defdescribe worker-death-receipt-test
+  (it "keeps a bounded cancellation receipt without making swept Tasks discoverable"
+      (let [sid (random-uuid)
+            tasks (repeatedly 130 #(task/start-manual! sid {:kind :subagent :name "child"} (fn [_])))
+            ids (mapv (comp :id :row) tasks)
+            id (peek ids)]
+        (try
+          (task/sweep! sid :worker-death)
+          ((:complete! (last tasks)) (constantly {:state :done :value 42}))
+          (let [receipt (task/status sid id true)]
+            (expect (= :cancelled (get-in receipt [:task :state])))
+            (expect (= "worker_death" (get-in receipt [:task :cancel-reason])))
+            (expect (= (:task receipt) (task/wire-state sid id)))
+            (expect (= {:requested false :reason "already_ended"}
+                       (task/cancel-result! sid id :person)))
+            (expect (nil? (task/cancel-result! sid "unknown" :person)))
+            (expect (empty? (task/wire-tasks sid)))
+            (expect (nil? (task/status sid (first ids) true))))
+          (task/sweep! sid :worker-death)
+          (expect (= :cancelled (get-in (task/status sid id true) [:task :state])))
+          (finally (task/sweep! sid :session-close)))
+        (expect (nil? (task/status sid id true))))))
+
+(defdescribe retired-context-receipt-test
+  (it "keeps cancellation receipts and Task IDs across sandbox renewal"
+      (let [sid (str (random-uuid))
+            context (str (random-uuid))
+            old-sandbox (delay {:python-context context})
+            environment {:python-sandbox (atom old-sandbox)
+                         :python-sandbox-factory (fn [] (delay {:python-context (str (random-uuid))}))
+                         :python-context-retired-atom (atom true)}
+            id (get-in (task/start-manual! sid {:kind :tool :name "watch"} (fn [_])) [:row :id])]
+        @old-sandbox
+        (python-host/own-tasks! context sid)
+        (with-redefs [python-worker/retire-worker! (fn [_ _])]
+          (with-redefs-fn {#'python-env/worker-of (constantly :worker)
+                            #'python-env/close-extension-contexts! (fn [_])
+                            #'python-env/py-close-session! (fn [_])}
+            (fn []
+              (try
+                (python-env/retire-python-context! context)
+                (expect (= "worker_death" (get-in (task/status sid id true) [:task :cancel-reason])))
+                (expect (python-env/renew-python-sandbox! environment))
+                (expect (= "worker_death" (get-in (task/status sid id true) [:task :cancel-reason])))
+                (let [next-task (task/start-manual! sid {:kind :tool :name "next"} (fn [_]))]
+                  (expect (= "t2" (get-in next-task [:row :id])))
+                  (expect (= {:requested false :reason "already_ended"}
+                             (task/cancel-result! sid id :person))))
+                (finally (task/sweep! sid :session-close)))))))))
 
 (defdescribe task-events-test
   (it "publishes committed public snapshots in order and stops at settlement"

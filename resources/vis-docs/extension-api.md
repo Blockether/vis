@@ -905,7 +905,7 @@ defaults](extension-design.md#document-default-behavior).
 | `tool.__signature__` | Not supplied (`inspect` follows `tool.__wrapped__`) |
 
 Engine tools also show their registered option keys as keyword-only parameters. For example,
-`inspect.signature(council.publish)` names the required `kind` argument, and
+`inspect.signature(council.publish)` names the required `content` argument, and
 `inspect.signature(grep)` names `query`, `paths`, and the other search options. An optional key
 with an undisclosed default shows `Ellipsis`.
 
@@ -2141,8 +2141,11 @@ A page never holds a part of a character. `n` and `tail` mean `lines`, `start` m
 and `bytes` means `limit`.
 
 `next(page)` answers the page that follows, and `next(page, None)` answers `None` after the last
-page. `page.pages()` gives the pages from this page to the end of the log. You can read a log
-after the command ends or is cancelled.
+page. `page.pages()` gives at most ten pages, including the current page. Set `max_pages`
+to read more pages. The iterator stops at the current end of the log.
+
+You can read the log after the command ends or is cancelled. Read or save the log before
+you reuse the shell alias, or use a different alias for the new command.
 
 Read the terminal result by key, such as `result["exit"]`, or by attribute, such as `result.exit`.
 If a field has the name of a dictionary method, use the key. For example, use `result["keys"]`.

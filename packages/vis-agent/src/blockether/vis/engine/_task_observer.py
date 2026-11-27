@@ -81,7 +81,8 @@ class _SessionTask(_HostFuture[_T], Generic[_T]):
         if state == "done":
             return state, self._result_from(answer)
         if state == "cancelled":
-            self._cancelled_record(answer)
+            if row.get("cancel_reason") != "worker_death" or "record" in answer:
+                self._cancelled_record(answer)
             return state, None
         if state == "running":
             return state, None
@@ -103,8 +104,8 @@ class _CouncilWatch(_SessionTask):
         from ._client import GatewayError, TransportError
 
         try:
-            self._session._call(
-                "POST", "/tasks/:task-id/acknowledge", path={"task-id": self.task_id}
+            self._session.client.routes.post_session_task_acknowledge(
+                self._session.id, self.task_id
             )
         except (GatewayError, TransportError):
             # A receipt can have expired or the gateway can predate this route.
@@ -186,7 +187,8 @@ class _Observer:
                         for task_id in pending:
                             self._read_all(stream, task_id)
                     elif event.type == "task.ended" and event.seq > barrier:
-                        self._read_all(stream, event.data["task"]["id"])
+                        row = event.data["task"]
+                        self._read_all(stream, row["id"], row)
                     with self._lock:
                         if not self._pending:
                             stream.close()
@@ -205,19 +207,31 @@ class _Observer:
                 for handle in handles:
                     handle.set_exception(error)
 
-    def _read_all(self, stream, task_id):
+    def _read_all(self, stream, task_id, row=None):
         with self._lock:
             handles = tuple(self._pending.get(task_id, ()))
         for handle in handles:
-            self._read(stream, handle)
+            self._read(stream, handle, row)
 
-    def _read(self, stream, handle):
+    def _read(self, stream, handle, row):
+        from ._client import GatewayError
+
         # A Task admitted during a ready frame may not be in its snapshot yet.
         # Leave it registered when the detail read says it is still running.
         try:
             state, result = stream.retry_request(handle._settlement)
         except Exception as error:
-            state, result = "failed", error
+            # Worker loss can remove the receipt before publishing cancellation.
+            if (
+                isinstance(error, GatewayError)
+                and (error.status, error.code) == (404, "task-not-found")
+                and row is not None
+                and (row["state"], row["kind"], row["session_id"])
+                == ("cancelled", handle._kind, self._session.id)
+            ):
+                state, result = "cancelled", None
+            else:
+                state, result = "failed", error
         if state == "running":
             return
         if isinstance(handle, _CouncilWatch) and state in {"done", "cancelled"}:

@@ -47,6 +47,8 @@ def test_real_local_engine(tmp_path, monkeypatch):
     # A lifecycle test must not depend on the developer's login or provider config.
     import json
 
+    from blockether.vis.engine import GatewayError
+
     config = tmp_path / ".vis"
     config.mkdir()
     (config / "config.yml").write_text(
@@ -82,6 +84,9 @@ def test_real_local_engine(tmp_path, monkeypatch):
         session.update(title="SDK updated")
         assert session.read()["title"] == "SDK updated"
         session.delete()
+        with session.events() as events, pytest.raises(GatewayError) as failure:
+            next(events)
+        assert (failure.value.status, failure.value.code) == (404, "session-not-found")
         process = engine._process
     assert process.poll() is not None
 

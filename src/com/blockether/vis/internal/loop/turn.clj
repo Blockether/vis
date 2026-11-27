@@ -728,10 +728,16 @@
         tool-name
         "shell"
 
+        wait-secs
+        (when (= kind :run) (shell/foreground-timeout-secs))
+
         block-code
-        (if (= kind :bg)
-          (str "await shell({\"command\": " (pr-str cmd) ", \"wait\": 0, \"id\": " (pr-str id) "})")
-          (str "await shell({\"command\": " (pr-str cmd) "})"))
+        (let [command (env/ctx->python-line cmd)]
+          (if (= kind :bg)
+            (str "sh = await shell(" command ", id=" (env/ctx->python-line id) ")")
+            (str "import asyncio\nsh = await shell(" command ")\n"
+                 "done, _ = await asyncio.wait([sh], timeout=" wait-secs ")\n"
+                 "result = sh.result() if sh in done else sh.snapshot()")))
 
         t0
         (util/now-ms)
@@ -775,7 +781,9 @@
                  ;; PROCESS cwd — a bang would then run outside the session root.
                  (extension/with-context
                    {:env env}
-                   (if (= kind :bg) (shell-fn env cmd {"id" id}) (shell-fn env cmd {}))))
+                   (if (= kind :bg)
+                      (shell-fn env cmd {"id" id})
+                      (shell-fn env cmd {"timeout_secs" wait-secs}))))
                (catch Throwable t
                  (tel/log!
                    {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})

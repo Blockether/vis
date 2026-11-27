@@ -9,6 +9,10 @@
             [com.blockether.vis.internal.context.loop :as ctx-loop]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.shell :as shell]
+            [com.blockether.vis.internal.gateway.resources :as resources]
+            [com.blockether.vis.internal.foundation.shell-test :as shell-fixture]
+            [com.blockether.vis.internal.python.env :as ep]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.persistance.core :as persistance]
@@ -117,7 +121,12 @@
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
           (expect (= "shell" (:vis/tool-name form)))
-          (expect (= "await shell({\"command\": \"echo hi-from-bang\"})" (:src form)))
+           (let [ctx (#'shell-fixture/py-ctx env)]
+             (try (let [replay (ep/run-python-block ctx
+                                (str (:src form) "\nprint(result.out.strip())"))]
+                    (expect (nil? (:error replay)) (pr-str replay))
+                    (expect (= "hi-from-bang\n" (:stdout replay))))
+                  (finally (ep/dispose-python-context! ctx))))
           (expect (= "hi-from-bang\nexit 0" (:stdout form)))
           (expect (not (contains? form :result)))
           (expect (not (contains? form :result-summary)))
@@ -159,6 +168,45 @@
 
                        (expect (= :success (:status result)))
                        (expect (= [root "exit 0"] lines)))))))
+
+(defdescribe run-turn-bang-background-replay-test
+  (it "replays a background bang as a shell handle under the original alias"
+      (with-store
+        (fn [store]
+          (let [env (bang-env store)
+                cmd "!&printf '%s' 'quoted \"value\"'"
+                result (with-redefs [toggles/enabled? (constantly true)]
+                         (turn/run-turn! env cmd {}))
+                [turn] (persistance/db-list-session-turns store (:session-id env))
+                [iteration] (persistance/db-list-session-turn-iterations store (:id turn))
+                [form] (:forms iteration)
+                alias (re-find #"background-[a-f0-9]{8}" (:stdout form))
+                ctx (#'shell-fixture/py-ctx env)]
+            (try (let [replay (ep/run-python-block ctx
+                                (str (:src form) "\nprint(sh.id)\nprint((await sh).out.strip())"))]
+                   (expect (= :success (:status result)))
+                   (expect (nil? (:error replay)) (pr-str replay))
+                   (expect (= (str alias "\nquoted \"value\"\n") (:stdout replay))))
+                 (finally (ep/dispose-python-context! ctx))))))))
+
+(defdescribe run-turn-bang-timeout-replay-test
+  (it "leaves the shell running when the saved foreground wait expires"
+      (with-store
+        (fn [store]
+          (let [env (bang-env store)
+                sid (:session-id env)
+                ctx (#'shell-fixture/py-ctx env)]
+            (try
+              (with-redefs [toggles/enabled? (constantly true) shell/default-timeout-secs 1]
+                (turn/run-turn! env "!sleep 3; echo finished" {}))
+              (let [[turn] (persistance/db-list-session-turns store sid)
+                    [iteration] (persistance/db-list-session-turn-iterations store (:id turn))
+                    [form] (:forms iteration)
+                    replay (ep/run-python-block ctx (str (:src form) "\nprint(sh.snapshot().status)"))]
+                (expect (str/includes? (:stdout form) "Timed out after 1s"))
+                (expect (nil? (:error replay)) (pr-str replay))
+                (expect (= "running\n" (:stdout replay))))
+              (finally (resources/stop-all! sid) (ep/dispose-python-context! ctx))))))))
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"

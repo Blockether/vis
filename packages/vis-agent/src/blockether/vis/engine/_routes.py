@@ -81,6 +81,17 @@ class Routes:
             timeout=timeout,
         ).json()
 
+    def post_session_task_acknowledge(
+        self, sid: str, task_id: str, *, timeout: float | None = None
+    ) -> _types.TaskAcknowledgement:
+        """POST /v1/sessions/:sid/tasks/:task-id/acknowledge — mark a receipt as read."""
+        return self._client._request(
+            "POST",
+            "/v1/sessions/:sid/tasks/:task-id/acknowledge",
+            path={"sid": sid, "task-id": task_id},
+            timeout=timeout,
+        ).json()
+
     def __init__(self, client: EngineClient):
         self._client = client
 

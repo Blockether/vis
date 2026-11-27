@@ -56,8 +56,13 @@
         (:cancel-reason row) (update :cancel-reason #(str/replace (name %) "-" "_"))
         (:error row) (assoc :error "Task failed")))))
 
+(defn- swept-state [registry session id]
+  (wire-row (get-in registry [(str session) :swept-receipts id])))
+
 (defn wire-state [session id]
-  (wire-row (get-in @sessions (key-for session id))))
+  (let [registry @sessions]
+    (or (wire-row (get-in registry (key-for session id)))
+        (swept-state registry session id))))
 
 (defn wire-tasks [session]
   (into [] (comp (remove :acknowledged?) (keep wire-row))
@@ -285,15 +290,17 @@
   ([session id wire?]
    (let [path (key-for session id)
          {:keys [row snapshot ticket]} (get-in @sessions path)]
-     (when row
-       (let [record (when snapshot (snapshot id))
-            entry (get-in @sessions path)]
-        (when (identical? ticket (:ticket entry))
-          (let [{:keys [value] :as outcome} (:outcome entry)]
-            (cond-> {:task (if wire? (wire-row entry) (:row entry))}
-              (or (:record outcome) record) (assoc :record (or (:record outcome) record))
-              (and (contains? outcome :value)
-                    (= :council (get-in entry [:guest-data :readiness]))) (assoc :value value)))))))))
+     (or (when row
+           (let [record (when snapshot (snapshot id))
+                 entry (get-in @sessions path)]
+             (when (identical? ticket (:ticket entry))
+               (let [{:keys [value] :as outcome} (:outcome entry)]
+                 (cond-> {:task (if wire? (wire-row entry) (:row entry))}
+                   (or (:record outcome) record) (assoc :record (or (:record outcome) record))
+                   (and (contains? outcome :value)
+                         (= :council (get-in entry [:guest-data :readiness]))) (assoc :value value))))))
+         (when-let [task (and wire? (swept-state @sessions session id))]
+           {:task task})))))
 
 (defn start!
   "Start `run` once. It returns `{:state :done|:failed|:cancelled, ...}`."
@@ -367,7 +374,9 @@
 (defn cancel-result!
   "Request cancellation and return the decision, or nil if the Task does not exist."
   [session id reason]
-  (cancel-result* session id reason :cancel nil))
+  (or (cancel-result* session id reason :cancel nil)
+      (when (swept-state @sessions session id)
+        {:requested false :reason "already_ended"})))
 
 (defn cancel!
   "Request an interrupt and report whether the Task accepted it."
@@ -534,20 +543,31 @@
                   id)))
         (get-in @sessions [(str session) :entries])))
 
+(defn- keep-swept-receipts [receipts ended]
+  (->> (concat (vals receipts) (map #(select-keys % [:row :number :public-name]) ended))
+       (sort-by :number >)
+       (take receipt-cap)
+       (into {} (map (juxt #(get-in % [:row :id]) identity)))))
+
 (defn sweep!
   "Remove the session's Tasks and request stop. A late outcome cannot recreate them."
   [session reason]
   (let [sid (str session)
         entries (locking sessions
-                  (let [entries (sort-by :number (vals (get-in @sessions [sid :entries])))]
+                  (let [entries (sort-by :number (vals (get-in @sessions [sid :entries])))
+                        ended-at (System/currentTimeMillis)
+                        ended (into [] (comp (filter #(= :running (get-in % [:row :state])))
+                                            (map #(update % :row assoc :state :cancelled :ended-at ended-at
+                                                          :cancel-reason reason :view-ids []))) entries)]
                     (if (= reason :session-close)
                       (swap! sessions dissoc sid)
                       (when (contains? @sessions sid)
-                        (swap! sessions update sid dissoc :entries :detach-notices)))
-                    (doseq [entry entries :when (= :running (get-in entry [:row :state]))]
-                      (publish-row! sid "task.ended"
-                                    (update entry :row assoc :state :cancelled :ended-at (System/currentTimeMillis)
-                                            :cancel-reason reason :view-ids [])))
+                        (swap! sessions update sid
+                               #(cond-> (dissoc % :entries :detach-notices)
+                                  (and (= reason :worker-death) (seq ended))
+                                  (update :swept-receipts keep-swept-receipts ended)))))
+                    (doseq [entry ended]
+                      (publish-row! sid "task.ended" entry))
                     entries))]
     (doseq [{:keys [interrupt signal waiters views row release-activity]} entries]
       (doseq [{:keys [release]} (vals waiters)] (when release (release)))

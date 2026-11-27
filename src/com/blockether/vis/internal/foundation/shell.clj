@@ -1944,6 +1944,11 @@
                                 " stop it with sh.cancel().")))
       :op :shell)))
 
+(defn foreground-timeout-secs
+  "The wait budget for a foreground shell command."
+  ^long []
+  (clamp-timeout-secs nil))
+
 (defn run-blocking
   "INTERNAL blocking runner — NOT the tool. Run ONE bounded foreground command and answer the tool's own total result: the
    command's own `run`-stage map with the handle's identity merged on, so `r[\"exit\"]`,
@@ -2243,7 +2248,7 @@
      (when-not entry
        (throw (ex-info (str "No background shell '" id
                             "' in this session — start one with"
-                            " await shell({\"command\": \"…\", \"wait\": 0, \"id\": id}).")
+                            " `sh = await shell(\"read -r line\", id=\"example-shell\", stdin=\"tty\")`. Use your command and ID.")
                        {:type ::unknown-bg-id :id id})))
      (when-not (live-entry? entry)
        (throw (ex-info (str "Background shell '" id
@@ -2305,7 +2310,9 @@
                       {:type ::unknown-op :op op})))
     (doseq [[k v] opts]
       (when-not (allowed k)
-        (throw (ex-info (str "Unknown shell option " (pr-str k) ".")
+        (throw (ex-info (if (= "wait" k)
+                          "shell: use `result = await sh` or `asyncio.wait([sh], timeout=seconds)` instead of `wait`."
+                          (str "Unknown shell option " (pr-str k) "."))
                         {:type ::bad-option :option k})))
       (when (and (some? v)
                  (not (case k
@@ -2313,7 +2320,9 @@
                         "env" (opts-arg? v)
                         "stdin" (contains? #{"tty" "null"} v)
                         true)))
-        (throw (ex-info (str "Invalid value for shell `" k "`.")
+        (throw (ex-info (if (= "stdin" k)
+                          "shell: stdin must be \"tty\" or \"null\"."
+                          (str "Invalid value for shell `" k "`."))
                         {:type ::bad-option :option k}))))
     (if attach?
       (when-not (util/non-blank-string? (get opts "id"))
@@ -2698,7 +2707,7 @@
 
 (defn shell
   "Start or attach to a managed shell. See the `shell` symbol for the sandbox contract."
-  {:arglists '([command] [command opts])}
+  {:arglists '([] [command] [command opts])}
   [env & args]
   (let [[command opts] (if (and (= 1 (count args)) (opts-arg? (first args)))
                          (if (::python-host/keyword-arguments (meta (first args)))
@@ -2860,8 +2869,10 @@
        "Use `done, pending = await asyncio.wait([sh], timeout=seconds)` to wait up to a limit "
        "without cancelling the process. `sh.cancel()` requests cancellation. "
        "Use `await shell(op=\"attach\", id=alias)` to recover a live handle from the same trust origin "
-       "without starting a command. Starting with the same live alias also returns that shell.\n\n"
-       "`sh.logs()` reads the tail, even after cancellation. `sh.logs(-50)` gives the last 50 lines. "
+       "without starting a command. A new run requires a command. To reuse a live alias with a run, "
+       "use the same command and do not specify a different working directory.\n\n"
+       "`sh.logs()` reads the tail, even after cancellation. Read or save logs before you reuse the alias. "
+       "`sh.logs(-50)` gives the last 50 lines. "
        "`sh.logs(0, lines=10)` reads ten lines from the start. `next(page)` continues from its cursor, "
        "and `lines=-10` reads ten lines above an offset. `page.pages(max_pages=…)` includes the current "
        "page, defaults to ten pages, and stops at the current end of the log. `page[-4000:]` slices "
@@ -2921,7 +2932,7 @@
      :name "_shell_type"
      :result
      (str
-       "The same shell result shape (`stage` \"send\"), with the `sent` character count and the `keys` "
+       "The same shell result shape (`stage` \"send\"), with the `keys` "
        "label. `out` is an empty string. Use `sh.logs()` to read the process output.")
      :description
      (str

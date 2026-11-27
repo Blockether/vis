@@ -10926,6 +10926,8 @@
            (fn []
              (let [resources-stopped? (resources/stop-session-resources! sid)
                    sandbox-closed? (try (lp/close! sid) true (catch Throwable _ false))]
+               ;; A context can close on renewal. Only session deletion drops Task receipts and IDs.
+               (task/sweep! sid :session-close)
                ;; After `lp/close!`: no block can write a new snapshot of a deleted session.
                (try (python-env/delete-session-defs! sid) (catch Throwable _ nil))
                (when (and resources-stopped? sandbox-closed?)

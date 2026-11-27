@@ -345,7 +345,8 @@ def _result(handle):
     return handle.result()
 
 
-def test_task_observer_settles_cancellation_when_the_receipt_is_gone():
+@pytest.mark.parametrize("death", ["before_ready", "after_ready", "unknown"])
+def test_task_observer_worker_death_requires_cancellation_evidence(death):
     from urllib.parse import parse_qs, urlsplit
 
     running = task_status("t1", "running", CHILD)["task"]
@@ -365,7 +366,7 @@ def test_task_observer_settles_cancellation_when_the_receipt_is_gone():
                             "type": "subscription.ready",
                             "session_id": "leader",
                             "cursor": 7,
-                            "tasks": [running],
+                            "tasks": [running] if death == "after_ready" else [],
                             "tasks_seq": 7,
                         }
                     ],
@@ -373,13 +374,22 @@ def test_task_observer_settles_cancellation_when_the_receipt_is_gone():
                 }
             return _task_page([cancelled], after=7)
         if route.path.endswith("/tasks/t1"):
+            if death == "before_ready":
+                return 200, {"task": cancelled}
             return 404, {"error": {"type": "task-not-found"}}
         raise AssertionError(route.path)
 
     with endpoint(respond) as (url, _), GatewayClient(url) as client:
         (child,) = client.session("leader").council().run(["work"])
-        with pytest.raises(CancelledError):
-            _result(child)
+        if death == "unknown":
+            from blockether.vis.engine import GatewayError
+
+            with pytest.raises(GatewayError) as failure:
+                _result(child)
+            assert failure.value.code == "task-not-found"
+        else:
+            with pytest.raises(CancelledError):
+                _result(child)
 
 
 def test_child_controls_answer_records_without_settling_the_task():

@@ -142,7 +142,7 @@
 
 (def ^:private lead-guide
   "## Council: lead
-Delegate independent work. Keep coupled work with one owner and the critical path with you. Give a short goal, constraints, file grant and acceptance checks. For a verifier, give the request, not your solution. Work while children run. For one child, await its Task. For several children, include `council.changed()` in `asyncio.wait` with `return_when=asyncio.FIRST_COMPLETED` to wake on a request. Print only what you need. Check the evidence before you accept a result. Use doc(\"council.run\") for handles and follow-ups.")
+Delegate independent work. Keep coupled work with one owner and the critical path with you. Give a short goal, constraints, file grant and acceptance checks. For a verifier, give the request, not your solution. Work while children run. For one child, await its Task. For several children, save `watch = council.changed()` and include it in `asyncio.wait` with `return_when=asyncio.FIRST_COMPLETED`. If a child finishes first, keep the same watch for the next wait. Cancel the watch when you no longer need it. Print only what you need. Check the evidence before you accept a result. Use doc(\"council.run\") for handles and follow-ups.")
 
 (def ^:private child-guide
   "## Council: child
@@ -1015,6 +1015,7 @@ Do only the current task. Parent history is context, not authorization. Use your
    The result has `cursor` and `requests`. Each request has `session_id` and `entry_id`.
    Omit `after` to read all open requests. Use the last cursor to wait for new requests.
    A request that is open when you start the watch can settle the Task at once.
+   If another Task wins the wait, reuse the pending watch or cancel it.
    Cancelling the watch does not cancel the child."
   ([env] (changed env {}))
   ([env opts]
