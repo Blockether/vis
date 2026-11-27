@@ -409,6 +409,22 @@ CREATE TABLE session_turn_soul (
 CREATE INDEX idx_session_turn_soul_state
   ON session_turn_soul(session_state_id, position);
 
+-- =============================================================================
+-- session_turn_council_entry — the later Council entries of one Council turn.
+-- Entries that come together start one turn. session_turn_soul.council_entry_id
+-- is the first entry; these rows are the others, in arrival order. The rows are
+-- written before their turn in the same transaction, so the request index of the
+-- turn sees all of them: the foreign key to the turn is deferred.
+-- =============================================================================
+CREATE TABLE session_turn_council_entry (
+  session_turn_soul_id   TEXT NOT NULL
+                         REFERENCES session_turn_soul(id) ON DELETE CASCADE
+                         DEFERRABLE INITIALLY DEFERRED,
+  position               INTEGER NOT NULL CHECK (position >= 2),
+  council_entry_id       INTEGER NOT NULL REFERENCES council_entry(id),
+  PRIMARY KEY (session_turn_soul_id, position)
+);
+
 -- The usage rollup chooses the newest completed model for each session.
 CREATE INDEX idx_session_turn_soul_state_created
   ON session_turn_soul(session_state_id, created_at DESC);
@@ -1108,7 +1124,17 @@ CREATE INDEX idx_attachment_compaction_pending
 -- The request index and its snippets use the text that people see.
 CREATE VIEW transcript_request_text AS
 SELECT ts.rowid AS rowid,
-       CASE ts.request_kind WHEN 'council' THEN ce.content ELSE ts.user_request END AS user_request
+       CASE ts.request_kind
+         WHEN 'council' THEN
+           ce.content || COALESCE(char(10) || char(10) ||
+             (SELECT group_concat(content, char(10) || char(10))
+              FROM (SELECT later.content AS content
+                    FROM session_turn_council_entry tce
+                    JOIN council_entry later ON later.id = tce.council_entry_id
+                    WHERE tce.session_turn_soul_id = ts.id
+                    ORDER BY tce.position)), '')
+         ELSE ts.user_request
+       END AS user_request
 FROM session_turn_soul ts
 LEFT JOIN council_entry ce ON ce.id = ts.council_entry_id;
 
@@ -1129,24 +1155,24 @@ BEGIN
   SELECT rowid, user_request FROM transcript_request_text WHERE rowid = new.rowid;
 END;
 
-CREATE TRIGGER trg_transcript_request_fts_ad
-AFTER DELETE ON session_turn_soul
+-- The old text is read before the row goes, while its Council entry rows exist.
+CREATE TRIGGER trg_transcript_request_fts_bd
+BEFORE DELETE ON session_turn_soul
 BEGIN
   INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
-  VALUES ('delete', old.rowid,
-          CASE old.request_kind WHEN 'council' THEN
-            (SELECT content FROM council_entry WHERE id = old.council_entry_id)
-          ELSE old.user_request END);
+  SELECT 'delete', rowid, user_request FROM transcript_request_text WHERE rowid = old.rowid;
+END;
+
+CREATE TRIGGER trg_transcript_request_fts_bu
+BEFORE UPDATE ON session_turn_soul
+BEGIN
+  INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
+  SELECT 'delete', rowid, user_request FROM transcript_request_text WHERE rowid = old.rowid;
 END;
 
 CREATE TRIGGER trg_transcript_request_fts_au
 AFTER UPDATE ON session_turn_soul
 BEGIN
-  INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request)
-  VALUES ('delete', old.rowid,
-          CASE old.request_kind WHEN 'council' THEN
-            (SELECT content FROM council_entry WHERE id = old.council_entry_id)
-          ELSE old.user_request END);
   INSERT INTO transcript_request_fts(rowid, user_request)
   SELECT rowid, user_request FROM transcript_request_text WHERE rowid = new.rowid;
 END;

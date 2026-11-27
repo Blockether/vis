@@ -112,6 +112,7 @@
            :user-request user-request
            :request-kind (or (:request-kind loop-opts) :user)
            :council-entry-id (:council-entry-id loop-opts)
+           :council-later-entry-ids (:council-later-entry-ids loop-opts)
            :status :running}
     (some? (:session-turn-id loop-opts))
     (assoc :session-turn-id (:session-turn-id loop-opts))))
@@ -1152,8 +1153,8 @@
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
                 eval-timeout-ms reasoning-default reasoning-effort preferred-reasoning-effort
-                routing extra-body session-turn-id request-kind council-entry-id resume
-                automation-run]
+                routing extra-body session-turn-id request-kind council-entry-id
+                council-later-entry-ids resume automation-run]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -1389,6 +1390,7 @@
        ;; the stored Council entry owns the visible request, not the wake instruction.
        :request-kind request-kind
        :council-entry-id council-entry-id
+       :council-later-entry-ids council-later-entry-ids
        ;; A gateway restart continues a parked turn: its row already exists.
        :resume resume
        ;; An extension automation run calls its callback instead of the model.
@@ -1415,7 +1417,7 @@
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
            cancel-token reasoning-default reasoning-effort preferred-reasoning-effort routing
            extra-body turn-features workspace-overrides session-turn-id request-kind
-           council-entry-id resume automation-run]}]
+           council-entry-id council-later-entry-ids resume automation-run]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -1429,7 +1431,8 @@
                             :cancel-atom cancel-atom
                             :cancel-token cancel-token
                             :request-kind request-kind
-                            :council-entry-id council-entry-id}
+                            :council-entry-id council-entry-id
+                            :council-later-entry-ids council-later-entry-ids}
                      session-turn-id
                      (assoc :session-turn-id session-turn-id)
 
@@ -1603,6 +1606,7 @@
         upstream LLM call after auto max_tokens + reasoning translation.
       - :request-kind - Request origin, :user (default) or :council.
       - :council-entry-id - Required immutable Council entry id for :council requests.
+      - :council-later-entry-ids - The other Council entry ids that the turn took, in order.
 
     Returns:
    Map with:

@@ -151,6 +151,18 @@ describe('search messages pane without a message match', () => {
     expect(container.querySelector('code')).toBeNull();
   });
 
+  it('shows why a Council batch matches when the words are only in a later entry', () => {
+    const { council, request } = councilWake.turns.find((turn) => turn.turn_id === 't5')!;
+    const { container } = recentPane('parser tests', [], {
+      ...STORY_SESSION_SEARCH_MATCH,
+      hits: [{ side: 'request', requestKind: 'council', council, snippet: 'All parser tests pass.', at: null }],
+    });
+    const row = screen.getByRole('listitem');
+    expect(row).toHaveTextContent('Council');
+    expect(row).toHaveTextContent(request.replace(/\s+/g, ' '));
+    expect(marks(container)).toEqual(['parser', 'tests']);
+  });
+
   it('keeps the six newest turns and cuts a long request', () => {
     const many: ForkPoint[] = Array.from({ length: 8 }, (_, index) => ({ turn_id: `t${index}`, request: `Ask ${index}` }));
     const { unmount } = recentPane('', many);

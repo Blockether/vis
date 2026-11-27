@@ -7229,5 +7229,5 @@
                      :council {"content" "Raw text" "note" "Agent note"}}
             messages [prompt council]]
         (expect (= [1] (:hits (#'state/search-hits messages "agent note" false))))
-        (expect (empty? (:hits (#'state/search-hits messages "raw text" false))))
+        (expect (= [1] (:hits (#'state/search-hits messages "raw text" false))))
         (expect (= ["Human prompt"] (#'state/history-user-texts {} messages))))))

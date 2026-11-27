@@ -211,4 +211,36 @@
                  (expect (= before (version)))))
              (exec! "DELETE FROM session_turn_soul WHERE id = 'turn'")
              (expect (empty? (snippets "Zebracanvas")))
+             (finally (fs/delete-tree dir)))))
+  (it "drops a retired request index trigger and indexes every entry of a turn"
+      (let [dir (fs/create-temp-dir {:prefix "vis-migration-request-batch-"})
+            ds (doto (SQLiteDataSource.) (.setUrl (str "jdbc:sqlite:" (io/file (str dir) "vis.db"))))
+            migrate! #(migration/migrate! ds ["db/sqlite/migration"] {:shared? true})
+            exec! #(jdbc/execute! ds [%] {:builder-fn rs/as-unqualified-lower-maps})
+            triggers #(set (map :name (exec! (str "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                                                  "AND name GLOB 'trg_transcript_request_fts_*'"))))
+            matches #(count (exec! (str "SELECT rowid FROM transcript_request_fts "
+                                        "WHERE transcript_request_fts MATCH '" % "'")))]
+        (try (migrate!)
+             (let [current (triggers)]
+               (exec! (str "CREATE TRIGGER trg_transcript_request_fts_ad AFTER DELETE ON session_turn_soul "
+                           "BEGIN INSERT INTO transcript_request_fts(transcript_request_fts, rowid, user_request) "
+                           "VALUES ('delete', old.rowid, old.user_request); END"))
+               (migrate!)
+               (expect (= current (triggers))))
+             (exec! "INSERT INTO session_soul (id, created_at, claimed_at) VALUES ('soul', 0, 0)")
+             (exec! "INSERT INTO workspace (id, repo_id, root, created_at) VALUES ('ws', 'repo', '/', 0)")
+             (exec! (str "INSERT INTO session_state (id, session_soul_id, workspace_id, version, created_at) "
+                         "VALUES ('state', 'soul', 'ws', 0, 0)"))
+             (exec! (str "INSERT INTO council_entry (id, author_sid, activation_id, title, content, created_at, idempotency_key, fingerprint) "
+                         "VALUES (1, 'child', 'active', 'One', 'Zebracanvas started', 0, 'one', 'one'), "
+                         "(2, 'child', 'active', 'Two', 'Antaresquill passed', 0, 'two', 'two')"))
+             (jdbc/with-transaction [tx ds]
+               (jdbc/execute! tx [(str "INSERT INTO session_turn_council_entry (session_turn_soul_id, position, council_entry_id) "
+                                       "VALUES ('turn', 2, 2)")])
+               (jdbc/execute! tx [(str "INSERT INTO session_turn_soul (id, session_state_id, position, created_at, request_kind, council_entry_id, user_request) "
+                                       "VALUES ('turn', 'state', 1, 0, 'council', 1, 'Quartzflag is model-only')")]))
+             (expect (= [1 1 0] (mapv matches ["Zebracanvas" "Antaresquill" "Quartzflag"])))
+             (exec! "DELETE FROM session_turn_soul WHERE id = 'turn'")
+             (expect (= [0 0] (mapv matches ["Zebracanvas" "Antaresquill"])))
              (finally (fs/delete-tree dir))))))

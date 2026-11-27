@@ -4535,6 +4535,8 @@
                                       "Council notifications #1, #2, #3, #4."))
                (expect (= "result 1\n\nresult 2\n\nresult 3\n\nresult 4"
                           (:display-request (first @submitted))))
+               (expect (= [2 3 4] (get-in (first @submitted) [:engine-opts :council-later-entry-ids]))
+                       "the turn stores every entry that it took")
                (expect (nil? (:council-held (get @@#'state/registry "lead")))))))
     ;; Review 2026-11-17: the held entries were only in the registry of the gateway.
     (it "gives the held notifications to their session after the gateway starts again"

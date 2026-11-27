@@ -36,17 +36,19 @@
         (str (random-uuid))]
 
     (ps/db-set-session-project! db sid gid)
-    (with-redefs [toggles/enabled? (constantly true)]
+    (letfn [(publish! [title content]
+              (with-redefs [toggles/enabled? (constantly true)]
+                (council/publish!
+                  db
+                  (constantly {sid {:activation-id activation :group-id gid :state "running"}})
+                  {:session-id sid :activation-id activation :source "sdk"}
+                  {:title title :content content})))]
       {:db db
        :sid sid
+       :publish! publish!
        :entry
-       (council/publish!
-         db
-         (constantly {sid {:activation-id activation :group-id gid :state "running"}})
-         {:session-id sid :activation-id activation :source "sdk"}
-         {:title "Review findings"
-          :content
-          "Actual Council request.\nSecond line.\nThird line.\nFourth line.\nFifth line."})})))
+       (publish! "Review findings"
+                 "Actual Council request.\nSecond line.\nThird line.\nFourth line.\nFifth line.")})))
 
 (defdescribe
   council-request-provenance-survives-storage-and-fork
@@ -102,6 +104,25 @@
                                :where [:= :id (str tid)]})))
       (expect (some? fork))
       (expect (= (:council turn) (:council (first (ps/db-list-session-turns db fork))))))))
+
+;; Regression: a turn that took several held Council entries kept only the first one.
+(defdescribe
+  council-batch-turn-keeps-every-entry
+  (it "shows every entry of one Council turn in the transcript after storage"
+      (let [{:keys [db sid entry publish!]} (fixture)
+            later (publish! "Build" "Antaresquill passed")
+            _ (ps/db-store-session-turn!
+                db
+                (#'turn/turn-store-opts {:session-id sid}
+                                        "Council notifications #1, #2."
+                                        {:request-kind :council
+                                         :council-entry-id (:entry_id entry)
+                                         :council-later-entry-ids [(:entry_id later)]}))
+            turn (with-redefs [lp/db-info (constantly db)]
+                   (first (state/transcript sid)))]
+        (expect (= [(:entry_id entry) (:entry_id later)]
+                   (mapv #(get % "entry_id") (get-in turn ["council" "entries"]))))
+        (expect (= (str (:content entry) "\n\n" (:content later)) (get turn "request"))))))
 
 ;; Regression: completed Council wakes appeared as You after engine preparation
 ;; discarded their provenance. Exercise both engine phases before the real write.

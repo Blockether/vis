@@ -1576,7 +1576,7 @@
                        ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
         (jdbc/execute! (:datasource s1)
                        ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
-        (doseq [suffix ["ai" "ad" "au"]]
+        (doseq [suffix ["ai" "bd" "bu" "au"]]
           (jdbc/execute! (:datasource s1) [(str "DROP TRIGGER trg_transcript_request_fts_" suffix)]))
         (jdbc/execute! (:datasource s1) ["DROP TABLE transcript_request_fts"])
         (jdbc/execute! (:datasource s1) ["DROP VIEW transcript_request_text"])
@@ -2890,6 +2890,35 @@
         (expect (= [] (persistance/db-search s "Quartzflag" nil)))
         (expect (= ["[Zebracanvas] needs review"]
                    (mapv :snippet (persistance/db-search s "Zebracanvas" nil))))))
+  (it "keeps every Council entry of one turn through search, fork and delete"
+      (let [s (h/store)
+            cid (h/store-session! s {:channel :tui :title "Batch"})
+            entry (fn [k content]
+                    (:entry (persistance/db-council-insert!
+                              s
+                              {:author_sid "child" :activation_id "child-turn" :title k
+                               :content content :created_at 1 :idempotency_key k :fingerprint k}
+                              [] false)))
+            first-entry (entry "a" "Started module checks")
+            later (entry "b" "Antaresquill passed")
+            tid (persistance/db-store-session-turn!
+                  s {:parent-session-id cid :request-kind :council
+                     :council-entry-id (:entry_id first-entry)
+                     :council-later-entry-ids [(:entry_id later)]
+                     :user-request "Council notifications"})
+            entries #(mapv (juxt :entry-id :content) (get-in % [:council :entries]))
+            expected [[(:entry_id first-entry) "Started module checks"]
+                      [(:entry_id later) "Antaresquill passed"]]]
+        (expect (= expected (entries (first (persistance/db-list-session-turns s cid)))))
+        (expect (= expected
+                   (entries (get-in (persistance/db-search-session-matches s :all "Antaresquill")
+                                    [0 :hits 0]))))
+        (let [fork (h/fork-session-at-turn! s cid {:through-turn-id tid})]
+          (expect (= expected (entries (first (persistance/db-list-session-turns s fork)))))
+          (persistance/db-delete-session-tree! s fork))
+        (persistance/db-delete-session-tree! s cid)
+        (expect (= 0 (raw-count s :session_turn_council_entry)))
+        (expect (= [] (persistance/db-search-session-matches s :all "Antaresquill")))))
   (it "matches a session by assistant iteration prose"
       (let [s
             (h/store)

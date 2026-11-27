@@ -14,6 +14,7 @@ import { TranscriptOutline } from '../components/TranscriptOutline';
 import { SyntaxCodeBlock } from '../components/ChatContent';
 import { ChevronIcon } from '../components/icons';
 import { BAND_EDGE_CLASS, Disclosure } from '../components/ui';
+import { councilRequestContent } from '../lib/council-request';
 import type { GatewayClient } from '../lib/gateway';
 import {
   failedToolCalls,
@@ -546,7 +547,7 @@ function ExportTurnRow({
   if (drawn) return <StoredTurnRow {...row} turn={drawn} />;
   const isCouncil = turn.request_kind === 'council';
   const note = isCouncil ? turn.council?.note : undefined;
-  const request = note ?? (isCouncil ? turn.council?.content : undefined) ?? turn.request;
+  const request = (isCouncil ? councilRequestContent(turn.council) : undefined) ?? turn.request;
   const height = estimatedHeight(turn, answer, note !== undefined ? 1 : request ? lineCount(request, 90) : 0);
   return (
     <div

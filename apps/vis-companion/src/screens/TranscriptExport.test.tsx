@@ -74,6 +74,31 @@ it('uses the wire note to paint and size a deferred Council turn', () => {
   expect(row.style.height).toBe(oneLine.style.height);
 });
 
+it('reserves space for all entries of a deferred Council batch without a note', () => {
+  const turn = councilWake.turns.find(({ turn_id }) => turn_id === 't5')!;
+  const council = { ...turn.council, note: undefined };
+  const single = { ...council, entries: undefined };
+  renderExport({
+    ...EXPORT,
+    turns: [
+      { ...turn, council, iterations_chunk: 'vis-chunk-2' },
+      { ...turn, turn_id: 'one-entry', council: single, iterations_chunk: 'vis-chunk-2' },
+    ],
+  });
+  const [batch, one] = screen.getAllByText('Council').map((label) => label.closest<HTMLElement>('[data-turn-id]')!);
+  expect(batch).toHaveTextContent(turn.request.replace(/\s+/g, ' '));
+  expect(Number.parseFloat(batch.style.height)).toBeGreaterThan(Number.parseFloat(one.style.height));
+});
+
+it('opens the full contents of a Council batch from its one-line note', async () => {
+  const turn = councilWake.turns.find(({ turn_id }) => turn_id === 't5')!;
+  renderExport({ ...EXPORT, turns: [turn] });
+  const row = screen.getByText(turn.council.note!).closest<HTMLElement>('[data-turn-id]')!;
+  expect(within(row).queryByText('All parser tests pass.')).toBeNull();
+  await userEvent.click(within(row).getByRole('button', { name: 'Show Council messages' }));
+  expect(row).toHaveTextContent(turn.request.replace(/\s+/g, ' '));
+});
+
 describe('the subagent rows of an HTML export', () => {
   it('open the conversation of a subagent and of its own subagent, and lead back to the leader', async () => {
     const user = userEvent.setup();

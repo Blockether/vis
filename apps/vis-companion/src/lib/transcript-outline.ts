@@ -7,6 +7,7 @@
  * it (Blockether/vis#316).
  */
 import { EDGE_MARGIN, type Viewport } from './anchored-menu';
+import { councilRequestContent } from './council-request';
 import { parseUserMessage } from './paste';
 import { isAtBottom } from './reading-position';
 import type { ContentBlock, CouncilRequest, RequestKind } from './types';
@@ -246,9 +247,10 @@ export function outlineEntry(turn: {
   const forked = turn.is_forked || turn.content?.some(isForkNotice);
   const isCouncil = turn.request_kind === 'council';
   const note = isCouncil ? turn.council?.note : undefined;
+  const request = (isCouncil ? councilRequestContent(turn.council) : undefined) ?? turn.request;
   return {
     id: turn.turn_id,
-    label: note ?? promptLabel(isCouncil ? turn.council?.content ?? turn.request : turn.request, turn.attachments?.length ?? 0),
+    label: note ?? promptLabel(request, turn.attachments?.length ?? 0),
     answer: answerExcerpt(answer.slice(0, ANSWER_SOURCE_MAX)),
     status: status === 'cancelled' && forked ? 'forked' : status,
     isCouncil,

@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from 'react';
 import type { Element, Root, Text } from 'hast';
 import ReactMarkdown from 'react-markdown';
 
+import { councilRequestContent } from '../lib/council-request';
 import { timeLabel } from '../lib/fleet';
 import type { SessionMatch, SessionMatchHit } from '../lib/gateway';
 import { remarkMessageGfm } from '../lib/markdown-trees';
@@ -107,6 +108,13 @@ function MessageList({
       {hits.map((hit, index) => {
         const isCouncil = hit.side === 'request' && hit.requestKind === 'council';
         const councilNote = isCouncil ? hit.council?.note : undefined;
+        const content = (isCouncil ? councilRequestContent(hit.council) : undefined) ?? hit.snippet;
+        // Keep the note, but show words it leaves out when they match a Council batch.
+        const showContent = councilNote === undefined || (
+          !!hit.council?.entries?.length && terms.some((term) =>
+            searchRanges(councilNote, [term]).length === 0 && searchRanges(content, [term]).length > 0,
+          )
+        );
         return (
           <li key={`${hit.side}-${hit.at ?? index}`}>
             <button
@@ -134,7 +142,8 @@ function MessageList({
                   <span className="block truncate">
                     <Highlighted text={councilNote} terms={terms} />
                   </span>
-                ) : (
+                ) : null}
+                {showContent && (
                   <ReactMarkdown
                     remarkPlugins={[remarkMessageGfm]}
                     rehypePlugins={[[highlightMarkdown, terms]]}
@@ -179,7 +188,7 @@ function MessageList({
                       mark: ({ children }) => <mark className={MARK}>{children}</mark>,
                     }}
                   >
-                    {(isCouncil ? hit.council?.content : undefined) ?? hit.snippet}
+                    {content}
                   </ReactMarkdown>
                 )}
               </span>

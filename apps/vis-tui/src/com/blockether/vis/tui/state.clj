@@ -10,6 +10,7 @@
             [com.blockether.vis.tui.shared-theme :as shared-theme]
             [com.blockether.vis.tui.header-model :as vh]
             [com.blockether.vis.tui.chat :as chat]
+            [com.blockether.vis.tui.presentation :as presentation]
             [com.blockether.vis.tui.command-suggest :as slash]
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.theme :as tui-theme]
@@ -5256,8 +5257,8 @@
 (defn- search-hits
   "Search `messages` for `query`. Returns {:hits [msg-indices] :total n}:
    :hits are indices of messages containing the query (the shape the painter
-   and scroll consume), :total counts every OCCURRENCE across all messages
-   (what the user actually sees highlighted). `case?` true = case-sensitive;
+   and scroll consume), :total counts occurrences in each message. A Council
+   note can also match without counting its body twice. `case?` true = case-sensitive;
    default is case-insensitive. Blank query -> no hits."
   [messages query case?]
   (let [needle
@@ -5268,20 +5269,19 @@
 
     (if (clojure.string/blank? needle)
       {:hits [] :total 0}
-      (let [counts (keep-indexed (fn [i m]
-                                   (let [hay (cond-> (str (or (get-in m [:council "note"])
-                                                               (get-in m [:council "content"])
-                                                               (:text m)))
-                                               (not case?)
-                                               clojure.string/lower-case)
-                                         c (loop [from 0
-                                                  c 0]
-
-                                             (let [pos
-                                                   (.indexOf ^String hay ^String needle (int from))]
-                                               (if (neg? pos) c (recur (+ pos n-len) (inc c)))))]
-
-                                     (when (pos? (long c)) [i c])))
+      (let [occurrences (fn [text]
+                          (let [hay (cond-> (str text) (not case?) str/lower-case)]
+                            (loop [from 0
+                                   n 0]
+                              (let [pos (.indexOf ^String hay ^String needle (int from))]
+                                (if (neg? pos) n (recur (+ pos n-len) (inc n)))))))
+            counts (keep-indexed (fn [i m]
+                                   (let [council (:council m)
+                                         text (or (presentation/council-content council) (:text m))
+                                         ;; The note summarizes the same message. Do not count it twice.
+                                         c (max (long (occurrences text))
+                                                (long (occurrences (get council "note"))))]
+                                     (when (pos? c) [i c])))
                                  messages)]
         {:hits (mapv first counts) :total (long (reduce + 0 (map second counts)))}))))
 

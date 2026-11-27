@@ -73,7 +73,7 @@ describe('Council transcript requests', () => {
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     const view = renderSessionScreen({ client: { transcript: async () => turns } });
     try {
-      for (const { council } of councilWake.turns) {
+      for (const { council, request } of councilWake.turns) {
         const header = await screen.findByText(`Council · Thread #${council.thread_id}`);
         const body = header.closest('article')!;
         expect(body).toHaveTextContent(council.note ?? council.content);
@@ -81,7 +81,7 @@ describe('Council transcript requests', () => {
           expect(within(body).queryByRole('button', { name: 'Show full message' })).toBeNull();
           expect(body).not.toHaveTextContent(council.content);
           fireEvent.click(within(body).getByRole('button', { name: 'Copy Council message' }));
-          await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(council.content));
+          await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(request));
         }
       }
     } finally {

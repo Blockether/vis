@@ -8728,6 +8728,54 @@
           "minLength": 1,
           "maxLength": 120,
           "pattern": "^[^\\r\\n\\u000B\\u000C\\u0085\\u2028\\u2029]+$"
+        },
+        "entries": {
+          "description": "Every Council entry that the turn took, in arrival order, when it took more than one. The other fields are those of the first entry.",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/turn_council_entry"
+          }
+        }
+      },
+      "required": [
+        "entry_id",
+        "thread_id",
+        "author_session_id",
+        "source",
+        "content"
+      ]
+    },
+    "turn_council_entry": {
+      "description": "One Council entry that a turn took.",
+      "type": "object",
+      "properties": {
+        "entry_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "thread_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "author_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content": {
+          "type": "string"
+        },
+        "reply_required": {
+          "type": "boolean"
         }
       },
       "required": [

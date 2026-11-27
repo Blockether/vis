@@ -132,6 +132,9 @@
     (when agent
       (let [role (one-line (:role agent))
             title (agent-note-title agent team)
+            more (count (rest (:entries entry)))
+            suffix (when (pos? more) (str " (+" more " more)"))
+            limit (- 120 (count suffix))
             body (str (:content entry))
             prefix (agent-result-prefix author)
             text (if (and (= "host" (:source entry)) (= agent-result-title (:title entry))
@@ -142,9 +145,17 @@
                            council-line-text))
             ^String note (str (when (seq role) (str (.toUpperCase ^String role Locale/ROOT) " | "))
                               title ": " (one-line text))]
-        (if (> (.codePointCount note 0 (.length note)) 120)
-          (str (subs note 0 (.offsetByCodePoints note 0 119)) "…")
-          note)))))
+        (str (if (> (.codePointCount note 0 (.length note)) limit)
+               (str (subs note 0 (.offsetByCodePoints note 0 (dec limit))) "…")
+               note)
+             suffix)))))
+
+(defn- council-text
+  "The visible request of a Council turn: every entry that it took, joined by a blank line."
+  [council]
+  (if-let [entries (seq (:entries council))]
+    (str/join "\n\n" (map :content entries))
+    (:content council)))
 
 (defn- turn-council [sid team entry]
   (if-let [note (and entry (not (:note entry)) (council-note sid @team entry))]
@@ -2832,7 +2843,7 @@
           ;; Inline uploads carry base64 pixels: a turn LIST must never ship
           ;; them. `:attachment_previews` is the byte-free chip payload.
           (assoc :turn_id turn-id
-                 :request (or (get-in turn [:council :content]) (:request turn))
+                 :request (or (council-text (:council turn)) (:request turn))
                  :request_kind (or (:request_kind turn) "user")
                  :role (or (:role turn) "assistant")
                  :content (vec (or (:content turn) []))
@@ -3006,7 +3017,7 @@
      :position (:position row)
      :role "assistant"
      :status status
-     :request (or (get-in row [:council :content]) (:user-request row))
+     :request (or (council-text (:council row)) (:user-request row))
      :request_kind (:request-kind row)
      :council (turn-council sid team (:council row))
      :content (vec (or (:content row) []))
@@ -4099,7 +4110,7 @@
     (cond-> (-> turn
                 (dissoc :id :user-request)
                 (assoc :turn-id (str (:id turn))
-                       :request (or (get-in turn [:council :content]) (:user-request turn))
+                       :request (or (council-text (:council turn)) (:user-request turn))
                        :iterations iterations))
       (some? iteration-limit)
       (assoc :iterations-offset
@@ -6890,11 +6901,13 @@
 
           council-entry
           (when council-ping
-            (turn-council sid
-                          (delay (persistance/db-agent-list (:db council-ping) sid))
-                          (select-keys (:entry council-ping)
-                                       [:entry_id :thread_id :content :title :source
-                                        :author_session_id :reply_required])))
+            (let [entries (mapv #(select-keys % [:entry_id :thread_id :content :title :source
+                                                 :author_session_id :reply_required])
+                                (cons (:entry council-ping) (:others council-ping)))]
+              (turn-council sid
+                            (delay (persistance/db-agent-list (:db council-ping) sid))
+                            (cond-> (first entries)
+                              (next entries) (assoc :entries entries)))))
 
           decision
           (volatile! nil)]
@@ -7220,8 +7233,10 @@
                                (:entry_id entry)
                                ")."))))
                   :display-request (str/join "\n\n" (map :content entries))
-                  :engine-opts {:request-kind :council :council-entry-id (:entry_id entry)}
-                  :council-ping {:db db :entry-id (:entry_id entry) :entry entry}})
+                  :engine-opts {:request-kind :council
+                                :council-entry-id (:entry_id entry)
+                                :council-later-entry-ids (mapv :entry_id others)}
+                  :council-ping {:db db :entry-id (:entry_id entry) :entry entry :others others}})
                (catch Throwable t (restore!) (throw t)))]
 
          (when (or (:council-active? result) (:error result))
@@ -8493,7 +8508,7 @@
 
           (and current-turn-id (:request current-turn))
           (assoc :running_request
-            (or (get-in current-turn [:council :content]) (:request current-turn))
+            (or (council-text (:council current-turn)) (:request current-turn))
             :running_request_kind
             (or (:request_kind current-turn) "user") :running_council
             (turn-council sid (delay (persistance/db-agent-list (lp/db-info) sid))
@@ -8569,7 +8584,7 @@
     (mapv (fn [row]
             (let [answer (answer-excerpt (:content row))]
               (wire/canonical (cond-> {:turn_id (str (:id row))
-                                       :request (or (get-in row [:council :content])
+                                       :request (or (council-text (:council row))
                                                     (:user-request row))
                                        :request_kind (:request-kind row)
                                        :council (turn-council sid team (:council row))

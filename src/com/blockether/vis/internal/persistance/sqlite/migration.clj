@@ -686,6 +686,22 @@
                          (= (schema-sql-key sql) (schema-sql-key (.getString rs "sql")))))))
             objects)))
 
+(defn- request-index-triggers
+  "Names of the request index triggers that a store holds, retired names included."
+  [^java.sql.Connection conn]
+  (with-open [st (.createStatement conn)
+              rs (.executeQuery st (str "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                                        "AND name LIKE 'trg\\_transcript\\_request\\_fts\\_%' ESCAPE '\\'"))]
+    (loop [acc []]
+      (if (.next rs) (recur (conj acc (.getString rs "name"))) acc))))
+
+(defn- current-request-index?
+  "True when the store has exactly the canonical request index objects."
+  [^java.sql.Connection conn objects]
+  (and (derived-schema-match? conn objects)
+       (= (set (request-index-triggers conn))
+          (into #{} (comp (filter #(= "trigger" (:kind %))) (map :name)) objects))))
+
 (defn- install-transcript-request-index!
   "Replace an old request index and rebuild it from visible requests in one transaction."
   [^DataSource ds locations]
@@ -695,10 +711,12 @@
                          (canonical-objects (migration-sql-texts locations)))]
     (when (seq objects)
       (with-open [conn (.getConnection ds)]
-        (when-not (derived-schema-match? conn objects)
+        (when-not (current-request-index? conn objects)
           (with-open [transaction (.createStatement conn)]
             (.executeUpdate transaction "BEGIN IMMEDIATE")
-            (try (when-not (derived-schema-match? conn objects)
+            (try (when-not (current-request-index? conn objects)
+                   (doseq [trigger (request-index-triggers conn)]
+                     (execute-ddl! conn (str "DROP TRIGGER IF EXISTS " trigger)))
                    (doseq [{:keys [kind name]} (rseq objects)]
                      (execute-ddl! conn (str "DROP " kind " IF EXISTS " name)))
                    (doseq [{:keys [sql]} objects]

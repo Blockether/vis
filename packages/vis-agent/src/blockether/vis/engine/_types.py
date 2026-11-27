@@ -491,6 +491,18 @@ class SessionWorkspace(TypedDict):
     label: str | None
 
 
+class TurnCouncilEntry(TypedDict):
+    """One Council entry that a turn took."""
+
+    entry_id: int
+    thread_id: int
+    author_session_id: str
+    source: str
+    title: NotRequired[str | None]
+    content: str
+    reply_required: NotRequired[bool]
+
+
 class TurnCouncil(TypedDict):
     """The Council entry that started the turn. The note is plain text for display;
     content is the full entry.
@@ -504,6 +516,7 @@ class TurnCouncil(TypedDict):
     content: str
     reply_required: NotRequired[bool]
     note: NotRequired[str]
+    entries: NotRequired[list[TurnCouncilEntry]]
 
 
 TurnOpenStatus: TypeAlias = Literal["pending", "queued", "streaming"]

@@ -1,5 +1,5 @@
 {
-  "description": "Leader turns that a Council entry started (`request_kind` `council`). `agents` are the agent rows of the leader `lead`. The gateway gives `council.note` only when the entry author is an agent whose `parent_id` is the session of the turn: one plain-text line, `ROLE | title: text`. ROLE is the agent role in capitals, left out with its ` | ` when the agent has no role; title is the agent title, else `#n`, its start order in its team. text is the agent status of a host outcome entry (`source` `host`, `title` `Subagent result`, content `Subagent <author> — <status>\\n…`), else the first non-blank line of the entry: whitespace runs become one space, inline Markdown markers go away except the backticks of inline code, a link or image keeps its text, a heading or list marker goes away. A note of more than 120 code points, label included, keeps 119 and ends with `…`. A client shows the note as plain text in one row, under the Council label, and keeps `council.content` for copy and detail. A turn without a note shows the full entry under the Council label, never as a person's message.",
+  "description": "Leader turns that a Council entry started (`request_kind` `council`). `agents` are the agent rows of the leader `lead`. The gateway gives `council.note` only when the entry author is an agent whose `parent_id` is the session of the turn: one plain-text line, `ROLE | title: text`. ROLE is the agent role in capitals, left out with its ` | ` when the agent has no role; title is the agent title, else `#n`, its start order in its team. text is the agent status of a host outcome entry (`source` `host`, `title` `Subagent result`, content `Subagent <author> — <status>\\n…`), else the first non-blank line of the entry: whitespace runs become one space, inline Markdown markers go away except the backticks of inline code, a link or image keeps its text, a heading or list marker goes away. A note of more than 120 code points, label included, keeps 119 and ends with `…`. A client shows the note as plain text in one row, under the Council label, and keeps `council.content` for copy and detail. A turn without a note shows the full entry under the Council label, never as a person's message. One turn can take several Council entries that came together: then `council.entries` lists all of them in arrival order (at least two), the other `council` fields are those of the first entry, and the note is the note of the first entry with ` (+N more)`, where N counts the other entries; the 120 code point limit includes this suffix, and a clipped note ends with `…` before it. A client copies and shows the contents of all `council.entries`, joined by a blank line.",
   "agents": [
     {
       "session_id": "fix",
@@ -76,6 +76,37 @@
         "author_session_id": "peer",
         "source": "sdk",
         "content": "Please review the release notes."
+      }
+    },
+    {
+      "turn_id": "t5",
+      "request_kind": "council",
+      "request": "Started module checks.\nmodule1 is next.\n\nSubagent fix — completed\nAll parser tests pass.",
+      "display_request": "Started module checks.\nmodule1 is next.\n\nSubagent fix — completed\nAll parser tests pass.",
+      "council": {
+        "entry_id": 20,
+        "thread_id": 20,
+        "author_session_id": "check",
+        "source": "sdk",
+        "content": "Started module checks.\nmodule1 is next.",
+        "entries": [
+          {
+            "entry_id": 20,
+            "thread_id": 20,
+            "author_session_id": "check",
+            "source": "sdk",
+            "content": "Started module checks.\nmodule1 is next."
+          },
+          {
+            "entry_id": 21,
+            "thread_id": 21,
+            "author_session_id": "fix",
+            "source": "host",
+            "title": "Subagent result",
+            "content": "Subagent fix — completed\nAll parser tests pass."
+          }
+        ],
+        "note": "VERIFY | #2: Started module checks. (+1 more)"
       }
     }
   ]

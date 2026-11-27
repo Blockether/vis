@@ -10,6 +10,7 @@
     [com.blockether.vis.tui.chat :as chat]
     [com.blockether.vis.tui.composer-attachment-rail :as attachment-rail]
     [com.blockether.vis.tui.interactions :as interactions]
+    [com.blockether.vis.tui.presentation :as presentation]
     [com.blockether.vis.tui.command-suggest :as slash]
     [com.blockether.vis.tui.components :as components]
     [com.blockether.vis.tui.file-suggest :as file-suggest]
@@ -2295,7 +2296,7 @@
                                                       (:confidence message)
                                                       (= :cancelled (:status message))
                                                       opts)))
-    (or (get-in message [:council "content"]) (:copy-source-text message) (:text message) "")))
+    (or (:copy-source-text message) (presentation/council-content (:council message)) (:text message) "")))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.

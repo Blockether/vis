@@ -32,7 +32,8 @@
       :timeline    [{:kind :ref :turn-id :iteration-id :content :code
                      :status :duration-ms}]
       :turns
-       [{:id :user-request :status :prior-outcome :provider :model
+       [{:id :status :prior-outcome :provider :model
+         :user-request ; or :request-kind :council with attributed :council input
          :iteration-count :failure-count
          :tokens :cost-usd :content
          :iterations
@@ -174,6 +175,23 @@
       (seq attachments)
       (assoc :attachments attachments))))
 
+(defn- council-turn?
+  [turn]
+  (or (= :council (:request-kind turn)) (some? (:council turn))))
+
+(defn request-fields
+  "Keep a person's request or attributed Council input. Never use the Council instruction as input."
+  [turn user-request]
+  (if (council-turn? turn)
+    (cond-> {:request-kind :council}
+      (:council turn) (assoc :council (:council turn)))
+    {:user-request user-request}))
+
+(defn- council-entries
+  [turn]
+  (when-let [entry (:council turn)]
+    (or (seq (:entries entry)) [entry])))
+
 (defn- build-turn
   "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
@@ -197,21 +215,22 @@
         model
         (some :model iters)]
 
-    (cond-> {:id (:id turn)
-             :position (:position turn)
-             :created-at (:created-at turn)
-             :duration-ms (:duration-ms turn)
-             :user-request (or (:user-request turn) "")
-             :status (:status turn)
-             ;; A fork settles a copied running turn like a cancel. Reads name it forked.
-             :prior-outcome
-             (if (some content/fork-notice? (:content turn)) :forked (:prior-outcome turn))
-             :iteration-count (count iters)
-             :failure-count (reduce + 0 (map :failure-count iters))
-             :iterations iters
-             :tokens (:tokens totals)
-             :cost-usd (:cost-usd totals)
-             :content (vec (or (:content turn) []))}
+    (cond-> (assoc (request-fields turn (or (:user-request turn) ""))
+              :id (:id turn)
+              :position (:position turn)
+              :created-at (:created-at turn)
+              :duration-ms (:duration-ms turn)
+              :status (:status turn)
+              ;; A fork settles a copied running turn like a cancel. Reads name it forked.
+              :prior-outcome
+              (if (some content/fork-notice? (:content turn)) :forked (:prior-outcome turn))
+              :iteration-count (count iters)
+              :failure-count (reduce + 0 (map :failure-count iters))
+              :iterations iters
+              :tokens (:tokens totals)
+              :cost-usd (:cost-usd totals)
+              :content (vec (or (:content turn) [])))
+
       provider
       (assoc :provider provider)
 
@@ -290,10 +309,19 @@
         (false? success?) :error
         :else :done))
 
+(defn- input-event
+  [turn kind-field user-kind council-kind]
+  (merge {:turn-id (:id turn)}
+         (if (council-turn? turn)
+           {kind-field council-kind
+            :council (:council turn)
+            :content (str/join "\n\n" (map :content (council-entries turn)))}
+           {kind-field user-kind :content (:user-request turn)})))
+
 (defn- dialog-events
   [turns]
   (vec (mapcat (fn [turn]
-                 (cond-> [{:role :user :turn-id (:id turn) :content (:user-request turn)}]
+                 (cond-> [(input-event turn :role :user :council)]
                    (seq (:content turn))
                    (conj {:role :assistant :turn-id (:id turn) :content (:content turn)})))
                turns)))
@@ -326,7 +354,7 @@
   [turns]
   (vec (mapcat (fn [turn]
                  (concat
-                   [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
+                   [(input-event turn :kind :user-message :council-message)]
                    (mapcat (fn [iteration]
                              (map (partial code-event turn iteration) (:blocks iteration)))
                            (:iterations turn))
@@ -702,18 +730,27 @@
   (let [answer (content/text-projection blocks)]
     (when-not (str/blank? answer) (str "\n#### Final answer\n\n" answer "\n"))))
 
+(defn- render-council-md
+  [turn]
+  (if-let [entries (seq (council-entries turn))]
+    (str/join "\n" (map (fn [{:keys [entry-id author-session-id content]}]
+                           (str "**#" entry-id " · " author-session-id "**\n\n"
+                                (render-fenced "" content)))
+                         entries))
+    "_(no entry)_\n"))
+
 (defn- render-turn-block
   [{:keys [position user-request status prior-outcome provider model iteration-count failure-count
-           iterations tokens cost-usd content]}]
+           iterations tokens cost-usd content] :as turn}]
   ;; Render `position` (int), never `:id` (uuid). UUID stays in
   ;; introspection responses for programmatic callers,
   ;; never in user/LLM-facing surfaces.
   (str "### Turn "
        (or position "?")
        "\n"
-       "- **You:** "
-       (one-line user-request)
-       "\n"
+       (if (council-turn? turn)
+         (str "\n**Council**\n\n" (render-council-md turn) "\n")
+         (str "- **You:** " (one-line user-request) "\n"))
        "- **Status:** "
        (or (some-> status
                    name)
@@ -982,8 +1019,9 @@
         answer
         (str/trim (str (content/text-projection (:content turn))))]
 
-    (str "### You\n\n"
-         (if (str/blank? user) "_(empty)_" (render-user-md user))
+    (str (if (council-turn? turn)
+           (str "### Council\n\n" (render-council-md turn))
+           (str "### You\n\n" (if (str/blank? user) "_(empty)_" (render-user-md user))))
          "\n\n"
          "### Vis"
          "\n\n"
@@ -1086,7 +1124,10 @@
 
           (render/render (render/markdown->ast md) (:flavor opts)))]
 
-    (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
+    (str (if (council-turn? turn)
+           (str "## Council\n\n" (render-council-md turn))
+           (str "## You\n" user-text))
+         "\n\n## Assistant\n" rendered "\n")))
 
 (defn session->markdown
   "Project a full session as a Markdown document on top of the IR

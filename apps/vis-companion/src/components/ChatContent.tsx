@@ -21,6 +21,7 @@ import {
 import { CODE_DEFAULT_CLASS, highlightSegments, type SyntaxSegment } from '../lib/syntax';
 import { ArtifactLinkContext } from '../lib/artifact-links';
 import { measureClamped, useClampMotion } from '../lib/clamp-motion';
+import { councilRequestContent } from '../lib/council-request';
 import { DataTable } from './DataTable';
 import { DocPreview, DocStack, docStackSummary } from './DocArtifact';
 import { McpAppAttachment } from './McpApp';
@@ -5376,6 +5377,9 @@ export const UserMessage = memo(function UserMessage({
   turnId?: string;
 }) {
   const councilNote = requestKind === 'council' ? council?.note : undefined;
+  const councilContent = requestKind === 'council' ? councilRequestContent(council) : undefined;
+  const [councilOpen, setCouncilOpen] = useState(false);
+  const councilDetailsId = useId();
   const parts = parseUserMessage(children);
   const words = parts.some((part) => part.type !== 'text' || part.text.trim() !== '');
   // Persisted user images re-render from DB-owned base64 (survives a restart even
@@ -5443,7 +5447,18 @@ export const UserMessage = memo(function UserMessage({
             ` · Thread #${council.thread_id}`}
         </span>
         <div className="flex items-center gap-2">
-          {councilNote !== undefined && council && <CopyChip value={council.content} label="Copy Council message" />}
+          {councilNote !== undefined && !!council?.entries?.length && (
+            <Disclosure
+              isOpen={councilOpen}
+              aria-controls={councilDetailsId}
+              onClick={() => setCouncilOpen((open) => !open)}
+            >
+              {councilOpen ? 'Hide Council messages' : 'Show Council messages'}
+            </Disclosure>
+          )}
+          {councilContent !== undefined && (councilNote !== undefined || !!council?.entries?.length) && (
+            <CopyChip value={councilContent} label="Copy Council message" />
+          )}
           <TurnStamp position={position} createdAt={createdAt} />
         </div>
       </div>
@@ -5456,9 +5471,16 @@ export const UserMessage = memo(function UserMessage({
           className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui mouse:text-title text-you-message-foreground ${PROSE}`}
         >
           {councilNote !== undefined ? (
-            <div className="truncate">{councilNote}</div>
+            <>
+              <div className="truncate">{councilNote}</div>
+              {!!council?.entries?.length && (
+                <div id={councilDetailsId} hidden={!councilOpen}>
+                  {councilOpen && <div className="mt-2">{councilContent}</div>}
+                </div>
+              )}
+            </>
           ) : requestKind === 'council' ? (
-            <CouncilRequestBody>{council?.content ?? children}</CouncilRequestBody>
+            <CouncilRequestBody>{councilContent ?? children}</CouncilRequestBody>
           ) : (
             <UserMessageParts parts={parts} />
           )}

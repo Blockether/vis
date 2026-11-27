@@ -925,6 +925,13 @@
        (not (and (str/starts-with? line ">") (str/starts-with? prev ">")))
        (not (re-find #"^(?:=+|-+)[ \t]*$" line))))
 
+(defn council-content
+  "Full Council request text, with a blank line between entries."
+  [{:strs [entries content]}]
+  (if entries
+    (str/join "\n\n" (map #(get % "content") entries))
+    content))
+
 (defn council-markdown
   "Council text -> Markdown where each authored line break outside a fence is a block break.
    Agents write one line for each point, so CommonMark would run the lines together

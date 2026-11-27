@@ -1615,16 +1615,21 @@ export interface TranscriptIteration {
 
 export type RequestKind = 'user' | 'council';
 
-/** Durable Council entry linked to the turn; never inferred from request text. */
-export interface CouncilRequest {
+export interface CouncilRequestEntry {
   entry_id: number;
   thread_id: number;
   content: string;
-  note?: string;
   title?: string | null;
   author_session_id?: string;
   source?: string;
   reply_required?: boolean;
+}
+
+/** Durable Council entries linked to the turn; never inferred from request text. */
+export interface CouncilRequest extends CouncilRequestEntry {
+  note?: string;
+  /** All entries in arrival order when the turn took more than one. */
+  entries?: readonly CouncilRequestEntry[];
 }
 
 /**

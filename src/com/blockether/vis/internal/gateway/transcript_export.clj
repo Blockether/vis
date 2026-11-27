@@ -638,7 +638,9 @@
     (str (if council?
            (str "## Council\n\n" (if-let [note (get council "note")]
                                       (plain-markdown note)
-                                      (or (get council "content") request))
+                                      (or (some->> (get council "entries") seq (map #(get % "content")) (str/join "\n\n"))
+                                          (get council "content")
+                                          request))
                 "\n\n")
            (str "## You\n\n" (if (str/blank? request) "_(empty)_" request)
                 "\n\n" (when-let [attachments (seq (get turn "attachments"))]

@@ -9,6 +9,7 @@
             [com.blockether.vis.tui.markers :as m]
             [com.blockether.vis.tui.primitives :as p]
             [com.blockether.vis.tui.screen :as screen]
+            [com.blockether.vis.tui.state :as state]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -202,7 +203,8 @@
             width 140]
         (doseq [turn turns]
           (let [message (first (#'chat/turns->messages [turn]))
-                {:strs [note content thread_id]} (get turn "council")
+                {:strs [note content entries thread_id]} (get turn "council")
+                full-content (if entries (str/join "\n\n" (map #(get % "content") entries)) content)
                 warmed (virtual/warm-heights! [message] width {})
                 {:keys [height projected]} (first (:visible (virtual/layout [message] width {} nil 30 {})))
                 frame (cap/capture! {:cols width :rows 12
@@ -213,7 +215,20 @@
             (expect (str/includes? (cap/frame-text frame) (str "Council · Thread #" thread_id)))
             (expect (= [(or note content)] (mapv visible (:prewrapped-lines projected))))
             (expect (str/includes? (cap/frame-text frame) (or note content)))
-            (expect (= content (#'screen/copyable-bubble-text projected width {} {})))
+            (expect (= full-content (#'screen/copyable-bubble-text projected width {} {})))
+            (when entries
+              (expect (= {:hits [0] :total 1}
+                         (#'state/search-hits [message] "All parser tests pass." false)))
+              (expect (= {:hits [0] :total 1}
+                         (#'state/search-hits [message] "Started module checks." false)))
+              (let [no-note (update message :council dissoc "note")
+                    opts {:session-id "session"}
+                    collapsed (virtual/project-message no-note width {} opts)
+                    node-id (:node-id (last (:line-meta collapsed)))
+                    expanded (virtual/project-message
+                               no-note width {} (assoc opts :detail-expansions {["session" node-id] true}))]
+                (expect (some #(str/includes? (visible %) "All parser tests pass.")
+                              (:prewrapped-lines expanded)))))
             (when note
               (expect (every? nil? (:line-meta projected)))
               (expect (= height (virtual/estimated-height message width))))))))

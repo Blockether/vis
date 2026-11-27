@@ -467,12 +467,12 @@
          ;; again) that nothing consumes. `:failures` already carries the
          ;; curated failure diagnostics, and the model can derive raw errored
          ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
-         (cond-> {:id (:id turn)
-                  :user-request (:user-request turn)
-                  :status (:status turn)
-                  :attempts attempts
-                  :failures (failures-from-iterations iterations)
-                  :cost (turn-cost-summary turn)}
+         (cond-> (assoc (transcript/request-fields turn (:user-request turn))
+                    :id (:id turn)
+                    :status (:status turn)
+                    :attempts attempts
+                    :failures (failures-from-iterations iterations)
+                    :cost (turn-cost-summary turn))
            (same-uuid? session-id (current-session-id env))
            (assoc :iteration (iteration-pointer env))
 
@@ -530,9 +530,14 @@
                          name)
        :model (:model session)})))
 
+(defn- present-request-fields
+  [turn user-request]
+  (let [fields (transcript/request-fields turn user-request)]
+    (if (nil? user-request) (dissoc fields :user-request) fields)))
+
 (defn- session-snapshot
   "Map for a single session: identity + every persisted turn rolled up to a
-   compact `{:id :user-request :outcome :answer :iteration-count}` shape. A fork also
+   compact `{:id :outcome :answer :iteration-count}` shape with its input. A fork also
    has `:forked-from`, see [[fork-origin]].
 
    Iteration rows are authoritative while a turn is live: the denormalized
@@ -545,11 +550,10 @@
            (let [turn-rows (persistance/db-list-session-turns db-info session-id)
                  turns (mapv (fn [turn]
                                (let [iteration-count (count (iteration-rows db-info (:id turn)))]
-                                 (cond-> {:id (:id turn)
-                                          :outcome (turn-outcome turn)
-                                          :iteration-count iteration-count}
-                                   (:user-request turn)
-                                   (assoc :user-request (:user-request turn))
+                                 (cond-> (assoc (present-request-fields turn (:user-request turn))
+                                            :id (:id turn)
+                                            :outcome (turn-outcome turn)
+                                            :iteration-count iteration-count)
 
                                    (:answer turn)
                                    (assoc :answer (:answer turn))
@@ -691,7 +695,7 @@
 
 (defn- foundation-session-descriptor
   "ONE session's descriptor: its index row plus provider/model, whether it is
-   THIS session, and the last turn rolled up to `{:id :outcome :user-request}`.
+   THIS session, and the last turn's id, outcome and input.
    The cheap middle read between the whole index and the whole transcript, so
    \"what is that session\" never costs a transcript. `nil` when nothing
    matches `target` (an id or an unambiguous prefix)."
@@ -725,9 +729,9 @@
 
                   last-turn
                   (assoc :last-turn
-                    (cond-> {:id (:id last-turn) :outcome (turn-outcome last-turn)}
-                      (:user-request last-turn)
-                      (assoc :user-request (preview (:user-request last-turn) 200)))))))
+                    (assoc (present-request-fields last-turn (preview (:user-request last-turn) 200))
+                      :id (:id last-turn)
+                      :outcome (turn-outcome last-turn))))))
             (catch Throwable _ nil))))))
 
 (defn- foundation-session-forks
@@ -776,9 +780,8 @@
    (if (and (:db-info env) session-id)
      (try (vec (mapcat (fn [turn]
                          (let [iterations (iteration-rows (:db-info env) (:id turn))]
-                           (mapv #(assoc %
-                                    :turn-id (:id turn)
-                                    :user-request (:user-request turn))
+                           (mapv #(into (assoc % :turn-id (:id turn))
+                                        (transcript/request-fields turn (:user-request turn)))
                                  (failures-from-iterations iterations))))
                        (persistance/db-list-session-turns (:db-info env) session-id)))
           (catch Throwable _ []))
@@ -945,12 +948,11 @@
                     (boolean (and idle-ms (>= (long idle-ms) stale-ms)))]
 
                 (when (or (seq turn-reports) stale?)
-                  (cond-> {:turn-id (:id turn)
-                           :status (:status turn)
-                           :signal (if (seq turn-reports) :hang-report :no-progress)
-                           :iteration-count (:iteration-count turn)}
-                    (:user-request turn)
-                    (assoc :user-request (preview (:user-request turn) 120))
+                  (cond-> (assoc (present-request-fields turn (preview (:user-request turn) 120))
+                            :turn-id (:id turn)
+                            :status (:status turn)
+                            :signal (if (seq turn-reports) :hang-report :no-progress)
+                            :iteration-count (:iteration-count turn))
 
                     stale?
                     (assoc :idle-ms idle-ms)
@@ -987,15 +989,15 @@
          clusters
          (repetition-clusters failures)]
 
-     {:turn-id (:id turn)
-      :user-request (:user-request turn)
-      :status (:status turn)
-      :failure-count (count failures)
-      :by-classification (classification-counts failures)
-      :repetition-loop? (boolean (seq clusters))
-      :repetition-clusters clusters
-      :failures failures
-      :next-actions (next-actions failures clusters)}))
+     (assoc (transcript/request-fields turn (:user-request turn))
+       :turn-id (:id turn)
+       :status (:status turn)
+       :failure-count (count failures)
+       :by-classification (classification-counts failures)
+       :repetition-loop? (boolean (seq clusters))
+       :repetition-clusters clusters
+       :failures failures
+       :next-actions (next-actions failures clusters))))
   ([env session-id]
    (let [failures
          (vec (foundation-failures env session-id))
@@ -1627,6 +1629,8 @@
        "(`active`, `paused`, `blocked` or `budget_limited`), else None. In a fork, "
        "`session.forked_from` has the source `session_id`, the last copied `turn_id` and the "
        "current `outcome` of that turn. A turn that the fork settled has the outcome `forked`. "
+       "A Council turn has `request_kind: council` and its attributed `council` input "
+       "instead of `user_request`. For a batch, `council.entries` lists all entries in order. "
        "Printing shows a summary, "
        "and all fields stay available by key or through `dict(r)`/`json.dumps(r)`.\n\n"
        "The transcript has one `turns`/`iterations`/`blocks` projection, with folded history and "
@@ -1651,7 +1655,8 @@
      (str
        "String-keyed row `{id, channel, title, goal_status, turn_count, created_at, modified_at, "
        "is_current}`, plus `provider`/`model`/`provider_model` and `last_turn` "
-       "(`{id, outcome, user_request}`) when known. The model is the one that the session uses "
+       "(`{id, outcome, user_request}` or `{id, outcome, request_kind, council}`) when known. "
+       "The model is the one that the session uses "
        "now: its model pick, else its default. `goal_status` is the status of a goal that "
        "still directs work (`active`, `paused`, `blocked` or `budget_limited`), else None. "
        "A starred session adds `favorite_rank` — the human's star order, lowest first. "

@@ -566,10 +566,10 @@
        (if (get-in message [:council "note"])
          5 ; label, two padding rows, note, gap
          ;; The preview reserves four body rows and the disclosure.
-         (long (+ 5
-                  (if (any-details-expanded? message detail-expansions session-id)
-                    (prose-rows-est text prose-w)
-                    (min 4 (prose-rows-est text prose-w))))))
+         (let [rows (prose-rows-est (or (ast/council-content (:council message)) text) prose-w)]
+           (long (+ 5 (if (any-details-expanded? message detail-expansions session-id)
+                        rows
+                        (min 4 rows))))))
        (= role :user)
        ;; label + top/bottom pad + gap (see bubble-height*) + 2 rows of
        ;; markdown block-gap slack — pasted JSON/log blobs grow a couple of
@@ -936,7 +936,7 @@
    (let [message
          (assoc message
            :session-id session-id
-           :copy-source-text (or (get-in message [:council "content"]) (:text message))
+           :copy-source-text (or (ast/council-content (:council message)) (:text message))
            ;; Zen mode shows no turn summary line (model, tokens, speed, cost, time).
            :hide-meta? (boolean (get settings :zen-mode)))
 

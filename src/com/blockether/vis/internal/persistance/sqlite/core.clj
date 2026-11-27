@@ -2309,6 +2309,16 @@
                       str/trim
                       not-empty)}))
 
+(defn- council-later-sql
+  "SQL for the later Council entries of turn `alias` as one JSON array, in arrival order."
+  [alias]
+  (str "(SELECT json_group_array(json_object('entry-id', id, 'thread-id', COALESCE(thread_id, id), "
+       "'content', content, 'title', title, 'author-session-id', author_sid, 'source', source, "
+       "'reply-required', reply_required = 1)) "
+       "FROM (SELECT later.* FROM session_turn_council_entry tce "
+       "JOIN council_entry later ON later.id = tce.council_entry_id "
+       "WHERE tce.session_turn_soul_id = " alias ".id ORDER BY tce.position))"))
+
 (defn- transcript-hit-sql
   "FTS query for ONE side (`:request` from visible request text, `:reply` from
    assistant prose/thinking): session soul id, FTS rowid, the row's `created_at`
@@ -2401,6 +2411,7 @@
           "ce.thread_id AS council_thread_id, ce.content AS council_content, "
           "ce.title AS council_title, ce.author_sid AS council_author_sid, "
           "ce.source AS council_source, ce.reply_required AS council_reply_required, "
+          (council-later-sql "ts") " AS council_later_json, "
           cols
           ", "
           at
@@ -2442,15 +2453,19 @@
           " ORDER BY f.rid DESC"))))
 
 (defn- turn-council-entry
+  "The Council entry of a turn row; `:entries` lists every entry when the turn took several."
   [row]
   (when-let [id (:council_entry_id row)]
-    {:entry-id id
-     :thread-id (or (:council_thread_id row) id)
-     :content (:council_content row)
-     :title (:council_title row)
-     :author-session-id (:council_author_sid row)
-     :source (:council_source row)
-     :reply-required (= 1 (:council_reply_required row))}))
+    (let [entry {:entry-id id
+                 :thread-id (or (:council_thread_id row) id)
+                 :content (:council_content row)
+                 :title (:council_title row)
+                 :author-session-id (:council_author_sid row)
+                 :source (:council_source row)
+                 :reply-required (= 1 (:council_reply_required row))}
+          later (some-> (:council_later_json row) (json/read-json :key-fn keyword) seq)]
+      (cond-> entry
+        later (assoc :entries (into [entry] later))))))
 
 (defn- transcript-hit-rows
   "FTS hits on ONE side, FAIRLY capped: up to `transcript-hits-per-session`
@@ -4646,6 +4661,18 @@
                         id))))
                 (map-indexed vector attachments)))))))
 
+(defn- insert-council-later-entries!
+  "Store the later Council entries `entry-ids` of turn `turn-id`, in arrival order."
+  [tx-info turn-id entry-ids]
+  (when (seq entry-ids)
+    (execute! tx-info
+              {:insert-into :session_turn_council_entry
+               :values (vec (map-indexed (fn [i id]
+                                      {:session_turn_soul_id turn-id
+                                       :position (+ 2 (long i))
+                                       :council_entry_id id})
+                                    entry-ids))})))
+
 (defn db-store-session-turn!
   "Create session_turn_soul + initial session_turn_state (version 0).
 
@@ -4658,11 +4685,12 @@
    `:request-kind` is explicit provenance (`:user` by default or `:council`).
    Council turns require `:council-entry-id`: the immutable entry owns the actual
    request content, author and kind. The user-request remains the model instruction.
+   `:council-later-entry-ids` names the other entries that the turn took, in arrival order.
 
    Returns the session-turn-soul UUID."
   [db-info
    {:keys [parent-session-id session-turn-id user-request status attachments request-kind
-           council-entry-id]}]
+           council-entry-id council-later-entry-ids]}]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
@@ -4690,6 +4718,8 @@
               user-request-s
               (or user-request "")]
 
+          ;; Before the turn row: its request index reads them. The foreign key is deferred.
+          (insert-council-later-entries! tx-info (str soul-id) council-later-entry-ids)
           (execute! tx-info
                     {:insert-into :session_turn_soul
                      :values [{:id (str soul-id)
@@ -5990,6 +6020,7 @@
             :qs.council_entry_id [:ce.thread_id :council_thread_id] [:ce.content :council_content]
             [:ce.title :council_title] [:ce.author_sid :council_author_sid]
             [:ce.source :council_source] [:ce.reply_required :council_reply_required]
+            [[:raw (council-later-sql "qs")] :council_later_json]
             [:qs.created_at :soul_created_at] [:qs.id :soul_id] :qst.status :qst.content_json
             :qst.iteration_count :qst.duration_ms
             ;; Phase B canonical columns on session_turn_state.
@@ -6738,7 +6769,14 @@
                    [])
      :attachments
      (query! tx-info
-             {:select [:*] :from :session_attachment :where [:= :session_turn_soul_id turn-s]})}))
+             {:select [:*] :from :session_attachment :where [:= :session_turn_soul_id turn-s]})
+     :council-later-entry-ids
+     (mapv :council_entry_id
+           (query! tx-info
+                   {:select [:council_entry_id]
+                    :from :session_turn_council_entry
+                    :where [:= :session_turn_soul_id turn-s]
+                    :order-by [[:position :asc]]}))}))
 
 (defn- insert-turn-copy!
   "Insert a copy of one turn's `rows` from [[turn-copy-rows]] as turn `position` of the
@@ -6751,7 +6789,7 @@
                          Activity histories that one iteration's forms name
      :council-entry-ids  old to new Council entry ids, or nil to keep the ids; a turn
                          whose entry is not in the map becomes a user turn"
-  [tx-info {:keys [soul state iterations attachments]} state-id position
+  [tx-info {:keys [soul state iterations attachments council-later-entry-ids]} state-id position
    {:keys [now notice copy-histories! council-entry-ids]}]
   (let [new-turn-id
         (str (new-uuid))
@@ -6777,6 +6815,11 @@
         (some->> (:council_entry_id soul)
                  (get council-entry-ids))]
 
+    (when (and soul (or entry-id (and (nil? council-entry-ids) (:council_entry_id soul))))
+      (insert-council-later-entries! tx-info
+                                     new-turn-id
+                                     (cond->> council-later-entry-ids
+                                       council-entry-ids (keep council-entry-ids))))
     (when soul
       (execute! tx-info
                 {:insert-into :session_turn_soul

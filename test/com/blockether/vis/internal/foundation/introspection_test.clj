@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.introspection-test
   (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.activity :as activity-contract]
             [com.blockether.vis.internal.activity.core :as activity]
@@ -1328,4 +1329,86 @@
             ;; The source turn ends after the fork, and the fork reads its new outcome.
             (persistance/db-update-session-turn! s t2 {:status :done :prior-outcome :complete})
             (expect (= "complete" (get-in (read-of fork-id) ["session" "forked_from" "outcome"]))))
+          (finally (persistance/db-dispose-connection! s))))))
+
+(defdescribe
+  council-input-views-test
+  (it "keeps each attributed Council entry separate from the model instruction"
+      (let [s (persistance/db-create-connection! :memory)
+            sid (h/store-session! s {:channel :tui :title "Council input fixture"})
+            human (persistance/db-store-session-turn!
+                    s {:parent-session-id sid :user-request "Human request" :status :done})
+            instruction "Council notification #20. Read the attributed Council input."
+            turn (persistance/db-store-session-turn!
+                   s {:parent-session-id sid :user-request instruction :status :running})
+            _ (h/store-iteration!
+                s {:session-turn-id turn :code "x"
+                   :forms [{:scope "t2/i1/f1" :src "x" :error {:message "missing value"}}]})
+            fixture (json/read-json (slurp (io/resource "vis-contract/fixtures/council-wake.json")))
+            batch (some #(when (= "t5" (get % "turn_id")) (get % "council")) (get fixture "turns"))
+            entries (get batch "entries")
+            entry-data (fn [entry]
+                         {:entry-id (get entry "entry_id")
+                          :thread-id (get entry "thread_id")
+                          :author-session-id (get entry "author_session_id")
+                          :content (get entry "content")
+                          :source (keyword (get entry "source"))})
+            council (assoc (entry-data batch) :entries (mapv entry-data entries))
+            council-row (atom {:request-kind :council :council council})
+            ;; Supply the batch at the persistence read boundary so this test covers the views.
+            read-turns persistance/db-list-session-turns
+            env {:session-id sid :db-info s}]
+        (try
+          (with-redefs [persistance/db-list-session-turns
+                        (fn [db id]
+                          (mapv #(if (= turn (:id %))
+                                   (merge % @council-row)
+                                   %)
+                                (read-turns db id)))
+                        gateway-diagnostics/session-reports
+                        (constantly [{:turn-id (str turn) :reason :turn-stall}])]
+            (let [result (:result (introspection/read-session env))
+                  descriptor (:result (introspection/get-session env))
+                  data (transcript/transcript s sid)
+                  events [(second (:dialog data))
+                          (some #(when (= turn (:turn-id %)) %) (:timeline data))]
+                  current-diag (@#'introspection/foundation-diagnose env)]
+              (expect (= "Human request" (get-in result ["transcript" "turns" 0 "user_request"])))
+              (expect (= {:role :user :turn-id human :content "Human request"}
+                         (first (:dialog data))))
+              (doseq [view [(get-in result ["transcript" "turns" 1])
+                            (get-in result ["session" "turns" 1])
+                            (get result "current_turn")
+                            (first (get result "failures"))
+                            (first (get-in result ["diagnosis" "failures"]))
+                            (first (get-in result ["diagnosis" "hung_turns"]))
+                            (get descriptor "last_turn")]]
+                (expect (= "council" (get view "request_kind")))
+                (expect (not (contains? view "user_request")))
+                (expect (= (mapv #(select-keys % ["entry_id" "author_session_id" "content"]) entries)
+                           (mapv #(select-keys % ["entry_id" "author_session_id" "content"])
+                                 (get-in view ["council" "entries"])))))
+              (expect (= council (:council current-diag)))
+              (expect (not (contains? current-diag :user-request)))
+              (expect (= [:council :council-message] (mapv #(or (:role %) (:kind %)) events)))
+              (doseq [event events]
+                (expect (= council (:council event))))
+              (doseq [md [(transcript/transcript->md data)
+                          (transcript/transcript->md data {:mode :dialog})
+                          (transcript/session->markdown s sid)]]
+                (expect (str/includes? md "Council"))
+                (expect (not (str/includes? md instruction)))
+                (doseq [entry entries]
+                  (expect (str/includes? md (str "#" (get entry "entry_id") " · "
+                                                (get entry "author_session_id"))))
+                  (expect (str/includes? md (get entry "content")))))
+              (let [first-entry (entry-data (first entries))]
+                (reset! council-row {:council first-entry})
+                (let [single (transcript/transcript s sid)]
+                  (expect (= (:content first-entry) (-> single :dialog second :content)))
+                  (expect (not (str/includes? (transcript/transcript->md single) instruction)))))
+              (reset! council-row {:request-kind :council})
+              (let [missing (transcript/transcript s sid)]
+                (expect (= :council (-> missing :dialog second :role)))
+                (expect (not (str/includes? (transcript/transcript->md missing) instruction))))))
           (finally (persistance/db-dispose-connection! s))))))
