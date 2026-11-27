@@ -543,7 +543,12 @@
               unwatch
               (speech/watch! job-id
                              (fn [job]
-                               (.offer queue job)))
+                               (when job
+                                 (locking queue
+                                   (when (and (not (.offer queue job)) (:is-done job))
+                                     ;; Each update is a full snapshot. Keep space for completion.
+                                     (.poll queue)
+                                     (.offer queue job))))))
 
               write!
               (fn [job]

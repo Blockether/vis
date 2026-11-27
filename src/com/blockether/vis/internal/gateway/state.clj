@@ -1536,8 +1536,7 @@
   (atom {}))
 
 (defonce ^:private fleet-seq
-  ;; Monotonic id of the fleet stream. It is the frame's SSE `id:` and nothing
-  ;; else: the stream has no replay, so no client resumes from it.
+  ;; Monotonic sequence in the fleet payload, not an SSE resume ID.
   (atom 0))
 
 (defonce ^:private fleet-watcher (atom nil))
@@ -4165,7 +4164,9 @@
     (mapv (fn [row]
             (let [turn (get row "turn_id")
                   entry (some-> (get row "council") (update-keys keyword))
-                  note (:note (turn-council sid team entry))]
+                  council (turn-council sid team (cond-> entry
+                                                  (:entries entry)
+                                                  (update :entries (partial mapv #(update-keys % keyword)))))]
               (cond-> row
                 (get views turn)
                 (assoc "agents" (wire/canonical (get views turn)))
@@ -4173,8 +4174,8 @@
                 (get clocks turn)
                 (assoc "team_clock" (wire/canonical (get clocks turn)))
 
-                note
-                (assoc-in ["council" "note"] note))))
+                council
+                (assoc "council" (wire/canonical council)))))
           rows)))
 
 (defn transcript

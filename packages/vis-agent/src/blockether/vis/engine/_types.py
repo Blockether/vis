@@ -1568,6 +1568,14 @@ class Forgotten(TypedDict):
     is_forgotten: bool
 
 
+class JobElidedPayload(TypedDict):
+    id: NotRequired[str]
+    is_elided: Literal[True]
+
+
+JobEventPayload: TypeAlias = VoiceJob | JobElidedPayload
+
+
 SessionSuggestions: TypeAlias = list[JSONValue]
 
 
@@ -3473,6 +3481,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/seq": "SessionSeq",
     "GET /v1/sessions/:sid/slashes": "SessionSlashes",
     "GET /v1/sessions/:sid/speech/jobs/:job-id": "VoiceJob",
+    "GET /v1/sessions/:sid/speech/jobs/:job-id/events": "JobEventPayload",
     "GET /v1/sessions/:sid/suggest": "SessionSuggestions",
     "GET /v1/sessions/:sid/tasks": "TaskList",
     "GET /v1/sessions/:sid/tasks/:task-id": "TaskStatus",
@@ -3488,6 +3497,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/sessions/:sid/views/live/:view-id": "AppView",
     "GET /v1/sessions/:sid/views/live/:view-id/log": "ViewLog",
     "GET /v1/sessions/:sid/voice/jobs/:job-id": "VoiceJob",
+    "GET /v1/sessions/:sid/voice/jobs/:job-id/events": "JobEventPayload",
     "GET /v1/sessions/:sid/voice/live/:vid": "VoiceLiveSnapshot",
     "GET /v1/sessions/:sid/workspace": "SessionWorkspace",
     "GET /v1/sessions/:sid/workspace/branches": "SessionWorkspaceBranches",
@@ -3495,9 +3505,11 @@ RESPONSE_TYPES: dict[str, str] = {
     "GET /v1/settings": "Settings",
     "GET /v1/settings/:id": "Setting",
     "GET /v1/speech/jobs/:job-id": "VoiceJob",
+    "GET /v1/speech/jobs/:job-id/events": "JobEventPayload",
     "GET /v1/speech/model": "VoiceModel",
     "GET /v1/speech/voices": "SpeechVoices",
     "GET /v1/voice/jobs/:job-id": "VoiceJob",
+    "GET /v1/voice/jobs/:job-id/events": "JobEventPayload",
     "GET /v1/voice/live/capabilities": "VoiceLiveCapabilities",
     "GET /v1/voice/model": "VoiceModel",
     "GET /v1/web/brand": "WebBrand",

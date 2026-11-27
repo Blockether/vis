@@ -809,7 +809,7 @@
   (.flush out))
 
 (defn- resolve-sse-cursor
-  "Effective replay cursor for one subscribed session. A NEGATIVE requested
+  "Effective replay cursor and whether the request exceeded high-water. A NEGATIVE requested
    cursor is the live-only sentinel: it lets a client restore a bounded watch
    list without replaying every ring or issuing N `/seq` requests first. A
    live-only join to a session whose turn is ALREADY running rewinds to that
@@ -825,7 +825,7 @@
    dedup guard — a connected, heartbeating stream that silently delivers
    NOTHING for that session until the app is killed. Clamping here heals the
    resume in one place: the client learns the real cursor from the
-   `subscription.ready` echo, so it recovers on the very next reconnect.
+   `subscription.ready` echo. The stream then reports the replay gap.
 
    A cursor BELOW the ring's floor (`state/replay-floor`) is the sentinel too.
    The ring is bounded, so ONE long turn evicts thousands of its own frames: a
@@ -839,7 +839,7 @@
 
    Shared by every session stream the daemon serves, so `/v1/events?sids=…` and the
    fleet feed resolve a cursor identically."
-  ^long [sid requested]
+  [sid requested]
   (let [requested
         (long requested)
 
@@ -847,11 +847,15 @@
         (long (state/current-seq sid))
 
         floor
-        (long (state/replay-floor sid))]
+        (long (state/replay-floor sid))
 
-    (if (or (neg? requested) (> requested current) (< requested floor))
-      (long (or (state/running-turn-start-cursor sid) current))
-      requested)))
+        ahead?
+        (> requested current)]
+
+    {:cursor (if (or (neg? requested) ahead? (< requested floor))
+               (long (or (state/running-turn-start-cursor sid) current))
+               requested)
+     :ahead? ahead?}))
 
 (defn- latest-replay-iteration
   "Highest 1-based iteration for the current turn in an atomically captured SSE
@@ -1014,8 +1018,8 @@
                                                        {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out gzip?))
                (doseq [[sid requested-cursor] sid+cursors]
-                 (let [cursor (when (state/session-exists? sid)
-                                (resolve-sse-cursor sid requested-cursor))
+                 (let [{:keys [cursor ahead?]} (when (state/session-exists? sid)
+                                                     (resolve-sse-cursor sid requested-cursor))
                        replay (when (some? cursor)
                                 ;; Seed the guard before atomic registration.
                                 (swap! last-seqs assoc (str sid) cursor)
@@ -1026,13 +1030,13 @@
                    (if session
                      (do (sse-ready! out sid cursor (:descriptors replay) session outbound)
                          (when-some [floor (:floor replay)]
-                           (when (or (< cursor floor) (<= 0 requested-cursor (dec floor)))
+                           (when (or ahead? (< cursor floor) (<= 0 requested-cursor (dec floor)))
                              (let [gap-seq (max cursor floor)
                                    gap (gateway-contract/elided-event
                                          (gateway-contract/stamp-session-event
                                            {} sid gap-seq (util/now-ms) "replay")
                                          "replay_unavailable")]
-                               (write-sse! out (outbound gap))
+                               (write-sse! out (outbound (cond-> gap ahead? (assoc "cursor" gap-seq))))
                                (swap! last-seqs assoc (str sid) gap-seq))))
                          (try (loop [descriptors (:descriptors replay)]
                                 (when (seq descriptors)
@@ -1455,11 +1459,12 @@
           (http/session-404 (get-in request [:path-params :sid])))
 
         :else
-        {:status 200
-         :headers {"Content-Type" "application/json"}
-         :body (wire/canonical-json-str
-                 (let [{:keys [events cursor]} (state/events-page sid cursor (sse-replay request))]
-                   {"events" events "cursor" cursor}))}))
+        (if (state/session-exists? sid)
+          (let [{:keys [events cursor]} (state/events-page sid cursor (sse-replay request))]
+            {:status 200
+             :headers {"Content-Type" "application/json"}
+             :body (wire/canonical-json-str {"events" events "cursor" cursor})})
+          (http/session-404 (get-in request [:path-params :sid])))))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 ;; Router and middleware

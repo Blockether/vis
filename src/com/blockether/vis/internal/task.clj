@@ -335,33 +335,46 @@
                    :interrupt))]
       (when kind (interrupt kind)))))
 
-(defn cancel!
-  "Request an interrupt and report whether the Task was still running."
-  ([session id reason] (cancel! session id reason :cancel))
-  ([session id reason kind] (cancel! session id reason kind nil))
-  ([session id reason kind message]
-   (let [path (key-for session id)
-         request (locking sessions
-                   (when-let [{:keys [row interrupt manual? cancel-on-request? closing? interrupt-complete]}
-                              (get-in @sessions path)]
-                     (when (and (= :running (:state row)) (not closing?)
-                                (or (not manual?) (not interrupt-complete))
-                                 (or (not cancel-on-request?) (nil? (:cancel-reason row)))
-                                 (not (and (= reason :person) (= :person (:cancel-reason row)))))
+(defn- cancel-result*
+  [session id reason kind message]
+  (let [path (key-for session id)
+        result (locking sessions
+                 (when-let [{:keys [row interrupt manual? cancel-on-request? closing? interrupt-complete]}
+                            (get-in @sessions path)]
+                   (let [previous (:cancel-reason row)]
+                     (cond
+                       (not= :running (:state row)) {:requested false :reason "already_ended"}
+                       (or closing? (and manual? interrupt-complete)
+                           (and cancel-on-request? previous)
+                           (and (= reason :person) (= :person previous)))
+                       {:requested false :reason (if previous "already_requested" "already_ended")}
+                       :else
                        (let [complete (when manual? (promise))]
                          (update-entry! path "task.updated"
                                         #(cond-> (-> %
-                                             (assoc :interrupt-kind kind :cancel-message message)
-                                             (update :cancelling (fnil inc 0))
-                                             (assoc-in [:row :cancel-reason] reason))
-                                   complete (assoc :interrupt-complete complete)))
-                         {:interrupt interrupt :complete complete}))))]
-     (when-let [interrupt (:interrupt request)]
-       (if-let [complete (:complete request)]
-         (cancellation/worker-future "vis-task-cancel"
-           (fn [] (try (interrupt kind) (finally (deliver complete true)))))
-         (interrupt kind)))
-     (boolean request))))
+                                                     (assoc :interrupt-kind kind :cancel-message message)
+                                                     (update :cancelling (fnil inc 0))
+                                                     (assoc-in [:row :cancel-reason] reason))
+                                           complete (assoc :interrupt-complete complete)))
+                         {:requested true :interrupt interrupt :complete complete})))))]
+    (when-let [interrupt (:interrupt result)]
+      (if-let [complete (:complete result)]
+        (cancellation/worker-future "vis-task-cancel"
+          (fn [] (try (interrupt kind) (finally (deliver complete true)))))
+        (interrupt kind)))
+    (some-> result (select-keys [:requested :reason]))))
+
+(defn cancel-result!
+  "Request cancellation and return the decision, or nil if the Task does not exist."
+  [session id reason]
+  (cancel-result* session id reason :cancel nil))
+
+(defn cancel!
+  "Request an interrupt and report whether the Task accepted it."
+  ([session id reason] (cancel! session id reason :cancel))
+  ([session id reason kind] (cancel! session id reason kind nil))
+  ([session id reason kind message]
+   (boolean (:requested (cancel-result* session id reason kind message)))))
 
 (defn cancelling [session id]
   (get-in @sessions (conj (key-for session id) :cancelling) 0))

@@ -2603,6 +2603,7 @@
         "get": {
           "request": "none",
           "response": "sse",
+          "response_schema": "job_event_payload",
           "tag": "observation"
         }
       },
@@ -3091,6 +3092,7 @@
         "get": {
           "request": "none",
           "response": "sse",
+          "response_schema": "job_event_payload",
           "tag": "observation"
         }
       },
@@ -3662,6 +3664,7 @@
         "get": {
           "request": "none",
           "response": "sse",
+          "response_schema": "job_event_payload",
           "tag": "observation"
         }
       },
@@ -3996,6 +3999,7 @@
         "get": {
           "request": "none",
           "response": "sse",
+          "response_schema": "job_event_payload",
           "tag": "observation"
         }
       },
@@ -7217,6 +7221,32 @@
           "x-vis-direction": "transcribe"
         }
       ]
+    },
+    "job_event_payload": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/voice_job"
+        },
+        {
+          "$ref": "#/$defs/job_elided_payload"
+        }
+      ]
+    },
+    "job_elided_payload": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "is_elided": {
+          "const": true
+        }
+      },
+      "required": [
+        "is_elided"
+      ],
+      "additionalProperties": false
     },
     "push_event_type": {
       "enum": [
@@ -13048,7 +13078,7 @@
         "reason": {"enum": ["frame_size", "replay_unavailable"]},
         "view_id": {"type": "string"},
         "scope": {"const": "fleet"},
-        "cursor": {"type": "integer", "minimum": 0, "description": "Reset to this cursor when the omitted frame was subscription.ready."}
+        "cursor": {"type": "integer", "minimum": 0, "description": "If present, reset to this cursor. An omitted subscription.ready frame or a replay gap can set it."}
       },
       "required": ["event_type", "reason"]
     },

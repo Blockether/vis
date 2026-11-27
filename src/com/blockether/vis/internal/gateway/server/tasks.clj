@@ -26,15 +26,9 @@
         (case operation
           :list (http/json-response {:tasks (task/wire-tasks session)})
           :read (task-read session task-id request)
-          :cancel (if (task/wire-state session task-id)
-                    (http/json-response
-                      (if (task/cancel! session task-id :person)
-                        {:requested true}
-                        {:requested false
-                         :reason (if (= :running (:state (task/wire-state session task-id)))
-                                   "already_requested"
-                                   "already_ended")}))
-                    (task-404))
+          :cancel (if-let [result (task/cancel-result! session task-id :person)]
+                     (http/json-response result)
+                     (task-404))
           :acknowledge (if (task/wire-state session task-id)
                          (http/json-response {:acknowledged (boolean (task/acknowledge! session task-id))})
                          (task-404)))))))

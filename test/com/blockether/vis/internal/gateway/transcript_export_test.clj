@@ -203,6 +203,35 @@
               (expect (= [child] (mapv #(get % "session_id") (get export "agents"))))))
           (finally (ps/db-dispose-connection! db))))))
 
+(defdescribe council-batch-reload-test
+  (it "keeps each Council entry note when the transcript reloads"
+      (let [db (ps/db-create-connection! :memory)]
+        (try
+          (with-redefs [lp/db-info (constantly db)]
+            (let [leader (str (h/store-session! db {:channel :api}))
+                  first-turn (str (ps/db-store-session-turn! db {:parent-session-id leader
+                                                                  :user-request "Fix the parser"}))
+                  child (spawn! db leader first-turn "Check the parser")
+                  publish! (fn [text]
+                             (:entry (ps/db-council-insert! db
+                                       {:author_sid child :activation_id "child-turn"
+                                        :content text :source "sdk" :title "Parser check" :created_at 1
+                                        :idempotency_key text :fingerprint text}
+                                       [] false)))
+                  entry (publish! "The parser is ready.")
+                  later (publish! "The tests passed.")
+                  _ (ps/db-store-session-turn! db {:parent-session-id leader
+                                                   :request-kind :council
+                                                   :council-entry-id (:entry_id entry)
+                                                   :council-later-entry-ids [(:entry_id later)]
+                                                   :user-request "Read the Council input"})
+                  council (get (peek (:turns (state/transcript-page leader {}))) "council")]
+              (expect (str/ends-with? (get council "note" "") ": The parser is ready. (+1 more)"))
+              (expect (= ["The parser is ready." "The tests passed."]
+                         (mapv #(some-> (get % "note") (str/split #": " 2) last)
+                               (get council "entries"))))))
+          (finally (ps/db-dispose-connection! db))))))
+
 ;; A page with many request images held their bytes in the JSON, so the page parsed megabytes of
 ;; base64 before it drew anything.
 (defdescribe

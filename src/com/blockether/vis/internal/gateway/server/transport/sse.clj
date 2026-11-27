@@ -14,7 +14,8 @@
 
 (defn- session-frame-bytes
   ^bytes [event]
-  (frame-bytes (or (get event "seq") (get event "cursor"))
+  (frame-bytes (when-not (= "fleet" (get event "scope"))
+                 (or (get event "seq") (get event "cursor")))
                (get event "type")
                (wire/canonical-json-str event)))
 
@@ -22,7 +23,7 @@
   "Encode each body once. Return the bytes to write and whether the body was elided."
   [event]
   (let [frame (session-frame-bytes event)]
-    (if (<= (alength frame) max-frame-bytes)
+    (if (<= (alength frame) (long max-frame-bytes))
       {:bytes frame :elided? (= "event.elided" (get event "type"))}
       (let [marker (if (= "event.elided" (get event "type"))
                      event

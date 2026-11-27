@@ -74,8 +74,9 @@ An error answer has a JSON body with `error.type` and `error.message`:
 ## Repair an event stream gap
 
 An event stream frame has a limit of 1 MiB, including its headers and delimiters. If the gateway
-cannot send an event, it sends `event.elided` and gives the sequence number of the omitted event.
-The `event_type` field names that event. The `reason` is `frame_size` or `replay_unavailable`.
+cannot send an event, it sends `event.elided`. The `event_type` field names the omitted event,
+and `seq` gives its sequence number. The `reason` is `frame_size` or `replay_unavailable`.
+A marker with `event_type: replay` reports a gap in stored events, not one omitted event.
 
 If the frame has a `cursor`, use it to reset the stream position.
 The `turn_id` and `view_id` fields identify the affected record if they fit. If the frame does not
@@ -91,9 +92,12 @@ GET /v1/sessions/<session-id>/events-since?snapshot=true
 
 A poll of stored events returns one page and its `cursor`. Use that cursor for the next poll, even
 when the page has no events. If a gateway does not return a cursor, read the state again before
-assuming that no events are missing. A fleet marker has `scope: fleet`. Read the list again without
-changing any session cursor. For a speech job frame with `is_elided: true`, read the job at the resource URL
-for the stream.
+assuming that no events are missing.
+
+A fleet frame has `scope: fleet` and no SSE `id` field. If you receive a fleet marker, read the
+list again without changing any session cursor. For a voice or speech job frame with
+`is_elided: true`, read the job at the resource URL for the stream. Use the job ID from the stream
+URL if the marker does not have an `id`.
 
 ## Stop work and acknowledge results
 

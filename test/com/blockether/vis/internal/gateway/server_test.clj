@@ -157,7 +157,8 @@
                        handler
                        (rv 'events-since-handler)]
 
-                   (with-redefs [state/events-page
+                   (with-redefs [state/session-exists? #(= sid %)
+                                 state/events-page
                                  (fn [id cursor replay]
                                    (expect (= sid id))
                                    (expect (= 0 cursor))
@@ -1629,6 +1630,34 @@
               (map #(wire/parse-json (subs % 6))))
         (str/split body #"\n\n")))
 
+(defdescribe job-stream-keeps-completion-test
+  (it "sends the terminal state when queued progress fills the stream"
+      (let [job-id "job-overflow"
+            out (java.io.ByteArrayOutputStream.)
+            writes (atom 0)
+            current {:id job-id :phase "queued" :is-done false}
+            terminal (assoc current :phase "done" :is-done true)
+            bounded-out (proxy [java.io.OutputStream] []
+                          (write
+                            ([b] (if (bytes? b)
+                                   (.write ^java.io.OutputStream this ^bytes b 0 (alength ^bytes b))
+                                   (.write out (int b))))
+                            ([b off len]
+                             (when (> (swap! writes inc) 100)
+                               (throw (java.io.IOException. "stream did not finish")))
+                             (.write out ^bytes b (int off) (int len)))))]
+        (with-redefs [speech/job (constantly current)
+                      speech/watch! (fn [_ publish!]
+                                      (dotimes [n 64]
+                                        (publish! (assoc current :progress n)))
+                                      (publish! terminal)
+                                      (constantly nil))
+                      sse/HEARTBEAT_MS 1]
+          (ring-protocols/write-body-to-stream
+            (#'speech-api/job-events-body gateway-contract/speech-job-event job-id) {} bounded-out))
+        (expect (= (wire/canonical terminal) (peek (sse-jobs (.toString out "UTF-8")))))
+        (expect (not (str/includes? (.toString out "UTF-8") ": ping"))))))
+
 (defdescribe
   voice-job-progress-is-pushed-as-server-sent-events
   (it "voice job progress is pushed as server sent events"
@@ -2623,6 +2652,8 @@
               (expect (= "task-not-found" (get-in foreign-error ["error" "type"])))
               (expect (= {"requested" true} cancel))
               (expect (= :cancel (deref cancel-received 5000 nil)))
+              (expect (= [200 {"requested" false "reason" "already_requested"}]
+                         (request :post sid (str path "/cancel"))))
               (expect (= "person" (get-in (second (request :get sid path)) ["task" "cancel_reason"])))
               (complete! (constantly {:state :cancelled}))
               (expect (= [200 {"requested" false "reason" "already_ended"}]
@@ -2653,6 +2684,93 @@
             (finally
               (task/sweep! sid :session-close)
               (journal/forget! sid)))))))
+
+(defdescribe deleted-session-event-poll-test
+  (it "reports a missing session in each polling mode"
+      (let [sid (random-uuid)
+            handler (rv 'events-since-handler)]
+        (with-redefs [state/session-exists? (constantly false)
+                      state/soul (constantly nil)]
+          (doseq [query [{"cursor" "2"} {"tasks" "true"} {"snapshot" "true"}]]
+            (let [response (handler {:path-params {:sid (str sid)} :query-params query})]
+              (expect (= [404 "session-not-found"]
+                         [(:status response)
+                          (get-in (wire/parse-json (:body response)) ["error" "type"])]))))))))
+
+(defdescribe sse-reports-ahead-of-high-water-test
+  (it "reports the replay gap with the new cursor before sending more session events"
+      (let [sid (random-uuid)
+            out (java.io.ByteArrayOutputStream.)]
+        (with-server-state!
+          {}
+          (fn []
+            (with-redefs-fn {#'state/session-exists? #{sid}
+                             #'state/soul (constantly {"id" (str sid)})
+                             #'state/current-seq (constantly 8)
+                             #'state/replay-floor (constantly 0)
+                             #'state/running-turn-start-cursor (constantly nil)
+                             #'state/subscribe-replay! (constantly {:through 8 :floor 0 :descriptors []})
+                             #'state/unsubscribe! (constantly nil)
+                             (rv 'pump-sse!) (constantly nil)
+                             #'server/stop! (constantly nil)}
+              #(ring-protocols/write-body-to-stream ((rv 'multi-sse-body) [[sid 28]] false nil)
+                                                     {} out))))
+        (let [[ready gap] (sse-jobs (.toString out "UTF-8"))]
+          (expect (= ["subscription.ready" 8] ((juxt #(get % "type") #(get % "cursor")) ready)))
+          (expect (= ["event.elided" "replay_unavailable" "replay" 8 8]
+                     (mapv #(get gap %) ["type" "reason" "event_type" "seq" "cursor"]))))))
+  (it "keeps the replay gap when the high-water advances before registration"
+      (let [sid (random-uuid)
+            out (java.io.ByteArrayOutputStream.)
+            subscribe! state/subscribe-replay!
+            publish! (fn [stored? n]
+                       (dotimes [_ n]
+                         (state/append-event! sid "notification" {:text "Progress" :level :info :scope :session}
+                                               {:store? stored? :mirror? false})))]
+        (try
+          (with-server-state!
+            {}
+            (fn []
+              (with-redefs-fn {#'state/session-exists? #{sid}
+                               #'state/soul (constantly {"id" (str sid)})
+                               #'state/hydrate-foreign-turn! (constantly nil)
+                               #'journal/publish! (constantly nil)
+                               #'journal/note-unjournaled! (constantly nil)
+                               #'journal/sync-watching! (constantly nil)
+                               #'state/team-subscribed! (constantly nil)
+                               #'state/subscribe-replay! (fn [& args]
+                                                          (publish! true 22)
+                                                          (apply subscribe! args))
+                               (rv 'pump-sse!) (constantly nil)
+                               #'server/stop! (constantly nil)}
+                (fn []
+                  (publish! false 8)
+                  (ring-protocols/write-body-to-stream
+                    ((rv 'multi-sse-body) [[sid 28]] false nil false :full) {} out)))))
+          (let [[ready gap & replayed] (sse-jobs (.toString out "UTF-8"))]
+            (expect (= ["subscription.ready" 8] (mapv ready ["type" "cursor"])))
+            (expect (= ["event.elided" "replay_unavailable" "replay" 8 8]
+                       (mapv gap ["type" "reason" "event_type" "seq" "cursor"])))
+            (expect (= (vec (range 9 31)) (mapv #(get % "seq") replayed))))
+          (finally (#'state/drop-session! sid))))))
+
+(defdescribe task-settling-cancellation-test
+  (it "reports an ended Task while normal settlement is still in progress"
+      (let [sid (random-uuid)
+            router (rr/ring-handler ((rv 'router) nil []))
+            {:keys [row complete!]} (task/start-manual! sid {:name "settling"} (constantly nil))]
+        (try
+          (with-redefs [state/session-exists? #{sid}]
+            (let [reply (promise)]
+              (complete! (fn []
+                           (let [response (router {:request-method :post
+                                                   :uri (str "/v1/sessions/" sid "/tasks/" (:id row) "/cancel")})]
+                             (deliver reply [(:status response) (wire/parse-json (:body response))]))
+                           {:state :done}))
+              (expect (= [200 {"requested" false "reason" "already_ended"}] (deref reply 0 nil)))))
+          (finally
+            (task/sweep! sid :session-close)
+            (journal/forget! sid))))))
 
 (defdescribe
   multi-sse-reports-sessions-deleted-while-disconnected
@@ -2981,6 +3099,7 @@
                      (mapv #(get % "type") frames)))
           (expect (= [nil nil "fleet" nil "fleet"] (mapv #(get % "scope") frames)))
           (expect (= 4 (get (first frames) "cursor")))
+          (expect (= ["4" "5" "6"] (mapv second (re-seq #"(?m)^id: (\d+)$" (.toString out "UTF-8")))))
           (expect (= [5 0 6 900] (mapv #(get % "seq") (rest frames))))))))
 
 (defdescribe
@@ -4524,11 +4643,11 @@
                    (swap! registry assoc (str sid) {:next-seq 12})
                    (try
                      ;; a cursor past the high-water resolves to the live tail
-                     (expect (= 12 (resolve-cursor sid 5000)))
+                     (expect (= 12 (:cursor (resolve-cursor sid 5000))))
                      ;; an in-range cursor is honoured verbatim
-                     (expect (= 5 (resolve-cursor sid 5)))
+                     (expect (= 5 (:cursor (resolve-cursor sid 5))))
                      ;; the negative live-only sentinel is unchanged
-                     (expect (= 12 (resolve-cursor sid -1)))
+                     (expect (= 12 (:cursor (resolve-cursor sid -1))))
                      (finally (swap! registry dissoc (str sid)))))))
 
 (defdescribe
@@ -4561,11 +4680,11 @@
           {:next-seq 900 :evicted-through 400})
         (try
           ;; a cursor the ring already evicted replays the running turn whole
-          (expect (= 119 (resolve-cursor sid 300)))
+          (expect (= 119 (:cursor (resolve-cursor sid 300))))
           ;; a cursor still inside the ring is honoured verbatim
-          (expect (= 500 (resolve-cursor sid 500)))
+          (expect (= 500 (:cursor (resolve-cursor sid 500))))
           ;; with no turn running it resolves to the live tail, leaving history to the transcript
-          (expect (= 900 (resolve-cursor idle-sid 300)))
+          (expect (= 900 (:cursor (resolve-cursor idle-sid 300))))
           (finally (swap! registry dissoc (str sid) (str idle-sid)))))))
 
 (defdescribe

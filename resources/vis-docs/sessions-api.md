@@ -847,8 +847,9 @@ A client that cannot keep a stream open can read pages:
 vis_api "$VIS_GATEWAY_URL/v1/sessions/$SESSION_ID/events-since?cursor=$cursor&replay=full"
 ```
 
-The answer has `events`. Each event has `seq`, `ts`, `session_id`, and `type`. Send the `seq` of
-the last event as the next `cursor`.
+The answer has `events` and `cursor`. Each event has `seq`, `ts`, `session_id`, and `type`.
+Send the top-level `cursor` in the next poll, even if `events` is empty. If the session no longer
+exists, the gateway returns `404` with `session-not-found`.
 
 </div>
 
