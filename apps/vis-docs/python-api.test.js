@@ -93,8 +93,11 @@ test('pdoc documents public modules, re-exports and typed methods from the SDK c
 });
 
 test('experimental APIs stay out of generated pages, navigation and search', () => {
-  const experimental =
-    /\bSubagent(?:Record)?\b|council\.spawn|subagents|council_wake|Council\.(?:spawn|run|wait|cancel|resume|extend|deny|answer|grant|route|wake|timeline)/i;
+  // `prompt_audience="subagent"` is a stable value (#520). Only the class names are experimental.
+  const classes = /\bSubagent(?:Record)?\b/;
+  const calls =
+    /council\.spawn|subagents|council_wake|Council\.(?:spawn|run|wait|cancel|resume|extend|deny|answer|grant|route|wake|timeline)/i;
+  const experimental = { test: (text) => classes.test(text) || calls.test(text) };
   for (const name of files) expect(experimental.test(read(prefix + name)), name).toBe(false);
   expect(experimental.test(read(prefix + 'search.js')), 'search index').toBe(false);
   const dom = new JSDOM(read(prefix + 'blockether/vis/extension.html'));
