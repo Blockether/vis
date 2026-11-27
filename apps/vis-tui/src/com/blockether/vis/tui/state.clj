@@ -5,6 +5,8 @@
             [com.blockether.vis.tui.client :as vis]
             [com.blockether.vis.tui.app-model :as app-model]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.document :as contract-document]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.tui.projects :as projects]
             [com.blockether.vis.tui.shared-theme :as shared-theme]
@@ -151,13 +153,13 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-session-id :input-history-index :input-history-draft
    :slash-command-index :slash-command-hidden? :submitted-input :pending-sends :retracted-sends
-   :queue-paused :queue-focus :queue-removed :pastes :paste-counter :image-counter :attachments
+   :queue-paused :queue-focus :queue-removed :queue-delete-revision :pastes :paste-counter :image-counter :attachments
    :attachment-feedback :attachment-focus? :attachment-index :loading? :cancel-token :cancelling?
    :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
-   :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :live-trace-repair
+   :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :live-trace-repair :refused-stop-probe
    :detail-expansions :mouse-selection
    :session-model-pref :human-input :human-input-queue :human-input-read :live-views :live-viewer-id
-   :live-viewer-search :app-views :live-panel
+   :live-viewer-search :app-views :live-panel :pane-close-revision
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -185,6 +187,7 @@
    :queue-paused nil
    :queue-focus nil
    :queue-removed nil
+   :queue-delete-revision nil
    :pastes {}
    :paste-counter 0
    :image-counter 0
@@ -207,6 +210,7 @@
    :liveness-probed-at-ms nil
    :gateway-resynced-at-ms nil
    :live-trace-repair nil
+   :refused-stop-probe nil
    :detail-expansions {}
    :mouse-selection nil
    :session-model-pref nil
@@ -226,6 +230,7 @@
    ;; live band; the app surface reads them from here.
    :app-views {}
    :live-panel nil
+   :pane-close-revision nil
    ;; Stated HERE on purpose: `restore-tab` only MERGES, so a tab that never armed
    ;; would otherwise inherit the armed tab's flag from the root db.
    :voice-conversation? false})
@@ -454,16 +459,7 @@
 (def ^:private settings-notification-ttl-ms 1500)
 
 (def ^:private cancel-self-heal-timeout-ms
-  "Client-side safety net for a STUCK cancel. `:cancel-turn` flips `:cancelling?`
-   and waits for the daemon's terminal `turn.completed` (status cancelled) event
-   to release it — that event is the ONLY release. If it never lands (an SSE
-   reconnect gap right at cancel, or the daemon dying mid-unwind) the flag sticks
-   true, every send parks purely local (see the enqueue race guard), and input is
-   wedged until the daemon's ~6-minute stall watchdog fires — a freeze, to a
-   human. This bounds that window: once `:cancelling?` has been held this long
-   with no terminal event, the client self-heals. Long enough that a healthy
-   terminal event always wins the race; short enough that a dropped one never
-   freezes the user."
+  "Time before we retry a cancel with no gateway result."
   8000)
 
 (def ^:private turn-liveness-grace-ms
@@ -2838,7 +2834,7 @@
 
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
-   :live-turn-client-id :liveness-probed-at-ms :live-trace-repair])
+   :live-turn-client-id :liveness-probed-at-ms :live-trace-repair :refused-stop-probe])
 
 (defn- session-running?
   [session]
@@ -2893,7 +2889,8 @@
     :live-turn-client-id nil
     :cancelling-at-ms nil
     :liveness-probed-at-ms nil
-    :live-trace-repair nil))
+    :live-trace-repair nil
+    :refused-stop-probe nil))
 
 (defn- reconcile-in-flight-state
   [next-db previous-db session]
@@ -4119,31 +4116,53 @@
        :cancelling? (or (contains? pending (get row "id")) (get row "cancel_reason"))
        :view-id (some (set (map lv/view-id (:live-views db))) (get row "view_ids"))})))
 
+(defn- apply-background-task-event
+  [held {:keys [task seq event-type]}]
+  (if (and held (integer? seq) (> (long seq) (long (:seq held))))
+    (let [rows (:rows held)
+          id (get task "id")
+          running? (= "running" (get task "state"))
+          index (first (keep-indexed #(when (= id (get %2 "id")) %1) rows))
+          next-rows (cond
+                      (or (= "task.ended" event-type) (not running?))
+                      (filterv #(not= id (get % "id")) rows)
+                      (some? index) (assoc rows index task)
+                      :else (conj rows task))]
+      (cond-> (assoc held :seq seq :rows next-rows)
+        (not running?) (update :pending disj id)
+        (empty? next-rows) (dissoc :focused? :selected)))
+    held))
+
 (reg-event-db :sync-background-tasks
-              (fn [db [_ sid {:keys [tasks task-seq task seq event-type]}]]
+              (fn [db [_ sid {:keys [tasks task-seq task seq is-repair] :as chunk} & [before] :as event]]
                 (let [path [:background-tasks (str sid)]
                       held (get-in db path)
-                      running? #(and (= (str sid) (get % "session_id"))
-                                     (= "running" (get % "state")))]
+                      for-session? #(= (str sid) (get % "session_id"))
+                      staged (:staged held)]
                   (cond
                     (= :not-here (session-target-tab db sid)) db
+                    ;; A rewind with no rows starts a new Task stream. Hold the
+                    ;; latest update for each Task until the snapshot arrives.
+                    (and is-repair (not (vector? tasks))) (assoc-in db (conj path :staged) {})
                     (vector? tasks)
-                    (let [rows (filterv running? tasks)]
-                      (assoc-in db path (cond-> (assoc (dissoc held :pending) :rows rows :seq (or task-seq -1))
-                                          (empty? rows) (dissoc :focused? :selected))))
-                    (and held (integer? seq) (> (long seq) (long (:seq held)))
-                         (= (str sid) (get task "session_id")))
-                    (let [rows (:rows held)
-                          id (get task "id")
-                          index (first (keep-indexed #(when (= id (get %2 "id")) %1) rows))
-                          next-rows (cond
-                                      (or (= "task.ended" event-type) (not (running? task)))
-                                      (filterv #(not= id (get % "id")) rows)
-                                      (some? index) (assoc rows index task)
-                                      :else (conj rows task))]
-                      (assoc-in db path (cond-> (assoc held :seq seq :rows next-rows)
-                                          (not (running? task)) (update :pending disj id)
-                                          (empty? next-rows) (dissoc :focused? :selected))))
+                    (if (and (not (or is-repair staged
+                                      (and (= 4 (count event)) (= (:seq held) (:seq before)))))
+                             (< (long (or task-seq -1)) (long (or (:seq held) -1))))
+                      db
+                      (let [rows (filterv #(and (for-session? %) (= "running" (get % "state"))) tasks)
+                            snapshot (cond-> (assoc (dissoc held :pending :staged) :rows rows :seq (or task-seq -1))
+                                       (empty? rows) (dissoc :focused? :selected))]
+                        (assoc-in db path (reduce apply-background-task-event snapshot
+                                                  (when-not is-repair (sort-by :seq (vals staged)))))))
+                    (and (integer? seq) (for-session? task))
+                    (if staged
+                      (let [id (get task "id")]
+                        (if (> (long seq) (long (get-in staged [id :seq] -1)))
+                          (assoc-in db (into path [:staged id]) chunk)
+                          db))
+                      (if-let [next (apply-background-task-event held chunk)]
+                        (assoc-in db path next)
+                        db))
                     :else db))))
 
 (reg-event-db :focus-background-tasks
@@ -4160,24 +4179,45 @@
                 (let [{:keys [row cancelling?] active-sid :sid} (background-task-dock db)]
                   (if (and row (= sid active-sid) (= id (get row "id")) (not cancelling?))
                     {:db (update-in db [:background-tasks sid :pending] (fnil conj #{}) id)
-                     :fx [[:gateway-cancel-background-task sid id (get row "name")]]}
+                     :fx [[:gateway-cancel-background-task sid id (get row "name") row]]}
                     {:db db}))))
 
 (reg-event-fx :background-task-cancel-reply
-              (fn [db [_ sid id name requested?]]
+              (fn [db [_ sid id name {:keys [outcome before row] :as result}]]
                 (let [path [:background-tasks sid]
-                      row (some #(when (= id (get % "id")) %) (get-in db (conj path :rows)))]
-                  (if (and row (not requested?))
-                    (cond-> {:db (update-in db (conj path :pending) disj id)}
-                      (not (get row "cancel_reason"))
-                      (assoc :fx [[:notify (str "Could not cancel " name) :warn 3000]]))
-                    {:db db}))))
+                      held (get-in db path)
+                      idx (first (keep-indexed #(when (= id (get %2 "id")) %1) (:rows held)))
+                      current (get (:rows held) idx)]
+                  (if (or (nil? idx) (= :accepted outcome))
+                    {:db db}
+                    (let [rows (if (and (= current before) (contains? result :row))
+                                 (if (= "running" (get row "state"))
+                                   (assoc (:rows held) idx row)
+                                   (filterv #(not= id (get % "id")) (:rows held)))
+                                 (:rows held))]
+                      (cond-> {:db (assoc-in db path
+                                            (cond-> (-> held (assoc :rows rows) (update :pending disj id))
+                                              (empty? rows) (dissoc :focused? :selected)))}
+                        (and (= :failed outcome) (not (get current "cancel_reason")))
+                        (assoc :fx [[:notify (str "Could not cancel " name) :warn 3000]])))))))
+
+(defn- task-cancel-refused
+  [sid id before]
+  (let [result {:outcome :refused :before before}]
+    (try (assoc result :row (vis/get-task sid id))
+         (catch Exception _ result))))
 
 (reg-fx :gateway-cancel-background-task
-        (fn [sid id name]
+        (fn [sid id name before]
           (vis/worker-future "tui-cancel-background-task"
-                             #(let [requested? (try (vis/cancel-task! sid id) (catch Exception _ false))]
-                                (dispatch [:background-task-cancel-reply sid id name requested?])))))
+                             #(let [result (try (if (true? (get (vis/cancel-task! sid id) "requested"))
+                                                  {:outcome :accepted}
+                                                  (task-cancel-refused sid id before))
+                                                (catch Exception e
+                                                  (if (= "task-not-found" (get-in (ex-data e) [:body "error" "type"]))
+                                                    {:outcome :refused :before before :row nil}
+                                                    {:outcome :failed})))]
+                                (dispatch [:background-task-cancel-reply sid id name result])))))
 
 (defn- human-input-target-tab
   "The tab `form` is allowed to appear on — [[session-target-tab]] for `watched-sid`,
@@ -4523,19 +4563,19 @@
                                   (:view-id patch)
                                   #(patch-live-pane % patch first-seq))))
 
+(defn- load-live-pane
+  [pane view]
+  (if (or (lv/settled? pane)
+          (< (long (:seq view)) (long (get-in pane [:view :seq] 0))))
+    pane
+    (retain-live-dialog-state
+      (cond-> (assoc pane :view view)
+        (>= (long (:seq view)) (long (or (:behind-seq pane) 0)))
+        (dissoc :is-gap :behind-seq)))))
+
 (reg-event-db :live-pane-loaded
               (fn [db [_ view]]
-                (update-live-pane db
-                                  (:id view)
-                                  (fn [pane]
-                                    (if (or (lv/settled? pane)
-                                            (< (long (:seq view))
-                                               (long (get-in pane [:view :seq] 0))))
-                                      pane
-                                      (retain-live-dialog-state
-                                         (cond-> (assoc pane :view view)
-                                           (>= (long (:seq view)) (long (or (:behind-seq pane) 0)))
-                                           (dissoc :is-gap :behind-seq))))))))
+                (update-live-pane db (:id view) #(load-live-pane % view))))
 
 (reg-event-db :app-view-behind
               ;; An elided `view.patch`: the gateway left out a large patch of an app.
@@ -4552,7 +4592,7 @@
               ;; is read. Nothing is retired: a second finished run erasing the first
               ;; is what made a watched log unreachable, and the band keeping one line
               ;; forever is what made a finished run look like it was still going.
-              (fn [db [_ view-id result]]
+              (fn [db [_ view-id result session-id]]
                 (across-tabs (close-app-view db view-id)
                              (fn [w]
                                ;; A close reaches a tab TWICE whenever the view was opened in
@@ -4571,11 +4611,15 @@
                                                          panes)))
                                          (upsert-run-row settled)))
                                    ;; A closed panel view leaves the panel: it has no receipt.
-                                   (update w
-                                           :live-views
-                                           (fn [panes]
-                                             (filterv #(not= view-id (lv/view-id %)) panes))))
-                                 w)))))
+                                   (-> w
+                                       (update :pane-close-revision (fnil inc 0))
+                                       (update :live-views
+                                               (fn [panes]
+                                                 (filterv #(not= view-id (lv/view-id %)) panes)))))
+                                 ;; The close can arrive before a missed open is repaired.
+                                 (cond-> w
+                                   (and session-id (= (str session-id) (str (get-in w [:session :id]))))
+                                   (update :pane-close-revision (fnil inc 0))))))))
 
 (reg-event-db :app-view-loaded
               ;; A full read of one app view, after a seq gap or an action ack.
@@ -5905,10 +5949,11 @@
                 (and turn-id cancel-client-id (or (nil? client-id) (= client-id cancel-client-id))))
 
               matching-live-start?
-              (boolean (and (not awaiting-cancel?)
-                            (or (nil? live-client-id)
-                                (= client-id live-client-id)
-                                (and (nil? client-id) (nil? cancel-client-id)))))
+              (boolean (or (= client-id live-client-id cancel-client-id)
+                           (and (not awaiting-cancel?)
+                                (or (nil? live-client-id)
+                                    (= client-id live-client-id)
+                                    (and (nil? client-id) (nil? cancel-client-id))))))
 
               ;; If the new submit starts first, FIFO ordering proves the cancelled
               ;; POST never reached the gateway; retire its otherwise-stale marker.
@@ -6058,12 +6103,13 @@
                                          (assoc-in [:messages idx :terminal-pending] terminal))))
                      :fx (cond-> [diagnostic]
                            idx
-                           (conj [:settle-turn-terminal-later workspace-id terminal]))}))))
+                           (conj [:settle-turn-terminal-later workspace-id (get-in target [:session :id]) terminal]))}))))
 
 (reg-event-fx
   :settle-turn-terminal
-  (fn [db [_ workspace-id terminal]]
-    (let [workspace-id
+  (fn [db [_ workspace-id marker content]]
+    (let [terminal (cond-> marker (seq content) (assoc :content content))
+          workspace-id
           (or workspace-id (current-tab-id db))
 
           target
@@ -6075,7 +6121,7 @@
           idx
           (first (keep-indexed (fn [idx message]
                                  (when (and (pending-assistant-message? message)
-                                            (= terminal (:terminal-pending message)))
+                                            (= marker (:terminal-pending message)))
                                    idx))
                                messages))
 
@@ -6292,7 +6338,7 @@
                            restore?
                            (and (= op :delete) (= reason "cancelled") (some? mirrored) (not live?))
                            w' (update
-                                w
+                                (cond-> w (= :delete op) (update :queue-delete-revision (fnil inc 0)))
                                 :pending-sends
                                 (fn [q]
                                   (let [q (vec (or q []))
@@ -7032,7 +7078,7 @@
                          (catch clojure.lang.ExceptionInfo e
                            (let [data (ex-data e)]
                              (if (:http-status data)
-                               {:response {:error (keyword (or (get data "error") "gateway-error"))
+                               {:response {:error (keyword (or (get-in data ["error" "type"]) "gateway-error"))
                                            :http-status (:http-status data)}}
                                {:transport-error e})))
                          (catch Throwable t {:transport-error t}))]
@@ -7063,6 +7109,7 @@
                   (not (:loading? db)) (if-let [sid (get-in db [:session :id])]
                                          {:db db :fx [[:cancel-detached-turn sid]]}
                                          {:db db})
+                  (:cancelling? db) {:db db}
                   :else (let [sid
                               (get-in db [:session :id])
 
@@ -7075,22 +7122,13 @@
                               token
                               (:cancel-token db)
 
-                              already-cancelling?
-                              (:cancelling? db)
-
                               cancel-key
-                              (when-not already-cancelling? (System/currentTimeMillis))
+                              (System/currentTimeMillis)
 
                               db'
-                              (if already-cancelling?
-                                (cond-> (clear-active-turn-state (park-live-trace db))
-                                  cancel-client-id
-                                  (assoc :cancel-awaiting-client-id cancel-client-id))
-                                (cond-> (assoc db
-                                          :cancelling? true
-                                          :cancelling-at-ms cancel-key)
-                                  cancel-client-id
-                                  (assoc :cancel-awaiting-client-id cancel-client-id)))]
+                              (cond-> (assoc db :cancelling? true :cancelling-at-ms cancel-key)
+                                cancel-client-id
+                                (assoc :cancel-awaiting-client-id cancel-client-id))]
 
                           ;; Esc must never wait for gateway discovery, HTTP, or the daemon's durable
                           ;; cancel stamp. Commit the visible state first, synchronously fire the LOCAL
@@ -7100,74 +7138,50 @@
                           {:db db'
                            :fx [[:cancel-local-turn token]
                                 [:gateway-cancel-active sid tid cancel-key
-                                 (:live-turn-client-id db)]]}))))
+                                 (:live-turn-client-id db) (current-tab-id db)]]}))))
 
 (defn- settle-cancelled-turn
-  "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
-   while the local worker's terminal result has not landed yet.
-
-   Clearing the turn alone left one cancel half-settled: sends flowed again, yet
-   the prompt sat unreachable in `:submitted-input` and the transcript kept a
-   pending assistant placeholder that no later event would resolve. Settle like
-   the worker's terminal, so whichever half arrives first leaves the same frame:
-   the prompt stays in the transcript, a stray Esc that ran nothing settles its
-   placeholder as the cancelled notice, and a cancel with visible work keeps its
-   parked trace for the worker's result. Esc never refills the editor; the prompt
-   stays one ArrowUp away in the input history."
+  "Settle a cancelled turn with the trace already shown in the tab."
   [db]
-  (let [submitted
-        (:submitted-input db)
-
-        messages
-        (vec (:messages db))
-
-        idx
-        (pending-assistant-index messages (:live-turn-client-id db))
-
-        trace
-        (or (not-empty (vec (get-in db [:progress :iterations])))
-            (when idx (not-empty (vec (get-in messages [idx :terminal-pending :trace])))))
-
-        settled
-        (-> db
-            clear-active-turn-state
-            (dissoc :submitted-input))]
-
-    (if (and submitted idx (empty? trace))
-      (update settled
-              :messages
-              replace-pending-assistant
-              (completion-response
-                (terminal-content {:status :cancelled :turn-id (:gateway-turn-id db)})
-                nil
-                nil
-                {:status :cancelled :client-turn-id (get-in messages [idx :client-turn-id])}))
+  (let [settled (dissoc (clear-active-turn-state db) :submitted-input)
+        idx (pending-assistant-index (:messages settled) (:live-turn-client-id db))]
+    (if (some? idx)
+      (let [message (get-in settled [:messages idx])]
+        (update settled :messages replace-pending-assistant
+                (completion-response
+                  (terminal-content {:status :cancelled :turn-id (:gateway-turn-id db)})
+                  (get-in message [:terminal-pending :trace])
+                  nil
+                  {:status :cancelled :client-turn-id (:client-turn-id message)})))
       settled)))
 
+(def ^:private turn-cancel-success-statuses
+  (set (get-in (contract-document/schema-document "gateway") ["$defs" "turn_cancel_success" "properties" "status" "enum"])))
+
 (reg-event-fx :gateway-cancel-result
-              ;; Do not let the LOCAL attach worker's synthetic `:cancelled` result
-              ;; unlock resending before the daemon accepted the cancel. Only this
-              ;; generation-keyed gateway ACK (or an already-terminal response) may
-              ;; release the wait; a late result cannot clear a newer turn.
-              (fn [db [_ cancel-key result]]
-                (let [accepted?
-                      (and (map? result) (not (:error result)) (not (false? (get result "accepted"))))
+              (fn [db [_ cancel-key result target-id]]
+                (let [tab-id (or target-id (current-tab-id db))
+                      tab (db-for-tab db tab-id)]
+                  (if-not (and cancel-key (:cancelling? tab) (= cancel-key (:cancelling-at-ms tab)))
+                    {:db db}
+                    (cond
+                      (or (false? (get result "accepted"))
+                          (contains? gateway-terminal-cancel-errors (:error result)))
+                      (let [tid (or (:gateway-turn-id tab) (get result "turn_id"))
+                            client-id (:live-turn-client-id tab)
+                            now (System/currentTimeMillis)]
+                        {:db (update-tab db tab-id #(assoc % :cancelling? false :cancelling-at-ms nil
+                                                           :refused-stop-probe {:tid tid :client-id client-id :at now}))
+                         :fx [[:probe-turn-liveness tab-id (get-in tab [:session :id]) tid client-id]]})
 
-                      terminal?
-                      (or (contains? gateway-terminal-cancel-errors (:error result))
-                          (and (false? (get result "accepted"))
-                               (contains? #{"not_running" "no_running_turn"} (get result "reason"))))]
-
-                  (if (and cancel-key
-                           (:cancelling? db)
-                           (= cancel-key (:cancelling-at-ms db))
-                           (or accepted? terminal?))
-                    (let [workspace-id (current-tab-id db)]
-                      {:db (settle-cancelled-turn db)
+                      (and (not (:http-status result)) (not (:error result))
+                           (turn-cancel-success-statuses (or (get result "status") (:status result))))
+                      {:db (update-tab db tab-id settle-cancelled-turn)
                        :fx (cond-> []
-                             (and accepted? (some :mine? (:pending-sends (db-for-tab db workspace-id))))
-                             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})
-                    {:db db}))))
+                             (some :mine? (:pending-sends tab))
+                             (conj [:dispatch [:restore-pending-to-input tab-id]]))}
+
+                      :else {:db db})))))
 
 (reg-event-fx :cancel-tab-turn
               ;; Best-effort SERVER-side cancel for the turn running in `tab-id`'s session —
@@ -7204,41 +7218,16 @@
                          (conj [:gateway-cancel-active sid tid nil
                                 (:live-turn-client-id snap)]))})))
 
-(defn- cancel-self-heal-due?
-  "True when a user cancel has been pending (`:cancelling?`) at least
-   `cancel-self-heal-timeout-ms` without the daemon's terminal event arriving to
-   release it — the SSE-drop / daemon-died edge that would otherwise wedge input."
-  [db now-ms]
-  (boolean (and (:cancelling? db)
-                (:cancelling-at-ms db)
-                (>= (- (long now-ms) (long (:cancelling-at-ms db)))
-                    (long cancel-self-heal-timeout-ms)))))
-
 (reg-event-fx :cancel-self-heal-tick
-              ;; Render-loop heartbeat safety net for a STUCK cancel (see
-              ;; `cancel-self-heal-timeout-ms`). Once the pending `:cancelling?` has outlived
-              ;; the timeout with no terminal event, self-heal locally: re-fire the cancel
-              ;; token (tears down any lingering local attach waiter), clear the turn state so
-              ;; sends flow again, and restore the AUTHORED backlog to the editor so nothing
-              ;; the user typed is lost — the same restore the terminal-event path performs.
-              ;; Pure over an injected `now-ms` (tests pass it; the render loop omits it →
-              ;; System/currentTimeMillis), so a dropped event self-heals deterministically.
               (fn [db [_ now-ms]]
-                (let [now (or now-ms (System/currentTimeMillis))]
-                  (if-not (cancel-self-heal-due? db now)
-                    {:db db}
-                    (let [workspace-id (current-tab-id db)
-                          token (:cancel-token db)
-                          sid (get-in db [:session :id])
-                          tid (:gateway-turn-id db)]
-
-                      ;; Release input immediately. Server cancellation is best effort on
-                      ;; the dedicated cancel lane; it must not stall this heartbeat.
-                      {:db (settle-cancelled-turn db)
-                       :fx (cond-> [[:cancel-local-turn token]
-                                    [:gateway-cancel-active sid tid nil (:live-turn-client-id db)]]
-                             (some :mine? (:pending-sends (db-for-tab db workspace-id)))
-                             (conj [:dispatch [:restore-pending-to-input workspace-id]]))})))))
+                (let [now (or now-ms (System/currentTimeMillis))
+                      since (:cancelling-at-ms db)]
+                  (if (and (:cancelling? db) since
+                           (>= (- (long now) (long since)) (long cancel-self-heal-timeout-ms)))
+                    {:db (assoc db :cancelling-at-ms now)
+                     :fx [[:gateway-cancel-active (get-in db [:session :id]) (:gateway-turn-id db)
+                           now (:live-turn-client-id db) (current-tab-id db)]]}
+                    {:db db}))))
 
 (defn- loading-tab-ids
   "Ids of every tab with a turn in flight — the ACTIVE tab (db root) plus each
@@ -7271,6 +7260,84 @@
                   (>= (- now (long (or (:liveness-probed-at-ms tab) 0)))
                       (long stream-silence-ms))))))
 
+(defn repair-baseline
+  "Read one tab's gateway mirrors before a repair request."
+  [db tab-id]
+  (select-keys (db-for-tab db tab-id) [:live-views :app-views :pane-close-revision
+                                         :pending-sends :queue-paused :queue-delete-revision]))
+
+(defn- repair-live-panes
+  [tab before views]
+  (let [by-id (into {} (map (juxt :id identity)) views)
+        old-panes (into {} (map (juxt lv/view-id identity)) (:live-views before))
+        current-ids (into #{} (map lv/view-id) (:live-views tab))
+        updated (reduce
+                  (fn [tab pane]
+                    (let [id (lv/view-id pane)]
+                      (if-let [view (get by-id id)]
+                        (update tab :live-views conj (load-live-pane pane view))
+                        (if (and (not (lv/settled? pane))
+                                 (= (:view pane) (:view (get old-panes id)))
+                                 (= (str (get-in tab [:session :id])) (get-in pane [:view :session-id])))
+                          ;; Only the transcript retains a closed inline run.
+                          (if (= :inline (lv/placement pane))
+                            (let [settled (lv/settled pane nil)]
+                              (-> tab (update :live-views conj settled) (upsert-run-row settled)))
+                            tab)
+                          (update tab :live-views conj pane)))))
+                  (assoc tab :live-views []) (:live-views tab))]
+    (reduce (fn [tab {:keys [id placement] :as view}]
+              (cond
+                (= :attachment placement)
+                (if (= (get-in before [:app-views id]) (get-in tab [:app-views id]))
+                  (mount-app-view tab view)
+                  tab)
+
+                (or (contains? current-ids id) (contains? old-panes id)
+                    (not= (:pane-close-revision before) (:pane-close-revision tab))) tab
+                :else (mount-live-pane tab view)))
+            updated views)))
+
+(defn- repair-queue
+  [tab tab-id before queue]
+  (let [old (:pending-sends before)
+        current (:pending-sends tab)
+        match (fn [rows {:keys [turn-id client-id]}]
+                (some #(when (same-submission? % turn-id client-id) %) rows))
+        listed (mapv (fn [row]
+                       {:turn-id (get row "turn_id") :client-id (get row "idempotency_key")
+                        :text (get row "request") :preview-text (or (get row "request_preview") (get row "request"))
+                        :queued-at-ms (get row "queued_at") :deliver (get row "deliver")})
+                     (get queue "turns"))
+        keep-current? (fn [entry]
+                        (and (not (match listed entry))
+                             (or (nil? (:turn-id entry)) (not= entry (match old entry)))))
+        repaired (keep (fn [{:keys [turn-id client-id] :as row}]
+                         (let [prior (match old row)
+                               held (match current row)]
+                           (when-not (or (live-turn-mirror? tab turn-id client-id)
+                                         (submission-retracted? tab tab-id client-id))
+                             (if (not= prior held)
+                               held
+                               (cond-> (merge (dissoc held :awaiting-ack? :unsent?) row)
+                                 (our-submission? tab-id client-id) (assoc :mine? true))))))
+                       listed)
+        paused (get queue "queue_paused")]
+    (cond-> (assoc tab :pending-sends (into (vec repaired) (filter keep-current?) current))
+      (= (:queue-paused before) (:queue-paused tab))
+      (assoc :queue-paused (when paused (select-keys (wire/->engine paused)
+                                                    [:reason :held :is-breaker-open :retry-at]))))))
+
+(reg-event-db :repair-session-mirrors
+              (fn [db [_ tab-id sid before views queue]]
+                (if (= sid (get-in (db-for-tab db tab-id) [:session :id]))
+                  (update-tab db tab-id
+                              (fn [tab]
+                                (cond-> (repair-live-panes tab before views)
+                                  (= (:queue-delete-revision before) (:queue-delete-revision tab))
+                                  (repair-queue tab-id before queue))))
+                  db)))
+
 (defn- pending-live-trace-repair
   [tab]
   (let [{:keys [sid tid] :as repair} (:live-trace-repair tab)]
@@ -7293,13 +7360,20 @@
       (reduce (fn [{:keys [db fx] :as acc} tab-id]
                 (let [tab (db-for-tab db tab-id)
                       sid (get-in tab [:session :id])
-                      repair (pending-live-trace-repair tab)]
+                      repair (pending-live-trace-repair tab)
+                      {:keys [tid client-id at]} (:refused-stop-probe tab)
+                      probe-tid (or (:gateway-turn-id tab) tid)]
                   (cond
                     (and repair (not (:reading? repair)) (<= (long (:retry-at repair)) now))
                     (let [next (start-live-trace-read db tab-id repair now)]
                       {:db (:db next) :fx (into (or fx []) (:fx next))})
 
-                    (and sid (turn-liveness-probe-due? tab now (vis/session-stream-seen-ms sid)))
+                    (and sid at (or probe-tid client-id) (not (:cancelling? tab))
+                         (>= (- now (long at)) (long turn-liveness-probe-interval-ms)))
+                    {:db (update-tab db tab-id #(assoc-in % [:refused-stop-probe :at] now))
+                     :fx (conj (or fx []) [:probe-turn-liveness tab-id sid probe-tid client-id])}
+
+                    (and sid (nil? at) (turn-liveness-probe-due? tab now (vis/session-stream-seen-ms sid)))
                     {:db (update-tab db tab-id #(assoc % :liveness-probed-at-ms now))
                      :fx (conj (or fx []) [:probe-turn-liveness tab-id sid
                                            (:gateway-turn-id tab) (:live-turn-client-id tab)])}
@@ -7362,6 +7436,10 @@
                                          (cond
                                            (= k :forms) (assoc merged k (merge-repaired-trace
                                                                           (:forms stored) (:forms old) v))
+                                           (and (string? v) (string? (get stored k))
+                                                (str/starts-with? v (get stored k))) (assoc merged k v)
+                                           (and (string? v) (string? (get stored k))
+                                                (str/starts-with? (get stored k) v)) merged
                                            (and (contains? stored k) (= (get old k) v)) merged
                                            :else (assoc merged k v)))
                                        stored row)]
@@ -7479,7 +7557,7 @@
   :message-received
   (fn [db [_ a b c :as event]]
     (let [[event-workspace-id answer
-           {:keys [status utilization client-turn-id terminal-sync? terminal-trace slash-turn?]
+           {:keys [status utilization client-turn-id terminal-trace slash-turn? local-cancel?]
             :as completion}]
           (if (= 4 (count event)) [a b c] [(current-tab-id db) a b])
 
@@ -7503,7 +7581,7 @@
                (not= "subagent" (get-in target [:session :agent :role])))
 
           skip-identified-completion?
-          (boolean (and client-turn-id (nil? matching-pending-index)))
+          (boolean (or local-cancel? (and client-turn-id (nil? matching-pending-index))))
 
           stale-generation?
           (boolean (and matching-pending-index
@@ -7572,16 +7650,6 @@
                       failed?
                       (= :failed status)
 
-                      ;; Cancelling the local attach worker can synthesize this result before
-                      ;; the HTTP cancel reaches the daemon. Keep the turn gate armed until the
-                      ;; generation-matched :gateway-cancel-result confirms server acceptance;
-                      ;; otherwise an immediate resend is queued behind the still-running turn.
-                      awaiting-gateway-cancel?
-                      (boolean (and (not terminal-sync?)
-                                    cancelled?
-                                    (:cancelling? workspace)
-                                    (:cancelling-at-ms workspace)))
-
                       start
                       (:turn-start-ms workspace)
 
@@ -7608,20 +7676,10 @@
                                 :messages messages'
                                 :utilization utilization
                                 :scroll (scroll/settle (:scroll workspace))
-                                :loading? (or still-pending? awaiting-gateway-cancel?)
-                                :cancelling? awaiting-gateway-cancel?
-                                :cancelling-at-ms (when awaiting-gateway-cancel?
-                                                    (:cancelling-at-ms workspace)))
-                        (and (not still-pending?) (not awaiting-gateway-cancel?))
-                        clear-active-turn-state
-
-                        ;; The cancelled bubble is already painted; only the send gate is
-                        ;; still waiting on the ACK. Stop painting a live turn under it.
-                        (and (not still-pending?) awaiting-gateway-cancel?)
-                        (assoc :progress
-                          nil :turn-start-ms
-                          nil :liveness-probed-at-ms
-                          nil))
+                                :loading? still-pending?
+                                :cancelling? false
+                                :cancelling-at-ms nil)
+                        (not still-pending?) clear-active-turn-state)
 
                       ;; A FAILURE keeps its error bubble (the provider card the user
                       ;; needs to read) AND refills the editor from the snapshot, so
@@ -7639,7 +7697,7 @@
                           (not still-pending?)
                           (dissoc :submitted-input)))]
 
-                  (when (and (or (not (:loading? ws-final)) awaiting-gateway-cancel?)
+                  (when (and (not (:loading? ws-final))
                              (seq (:pending-sends ws-final)))
                     ;; Only success drains. Failure may arrive before queue.paused:
                     ;; leave the backlog visible and the composer free to retry.
@@ -7668,7 +7726,7 @@
           ;; lands. `db-for-tab` is the only reliable read of that session: the ACTIVE
           ;; tab lives at the db root, not in its `:tab-locals` snapshot.
           read-sid
-          (when (= workspace-id (current-tab-id db))
+          (when (and (not local-cancel?) (= workspace-id (current-tab-id db)))
             (some-> (:session (db-for-tab db' workspace-id))
                     :id
                     str))]
@@ -7721,10 +7779,17 @@
           (dispatch event)))
 
 (reg-fx :settle-turn-terminal-later
-        (fn [workspace-id terminal]
-          (vis/worker-future "vis-tui-terminal-result-grace"
-                             #(do (Thread/sleep (long terminal-result-grace-ms))
-                                  (dispatch [:settle-turn-terminal workspace-id terminal])))))
+        (fn [workspace-id sid terminal]
+          (vis/worker-future
+            "vis-tui-terminal-result-grace"
+            #(do (Thread/sleep (long terminal-result-grace-ms))
+                 (when (some (fn [message] (= terminal (:terminal-pending message)))
+                             (:messages (db-for-tab @app-db workspace-id)))
+                   (let [content (when (and sid (:turn-id terminal) (empty? (:content terminal))
+                                            (= :completed (:status terminal)))
+                                   (try (get (vis/gateway-get-turn sid (:turn-id terminal)) "content")
+                                        (catch Exception _ nil)))]
+                     (dispatch [:settle-turn-terminal workspace-id terminal content])))))))
 
 (reg-fx :notify
         (fn [text level ttl-ms]
@@ -7993,6 +8058,7 @@
                             :cost (get result "cost")
                             :confidence (get result "confidence")
                             :session-turn-id (get result "session_turn_id")
+                            :local-cancel? (get result "is_local_cancel")
                             :status (case (get result "status")
                                       "needs_input"
                                       :needs-input
@@ -8048,6 +8114,7 @@
 
                       (dispatch [:message-received workspace-id [block]
                                  {:client-turn-id client-turn-id
+                                  :local-cancel? cancelled?
                                   :status (if cancelled? :cancelled :failed)}])))))))]
       (vis/cancellation-set-future! token fut))))
 
@@ -8123,6 +8190,7 @@
                             :cost (get result "cost")
                             :confidence (get result "confidence")
                             :session-turn-id (get result "session_turn_id")
+                            :local-cancel? (get result "is_local_cancel")
                             :status (case (get result "status")
                                       "needs_input"
                                       :needs-input
@@ -8160,7 +8228,7 @@
                       (dispatch [:message-received workspace-id [block]
                                  (cond-> {:client-turn-id client-turn-id}
                                    cancelled?
-                                   (assoc :status :cancelled))])))))))]
+                                   (assoc :status :cancelled :local-cancel? true))])))))))]
       (vis/cancellation-set-future! token fut))))
 
 ;; ── Gateway queue I/O ──────────────────────────────────────────────────────
@@ -8488,21 +8556,21 @@
         ;; Best-effort server cancel on a dedicated lane. Never run gateway discovery
         ;; or HTTP on the Lanterna input/render thread. The generation-keyed result
         ;; event may release a first cancel early, without touching a newer turn.
-        (fn [sid tid cancel-key owner-key]
+        (fn [sid tid cancel-key owner-key & [tab-id]]
           (when sid
             (gateway-cancel-io! (fn []
                                   (let [result (gateway-cancel-turn-or-current! sid tid owner-key)]
                                     (when cancel-key
-                                      (dispatch [:gateway-cancel-result cancel-key result]))))))))
+                                      (dispatch [:gateway-cancel-result cancel-key result tab-id]))))))))
 
 (defn- probed-turn
   "The gateway row of turn `tid` of `sid`, or nil. One registry read of that turn;
    the full turn list, with content and images, only when the gateway does not
    know `tid` (404). The list then matches the row by its client id."
   [sid tid client-id]
-  (try (or (vis/gateway-get-turn sid tid)
+  (try (or (when tid (vis/gateway-get-turn sid tid))
            (some (fn [t]
-                   (when (or (= (str tid) (str (get t "turn_id")))
+                   (when (or (and tid (= (str tid) (str (get t "turn_id"))))
                              (and client-id (= (str client-id) (str (get t "idempotency_key")))))
                      t))
                  (vis/gateway-list-turns sid)))
@@ -8526,7 +8594,7 @@
         ;; tab is still loading on a MATCHING turn). Anything else — a still-running
         ;; turn, an unreachable daemon — leaves the live view untouched.
         (fn [workspace-id sid tid client-id]
-          (when (and sid tid)
+          (when (and sid (or tid client-id))
             (gateway-queue-io! (fn []
                                  (when-let [row (probed-turn sid tid client-id)]
                                    (let [status (str (get row "status"))]

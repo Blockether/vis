@@ -1556,7 +1556,8 @@
       ;; reconnect replays what it owes), and acting on it was a guess. The frame
       ;; below carries the daemon's actual turn state, which is what the UI acts on.
       "event.elided"
-      {:phase :gateway-elided :turn-id (event-get event :turn-id)}
+      (cond-> {:phase :gateway-elided :turn-id (event-get event :turn-id)}
+         (get event "is_repair") (assoc :is-repair true))
 
       "subscription.ready"
       (cond-> {:phase :gateway-ready
@@ -2088,7 +2089,8 @@
                                                 "type" "notice"
                                                 "code" "turn_cancelled"
                                                 "message" "Cancelled by user."}]
-                                    "status" "cancelled"}
+                                    "status" "cancelled"
+                                    "is_local_cancel" true}
              :else {"error" (or (ex-message e) (str e))})))))
 
 (defn attach!
@@ -2102,7 +2104,8 @@
                                                    "type" "notice"
                                                    "code" "turn_cancelled"
                                                    "message" "Cancelled by user."}]
-                                       "status" "cancelled"}
+                                       "status" "cancelled"
+                                       "is_local_cancel" true}
                 :else {"error" (or (ex-message e) (str e))})))))
 
 (defn dispose!

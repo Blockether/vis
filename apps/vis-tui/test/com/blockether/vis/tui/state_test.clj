@@ -3,6 +3,7 @@
             [com.blockether.vis.tui.chat :as chat]
             [com.blockether.vis.tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.tui.input :as input]
+            [com.blockether.vis.tui.live-view :as lv]
             [com.blockether.vis.tui.render :as render]
             [com.blockether.vis.tui.scroll :as scroll]
             [com.blockether.vis.tui.state :as state]
@@ -1803,143 +1804,63 @@
                      (expect (= ["s1" "gw-turn-1"] (deref cancelled-gateway 1000 :timeout)))))))
 
 (defdescribe cancel-auto-fires-on-late-bind-test
-             ;; REGRESSION: Esc can beat the submit POST, receive `no-running-turn`, and
-             ;; clear locally. An immediate identical resend then races the OLD POST's
-             ;; delayed turn.started. Correlate starts by client id so the old ghost is
-             ;; cancelled, never rebound as the new visible turn.
-             (it
-               "quick cancel plus identical resend cancels only the delayed old start"
-               (let [cancelled-gateway
-                     (promise)
+  (it "cancels the original turn when submit registers after the first cancel"
+      (let [cancelled (promise)
+            task (atom nil)
+            submit-cancel @#'state/gateway-cancel-io!]
+        (with-redefs [vis/cancel! (constantly nil)
+                      state/gateway-cancel-io! #(reset! task (submit-cancel %))
+                      vis/gateway-list-turns (constantly [])
+                      vis/gateway-cancel-current-turn! (fn [_ _]
+                                                        {"accepted" false "reason" "no_running_turn"})
+                      vis/gateway-cancel-turn! (fn [sid tid] (deliver cancelled [sid tid]))]
+          (reset! state/app-db {:session {:id "s1"}
+                                :active-tab-id "s1"
+                                :render-version 0
+                                :loading? true
+                                :cancel-token :old-token
+                                :live-turn-client-id "cid-old"})
+          (state/dispatch [:cancel-turn])
+          (await-enqueue! @task)
+          (flush-queue-io!)
+          (expect (true? (:loading? @state/app-db)))
+          (expect (false? (:cancelling? @state/app-db)))
+          (state/dispatch [:sync-turn-clock nil
+                           {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
+          (expect (= ["s1" "gw-old"] (deref cancelled 1000 :timeout)))
+          (expect (= "gw-old" (:gateway-turn-id @state/app-db)))
+          (expect (nil? (:cancel-awaiting-client-id @state/app-db)))))))
 
-                     cancel-task
-                     (atom nil)
-
-                     submit-cancel
-                     @#'state/gateway-cancel-io!
-
-                     send-message-fn
-                     (:fn (get @@#'state/event-registry :send-message))]
-
-                 (with-redefs [vis/cancel!
-                               (fn [_]
-                                 nil)
-
-                               state/gateway-cancel-io!
-                               (fn [f]
-                                 (reset! cancel-task (submit-cancel f)))
-
-                               vis/gateway-cancel-current-turn!
-                               (fn [_ _]
-                                 {:error :no-running-turn})
-
-                               vis/gateway-cancel-turn!
-                               (fn [sid tid]
-                                 (deliver cancelled-gateway [sid tid])
-                                 {:status "cancelling"})]
-
-                   (reset! state/app-db {:session {:id "s1"}
-                                         :active-tab-id "s1"
-                                         :render-version 0
-                                         :workspace {"root" "."}
-                                         :messages []
-                                         :input-history []
-                                         :pastes {}
-                                         :paste-counter 0
-                                         :loading? true
-                                         :cancel-token :old-token
-                                         :cancelling? false
-                                         :live-turn-client-id "cid-old"
-                                         :gateway-turn-id nil
-                                         :turn-start-ms 10})
-                   ;; Esc won before the old POST registered. The terminal-looking gateway
-                   ;; response clears the visible turn, but its exact identity survives.
-                   (state/dispatch [:cancel-turn])
-                   (await-enqueue! @cancel-task)
-                   (expect (false? (:loading? @state/app-db)))
-                   (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-                   ;; The user immediately sends the exact same text again. The normal send
-                   ;; path must preserve the old marker while assigning a fresh identity.
-                   (let [{resent-db :db}
-                         (send-message-fn @state/app-db [:send-message "same text" nil])
-
-                         new-client-id
-                         (:live-turn-client-id resent-db)]
-
-                     (reset! state/app-db resent-db)
-                     (expect (= "cid-old" (:cancel-awaiting-client-id @state/app-db)))
-                     (expect (not= "cid-old" new-client-id))
-                     ;; The old POST starts late. Cancel that gateway turn, but do not bind
-                     ;; its id or clock onto the new optimistic request.
-                     (state/dispatch [:sync-turn-clock nil
-                                      {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
-                     (expect (= ["s1" "gw-old"] (deref cancelled-gateway 1000 :timeout)))
-                     (expect (nil? (:gateway-turn-id @state/app-db)))
-                     (expect (true? (:loading? @state/app-db)))
-                     (expect (nil? (:cancel-awaiting-client-id @state/app-db)))
-                     ;; Once the queued resend starts, only its matching id may bind.
-                     (state/dispatch
-                       [:sync-turn-clock nil
-                        {:turn-id "gw-new" :client-id new-client-id :started-at-ms 456}])
-                     (expect (= "gw-new" (:gateway-turn-id @state/app-db)))
-                     (expect (= 456 (:turn-start-ms @state/app-db))))))))
-
-(defdescribe
-  cancel-turn-stale-gateway-test
-  (it
-    "clears stale cancelling state when gateway turn is already terminal"
-    (let [cancelled
-          (atom nil)
-
-          cancelled-gateway
-          (atom nil)
-
-          notified
-          (atom nil)
-
-          cancel-task
-          (atom nil)
-
-          submit-cancel
-          @#'state/gateway-cancel-io!]
-
-      (with-redefs [vis/cancel!
-                    (fn [token]
-                      (reset! cancelled token))
-
-                    vis/gateway-cancel-turn!
-                    (fn [sid tid]
-                      (reset! cancelled-gateway [sid tid])
-                      {:error :not-running :status "interrupted"})
-
-                    state/gateway-cancel-io!
-                    (fn [f]
-                      (reset! cancel-task (submit-cancel f)))
-
-                    vis/notify!
-                    (fn [text & kvs]
-                      (reset! notified [text kvs]))]
-
-        (reset! state/app-db {:session {:id "s1"}
-                              :loading? true
-                              :cancel-token :token
-                              :gateway-turn-id "turn-1"
-                              :cancelling? false
-                              :progress {:iterations []}
-                              :turn-start-ms 10
-                              :render-version 0})
-        (state/dispatch [:cancel-turn])
-        (await-enqueue! @cancel-task)
-        (let [db @state/app-db]
+(defdescribe cancel-turn-stale-gateway-test
+  (it "reads the turn record after the gateway refuses to stop an ended turn"
+      (let [cancelled (atom nil)
+            reads (atom [])
+            task (atom nil)
+            submit-cancel @#'state/gateway-cancel-io!]
+        (with-redefs [vis/cancel! #(reset! cancelled %)
+                      state/gateway-cancel-io! #(reset! task (submit-cancel %))
+                      vis/gateway-cancel-turn! (fn [_ _]
+                                                 {"accepted" false "reason" "not_running"
+                                                  "turn_status" "completed"})
+                      vis/gateway-get-turn (fn [sid tid]
+                                             (swap! reads conj [sid tid])
+                                             {"turn_id" tid "status" "completed"})]
+          (reset! state/app-db {:session {:id "s1"}
+                                :active-tab-id :main
+                                :loading? true
+                                :cancel-token :token
+                                :gateway-turn-id "turn-1"
+                                :progress {:iterations []}
+                                :turn-start-ms 10
+                                :render-version 0})
+          (state/dispatch [:cancel-turn])
+          (await-enqueue! @task)
+          (flush-queue-io!)
           (expect (= :token @cancelled))
-          (expect (= ["s1" "turn-1"] @cancelled-gateway))
-          (expect (false? (:loading? db)))
-          (expect (false? (:cancelling? db)))
-          (expect (nil? (:cancel-token db)))
-          (expect (nil? (:gateway-turn-id db)))
-          (expect (nil? (:progress db)))
-          (expect (nil? (:turn-start-ms db)))
-          (expect (nil? @notified)))))))
+          (expect (= [["s1" "turn-1"]] @reads))
+          (expect (false? (:loading? @state/app-db)))
+          (expect (false? (:cancelling? @state/app-db)))
+          (expect (nil? (:gateway-turn-id @state/app-db)))))))
 
 (defdescribe
   cancel-gateway-confirmation-test
@@ -1992,8 +1913,8 @@
 
           local-result
           (message-fn initial-db
-                      [:message-received :main [:ast {} [:p {} [:span {} "Cancelled by user."]]]
-                       {:status :cancelled :client-turn-id pending-id}])
+                      [:message-received :main []
+                       {:status :cancelled :local-cancel? true :client-turn-id pending-id}])
 
           local-db
           (:db local-result)
@@ -2001,27 +1922,10 @@
           ack-result
           (cancel-result-fn local-db [:gateway-cancel-result cancel-key {:status "cancelling"}])]
 
-      (expect (true? (:loading? local-db)))
-      (expect (true? (:cancelling? local-db)))
-      (expect (= cancel-key (:cancelling-at-ms local-db)))
-      ;; ...but ONLY the invisible send gate stays armed. The turn the user was
-      ;; watching is over: no live progress, no elapsed clock ticking on under a
-      ;; transcript that already shows the cancelled turn. Anything else reads as a
-      ;; frozen, mismatched frame.
-      (expect (nil? (:progress local-db)))
-      (expect (nil? (:turn-start-ms local-db)))
-      (expect (nil? (:submitted-input local-db)))
-      ;; Esc keeps the cancelled prompt in the transcript and never refills the editor.
-      (expect (= [:user :assistant] (mapv :role (:messages local-db))))
-      (expect (= :cancelled (get-in local-db [:messages 1 :status])))
-      (expect (input/input-empty? (:input local-db)))
-      ;; The queued backlog returns to the editor now, not one ACK later.
-      ;; A turn settling on the tab in FOCUS is read where it lands, so the
-      ;; gateway never reports this session as new to another surface.
-      (expect (= [[:mark-session-read "s1"] [:dispatch [:restore-pending-to-input :main]]]
-                 (:fx local-result)))
+      (expect (= initial-db local-db))
+      (expect (empty? (:fx local-result)))
       (expect (false? (:loading? (:db ack-result))))
-      (expect (false? (:cancelling? (:db ack-result))))
+      (expect (= :cancelled (get-in (:db ack-result) [:messages 1 :status])))
       (expect (= [[:dispatch [:restore-pending-to-input :main]]] (:fx ack-result))))))
 
 (defdescribe cancel-settles-once-test
@@ -2095,26 +1999,33 @@
                                       [:gateway-cancel-result cancel-key {:status "cancelling"}]))]
                      (expect (= 2 (count (:messages acked))))
                      (expect (= [{:n 1 :blocks [{:kind :tool}]}]
-                                (get-in acked [:messages 1 :terminal-pending :trace])))
+                                (get-in acked [:messages 1 :traces])))
                      (expect (input/input-empty? (:input acked)))
                      (expect (nil? (:submitted-input acked)))))
-               (it "does not retract queued sends when the gateway refuses a late cancel"
-                   (let [queued [{:turn-id "queued-turn" :mine? true :text "next"}]
-                         result ((handler :gateway-cancel-result)
-                                 (assoc (cancelling-db []) :pending-sends queued)
-                                 [:gateway-cancel-result cancel-key
-                                  {"accepted" false "reason" "not_running"}])]
-                     (expect (false? (:cancelling? (:db result))))
-                     (expect (= queued (:pending-sends (:db result))))
+                (it "keeps the queue and the completed reply when the gateway refuses a late cancel"
+                    (let [queued [{:turn-id "queued-turn" :mine? true :text "next"}]
+                          before (assoc (cancelling-db []) :pending-sends queued)
+                          local (:db ((handler :message-received) before
+                                      [:message-received :main [] {:status :cancelled :local-cancel? true :client-turn-id pending-id}]))
+                          result ((handler :gateway-cancel-result) local
+                                  [:gateway-cancel-result cancel-key
+                                   {"accepted" false "reason" "not_running" "turn_status" "completed"}])
+                          refused (:db result)
+                          terminal ((handler :sync-turn-terminal) refused
+                                    [:sync-turn-terminal :main
+                                     {:turn-id "turn-1" :client-id pending-id :status "completed"
+                                      :content [{"type" "prose" "markdown" "Done."}]}])]
+                      (expect (false? (:cancelling? refused)))
+                      (expect (= queued (:pending-sends refused)))
+                      (expect (= [[:probe-turn-liveness :main "s1" "turn-1" pending-id]] (:fx result)))
+                      (expect (get-in refused [:messages 1 :pending?]))
+                      (expect (= "Done." (get-in (:db terminal)
+                                                [:messages 1 :terminal-pending :content 0 "markdown"])))))
+               (it "keeps the turn identity when Esc is pressed again before the answer"
+                   (let [before (cancelling-db [])
+                         result ((handler :cancel-turn) before [:cancel-turn])]
+                     (expect (= before (:db result)))
                      (expect (empty? (:fx result)))))
-               (it "settles the cancelled prompt when the cancel self-heals"
-                   (let [healed (:db ((handler :cancel-self-heal-tick)
-                                       (cancelling-db [])
-                                       [:cancel-self-heal-tick (+ cancel-key 60000)]))]
-                     (expect (input/input-empty? (:input healed)))
-                     (expect (= :cancelled (get-in healed [:messages 1 :status])))
-                     (expect (nil? (:submitted-input healed)))
-                     (expect (false? (:cancelling? healed)))))
                (it "never overwrites a newer draft typed while the cancel settles"
                    (let [typed
                          (assoc (cancelling-db []) :input (#'state/text->input-state "new idea"))
@@ -2223,85 +2134,19 @@
 
           (expect (= "new idea" (input/input->text (:input out))))))))
 
-(defdescribe
-  cancel-self-heal-test
-  ;; REGRESSION (design edge): `:cancel-turn` flips `:cancelling?` and
-  ;; waits for the daemon's terminal `turn.completed` (cancelled) event
-  ;; to release it. If that event NEVER lands — an SSE reconnect gap
-  ;; right at cancel, or the daemon dying mid-unwind — the flag sticks
-  ;; true, every send parks purely local (the enqueue race guard), and
-  ;; input is wedged until the daemon's ~6-minute stall watchdog fires:
-  ;; a freeze, to a human. The render-loop heartbeat pokes
-  ;; `:cancel-self-heal-tick`, which self-heals once the pending flag
-  ;; outlives `cancel-self-heal-timeout-ms` (8s). Pure over an injected
-  ;; `now-ms`, so the dropped-event scenario is deterministic here.
-  (let [heal-fn (-> #'state/event-registry
-                    deref
-                    deref
-                    (get :cancel-self-heal-tick)
-                    :fn)]
-    (it "no-ops while the pending cancel is younger than the timeout"
-        (with-redefs [vis/cancel! (fn [_]
-                                    (throw (ex-info "self-heal must not fire early" {})))]
-          (let [db {:active-tab-id :main
-                    :session {:id "s1"}
-                    :loading? true
-                    :cancel-token :token
-                    :cancelling? true
-                    :cancelling-at-ms 1000}
-                ;; 1s elapsed ≪ 8s timeout
-                {db' :db} (heal-fn db [:cancel-self-heal-tick 2000])]
-
-            (expect (true? (:cancelling? db')))
-            (expect (true? (:loading? db'))))))
-    (it "clears the stuck cancel once it outlives the timeout"
-        (let [cancelled (atom nil)]
-          (with-redefs [vis/cancel! (fn [tok]
-                                      (reset! cancelled tok))]
-            (let [db {:active-tab-id :main
-                      :session {:id "s1"}
-                      :loading? true
-                      :cancel-token :token
-                      :cancelling? true
-                      :progress {:iterations []}
-                      :turn-start-ms 10
-                      :cancelling-at-ms 1000}
-                  ;; 8.5s elapsed > 8s timeout
-                  {db' :db fx :fx} (heal-fn db [:cancel-self-heal-tick 9500])]
-
-              ;; The pure handler schedules the local interrupt before network I/O.
-              (expect (= [:cancel-local-turn :token] (first fx)))
-              ;; Turn state fully cleared → input flows again.
-              (expect (false? (:cancelling? db')))
-              (expect (false? (:loading? db')))
-              (expect (nil? (:cancel-token db')))
-              (expect (nil? (:cancelling-at-ms db')))
-              ;; No notification, and with no authored backlog nothing is restored.
-              (expect (not-any? #(= :notify (first %)) fx))
-              (expect (not-any? #(= :dispatch (first %)) fx))))))
-    (it "restores the authored backlog to the editor when it self-heals"
-        (with-redefs [vis/cancel! (fn [_]
-                                    nil)]
-          (let [db {:active-tab-id :main
-                    :session {:id "s1"}
-                    :loading? true
-                    :cancel-token :token
-                    :cancelling? true
-                    :cancelling-at-ms 0
-                    :pending-sends [{:text "my correction" :client-id "c1" :mine? true}]}
-                {fx :fx} (heal-fn db [:cancel-self-heal-tick 20000])]
-
-            ;; The correction the user typed during the cancel comes back
-            ;; to the editor rather than being silently dropped.
-            (expect (some #{[:dispatch [:restore-pending-to-input :main]]} fx)))))
-    (it "never fires when no cancel is pending, even with a stale timestamp"
-        (with-redefs [vis/cancel! (fn [_]
-                                    (throw (ex-info "self-heal must not fire when idle" {})))]
-          (let [db {:active-tab-id :main :loading? true :cancelling? false :cancelling-at-ms 0}
-                {db' :db} (heal-fn db [:cancel-self-heal-tick 999999])]
-
-            (expect (false? (:cancelling? db')))
-            (expect (true? (:loading? db'))))))))
+(defdescribe cancel-self-heal-test
+  (let [heal (-> #'state/event-registry deref deref (get :cancel-self-heal-tick) :fn)
+        db {:active-tab-id :main :session {:id "s1"} :loading? true
+            :cancelling? true :cancelling-at-ms 1000 :gateway-turn-id "turn-1"
+            :live-turn-client-id "c1" :pending-sends [{:text "my correction" :mine? true}]}]
+    (it "keeps the turn and queue while retrying a stop with no gateway result"
+        (let [result (heal db [:cancel-self-heal-tick 9500])]
+          (expect (= (assoc db :cancelling-at-ms 9500) (:db result)))
+          (expect (= [[:gateway-cancel-active "s1" "turn-1" 9500 "c1" :main]] (:fx result)))))
+    (it "does not retry a recent or settled stop"
+        (expect (= {:db db} (heal db [:cancel-self-heal-tick 2000])))
+        (let [settled (assoc db :cancelling? false)]
+          (expect (= {:db settled} (heal settled [:cancel-self-heal-tick 9500])))))))
 
 (defdescribe session-refresh-reconciles-in-flight-state-test
              (it "clears stale cancelling state when refreshed session is terminal"
@@ -5009,6 +4854,16 @@
         (expect (= :completed (:status assistant)))
         (expect (nil? (:terminal-pending assistant)))
         (expect (false? (:loading? @state/app-db)))))
+  (it "reads the stored reply when a lean terminal event wins the stop race"
+      (let [worker (atom nil)
+            reply [{"type" "prose" "markdown" "The stored answer."}]]
+        (with-redefs [vis/worker-future (fn [_ f] (reset! worker f))
+                      vis/gateway-get-turn (fn [_ _] {"status" "completed" "content" reply})]
+          (reset! state/app-db (terminal-test-db {:cancelling? true :cancelling-at-ms 1000}))
+          (state/dispatch [:message-received "s1" [] {:status :cancelled :local-cancel? true :client-turn-id "c1"}])
+          (state/dispatch [:sync-turn-terminal "s1" {:turn-id "t1" :client-id "c1" :status "completed"}])
+          (@worker)
+          (expect (= reply (get-in @state/app-db [:messages 1 :content]))))))
   (it "replays a gateway-drained sibling start that landed mid-turn"
       ;; The gateway drains the queue ON this turn's terminal: completed ->
       ;; turn.queued.drained (which deletes the mirrored queue row, so
@@ -5500,13 +5355,141 @@
             ended (sync (:db request)
                         [:sync-background-tasks "s1" {:seq 12 :event-type "task.ended"
                                                         :task (assoc other "state" "cancelled")}])]
-        (expect (= [[:gateway-cancel-background-task "s1" "t2" "Watch files"]] (:fx request)))
+        (expect (= [[:gateway-cancel-background-task "s1" "t2" "Watch files" other]] (:fx request)))
         (expect (:cancelling? (state/background-task-dock (:db request))))
         (expect (= ended (sync ended [:sync-background-tasks "s1" {:seq 11 :task other}])))
         (expect (= row (:row (state/background-task-dock ended))))
         (expect (nil? (state/background-task-dock (assoc ended :session {:id "s2"})))))))
 
+(defdescribe session-repair-reconciles-panes-and-queue
+  (it "updates stale panes, retires closed panes and keeps newer changes"
+      (let [view (fn [id seq] {:id id :session-id "s1" :placement :panel :seq seq :nodes []})
+            before {:session {:id "s1"} :active-tab-id :main
+                    :pending-sends [{:turn-id "gone" :text "Old"} {:client-id "local" :unsent? true}]
+                    :live-views (mapv lv/opened [(view "stale" 1) (view "closed" 1) (view "newer" 1)])}
+            current (assoc-in before [:live-views 2 :view :seq] 4)
+            queue {"turns" [{"turn_id" "queued" "request" "New"}] "queue_paused" nil}]
+        (with-redefs [state/app-db (atom current)]
+          (state/dispatch [:repair-session-mirrors :main "s1" before
+                           [(view "stale" 3) (view "newer" 2)] queue])
+          (expect (= {"stale" 3 "newer" 4}
+                     (into {} (map (fn [pane] [(lv/view-id pane) (get-in pane [:view :seq])]))
+                           (:live-views @state/app-db))))
+          (expect (= #{"queued" "local"}
+                     (set (map #(or (:turn-id %) (:client-id %)) (:pending-sends @state/app-db)))))
+          (state/dispatch [:sync-queued-turn :main {:op :update :turn-id "queued" :text "Newer"}])
+          (state/dispatch [:repair-session-mirrors :main "s1" before [] queue])
+          (expect (= "Newer" (some #(when (= "queued" (:turn-id %)) (:text %))
+                                  (:pending-sends @state/app-db))))))))
+
+(defdescribe background-task-cancel-refusal-test
+  (it "removes a finished task without warning and preserves newer task events"
+      (let [events @@#'state/event-registry
+            sync (:fn (:sync-background-tasks events))
+            reply (:fn (:background-task-cancel-reply events))
+            row {"id" "t1" "session_id" "s1" "name" "Watch" "state" "running"}
+            ready (-> (sync {:session {:id "s1"}}
+                            [:sync-background-tasks "s1" {:tasks [row] :task-seq 10}])
+                      (assoc-in [:background-tasks "s1" :pending] #{"t1"}))
+            refused [:background-task-cancel-reply "s1" "t1" "Watch"
+                     {:outcome :refused :row nil :before row}]
+            ended (reply ready refused)
+            newer (sync ready [:sync-background-tasks "s1" {:seq 11 :task (assoc row "cancel_reason" "person")}])]
+        (expect (empty? (:fx ended)))
+        (expect (nil? (state/background-task-dock (:db ended))))
+        (expect (= "person" (get-in (state/background-task-dock (:db (reply newer refused)))
+                                    [:row "cancel_reason"]))))))
+
+(defdescribe retry-refused-stop-read-test
+  (it "reads again by client id after a transient failure even on a busy stream"
+      (let [reads (atom 0)
+            text [{"type" "prose" "markdown" "The stored reply."}]]
+        (reset! state/app-db (terminal-test-db {:gateway-turn-id nil :cancelling? true :cancelling-at-ms 10}))
+        (with-gateway-stubs []
+          #(with-redefs [vis/session-stream-seen-ms (constantly (System/currentTimeMillis))
+                         vis/gateway-list-turns (fn [_]
+                                                 (if (= 1 (swap! reads inc))
+                                                   (throw (ex-info "Temporary failure" {}))
+                                                   [{"turn_id" "t1" "idempotency_key" "c1"
+                                                     "status" "completed" "content" text}]))]
+             (state/dispatch [:gateway-cancel-result 10 {"accepted" false "reason" "no_running_turn"} "s1"])
+             (expect (:loading? @state/app-db))
+             (state/dispatch [:turn-liveness-tick (+ (System/currentTimeMillis) 6000)])
+             (expect (= 2 @reads))
+             (expect (= text (get-in @state/app-db [:messages 1 :terminal-pending :content]))))))))
+
+(defdescribe refusal-http-response-test
+  (it "does not show a cancellation or move the queue on a canonical HTTP error"
+      (let [pending [{:turn-id "queued" :mine? true}]
+            db (terminal-test-db {:cancelling? true :cancelling-at-ms 10 :pending-sends pending})
+            cancel-result (:fn (:gateway-cancel-result @@#'state/event-registry))]
+        (with-redefs [vis/gateway-cancel-turn! (fn [& _]
+                                               (#'vis/checked-json
+                                                 {:status 404 :body "{\"error\":{\"type\":\"turn-not-found\",\"message\":\"Unknown turn.\"}}"}))]
+          (let [reply (#'state/gateway-cancel-turn-or-current! "s1" "t1" "c1")
+                {:keys [db fx]} (cancel-result db [:gateway-cancel-result 10 reply "s1"])]
+            (expect (= :turn-not-found (:error reply)))
+            (expect (= pending (:pending-sends db)))
+            (expect (get-in db [:messages 1 :pending?]))
+            (expect (= :probe-turn-liveness (ffirst fx))))))))
+
+(defdescribe repair-cannot-resurrect-deleted-rows-test
+  (it "does not remount a panel opened and closed during the view read"
+      (let [handlers @@#'state/event-registry
+            open (:fn (:live-view-open handlers))
+            close (:fn (:live-view-close handlers))
+            repair (:fn (:repair-session-mirrors handlers))
+            db {:session {:id "s1"} :active-tab-id :main :live-views []}
+            before (state/repair-baseline db :main)
+            pane {:id "pane" :session-id "s1" :placement :panel :seq 1 :nodes []}
+            opened (open db [:live-view-open pane])
+            closed (close opened [:live-view-close "pane" nil])
+            result (repair closed [:repair-session-mirrors :main "s1" before [pane] {"turns" []}])]
+        (expect (= 1 (count (:live-views opened))))
+        (expect (empty? (:live-views result)))))
+  (it "does not restore a row queued and removed during the queue read"
+      (let [handlers @@#'state/event-registry
+            sync (:fn (:sync-queued-turn handlers))
+            repair (:fn (:repair-session-mirrors handlers))
+            db {:session {:id "s1"} :active-tab-id :main :pending-sends []}
+            before (state/repair-baseline db :main)
+            queued {:turn-id "new" :client-id "other" :text "Question"}
+            added (:db (sync db [:sync-queued-turn :main (assoc queued :op :add)]))
+            removed (:db (sync added [:sync-queued-turn :main (assoc queued :op :delete)]))
+            result (repair removed [:repair-session-mirrors :main "s1" before []
+                                     {"turns" [{"turn_id" "new" "idempotency_key" "other" "request" "Question"}]}])]
+        (expect (empty? (:pending-sends result)))))
+  (it "does not restore a Task ended during repair but permits a restart reset"
+      (let [sync (:fn (:sync-background-tasks @@#'state/event-registry))
+            db {:session {:id "s1"} :active-tab-id :main}
+            row {"id" "t1" "session_id" "s1" "name" "Watch" "state" "running"}
+            before (sync db [:sync-background-tasks "s1" {:tasks [row] :task-seq 10}])
+            ended (sync before [:sync-background-tasks "s1" {:seq 11 :event-type "task.ended"
+                                                              :task (assoc row "state" "completed")}])
+            result (sync ended [:sync-background-tasks "s1" {:tasks [row] :task-seq 10}
+                                (get-in before [:background-tasks "s1"])])
+            reset (sync ended [:sync-background-tasks "s1" {:tasks [row] :task-seq 2}
+                               (get-in ended [:background-tasks "s1"])])]
+        (expect (nil? (state/background-task-dock result)))
+        (expect (= row (:row (state/background-task-dock reset)))))))
+
 (defdescribe sync-gateway-ready-test
+             (it "keeps repaired text while the raw tracker catches up"
+                 (let [trace #(vector {:position 0 :assistant-prose %})
+                       repaired (trace "hello world!")]
+                   (reset! state/app-db (terminal-test-db
+                                         {:progress {:iterations repaired :repaired-iterations repaired
+                                                     :repair-baseline (trace "hello ")}}))
+                   (state/dispatch [:set-progress-iterations (trace "hello world")])
+                   (expect (= repaired (get-in @state/app-db [:progress :iterations])))
+                   (state/dispatch [:set-progress-iterations (trace "hello world! More")])
+                   (expect (= (trace "hello world! More") (get-in @state/app-db [:progress :iterations])))))
+             (it "keeps the painted suffix when the snapshot contains only its prefix"
+                 (let [painted [{:position 0 :assistant-prose "hello world!"}]]
+                   (reset! state/app-db (terminal-test-db {:progress {:iterations painted}}))
+                   (with-redefs [vis/gateway-turn-trace (constantly [{"position" 1 "assistant_prose" "hello "}])]
+                     (gateway-ready! (assoc (ready-chunk "t1") :is-repair true) [] 100))
+                   (expect (= ["hello world!"] (mapv :assistant-prose (get-in @state/app-db [:progress :iterations]))))))
              (it "repairs a still-running trace without losing newer tracker updates"
                  (let [before [{:position 1 :assistant-prose "before"}]
                        during [{:position 1 :assistant-prose "newer"}]

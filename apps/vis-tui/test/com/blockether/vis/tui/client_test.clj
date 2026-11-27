@@ -1057,6 +1057,47 @@
             (expect (= [:closed] ((rv 'read-sse-stream!) "s" 0 "q1" nil (atom 0))))
             (expect (= 1 @looked-up)))))))
 
+(defn- sse-body
+  [events]
+  (let [body (apply str (map #(str "data: " (wire/json-str %) "\n\n") events))]
+    (java.io.ByteArrayInputStream. (.getBytes ^String body "UTF-8"))))
+
+(defdescribe speech-elision-recovers-the-job
+  (it "reads the full job before checking whether it completed"
+      (doseq [[direction kind] [[:transcribe "voice"] [:synthesize "speech"]]]
+        (let [path (str "/v1/sessions/s/" kind "/jobs/job")
+              job {"id" "job" "is_done" true "text" "Recovered"}
+              progress (atom [])]
+          (with-redefs [client/request! (fn [_ resource & _]
+                                          (cond (= resource (str path "/events"))
+                                                {:status 200 :body (sse-body [{"id" "job" "is_elided" true}])}
+                                                (= resource path)
+                                                {:status 200 :body (wire/json-str job)}))]
+            (expect (= job (#'client/await-speech-job! "s" direction "job" #(swap! progress conj %))))
+            (expect (= [job] @progress)))))))
+
+(defdescribe blocking-stream-recovers-cursor-rewinds
+  (it "reconnects after the new cursor and reports the gap"
+      (doseq [reset [{"type" "event.elided" "reason" "replay_unavailable" "cursor" 5}
+                     {"type" "subscription.ready" "current_turn_id" "t" "cursor" 5}]]
+        (let [cursors (atom [])
+              seen (atom [])
+              end {"type" "turn.completed" "turn_id" "t" "seq" 7}]
+          (with-redefs-fn {#'client/sse-response!
+                           (fn [_ cursor]
+                             (swap! cursors conj cursor)
+                             {:status 200
+                              :body (sse-body (if (= 1 (count @cursors))
+                                                [reset {"type" "block.output" "turn_id" "t" "seq" 6}]
+                                                [end]))})
+                           #'client/sse-reconnect-backoff-ms 0
+                           #'client/get-turn (constantly nil)}
+            (fn []
+              (expect (= end (#'client/read-events-until! "s" 40 "t" #(swap! seen conj %))))
+              (expect (= [40 6] @cursors))
+              (expect (or (= "event.elided" (get (first @seen) "type"))
+                          (true? (get (first @seen) "is_repair"))))))))))
+
 (defdescribe compact-activity-frames-arrive-whole
              (it "rebuilds the shared stream fixture frames into whole events"
                  (let [{:strs [events frames]}

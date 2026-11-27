@@ -748,7 +748,7 @@
       (state/dispatch [:human-input-close (:view-id event)])
 
       :live
-      (state/dispatch [:live-view-close (:view-id event) (:result event)])
+      (state/dispatch [:live-view-close (:view-id event) (:result event) (:session-id event)])
 
       nil)
 
@@ -1310,18 +1310,19 @@
       (state/dispatch [:live-view-note (lv/view-id pane) next-pane])
       (when (= :stop action) (interrupt-front-live-view! db note)))))
 
+(defn- pending-input-forms
+  [sid]
+  (into [] (comp (keep hi/request<-wire) (map hi/init-form)) (vis/gateway-input-views sid)))
+
 (defn- read-human-input!
   "Read the pending forms of `session-id`. Stream events can arrive during the read."
   [session-id]
   (let [token (Object.)]
     (state/dispatch [:human-input-read session-id token])
     (vis/worker-future "tui-human-input-read"
-                       (fn []
-                         (let [forms (try (into []
-                                                (comp (keep hi/request<-wire) (map hi/init-form))
-                                                (vis/gateway-input-views session-id))
-                                          (catch Exception _ nil))]
-                           (state/dispatch [:human-input-read-result session-id token forms]))))))
+                       #(state/dispatch [:human-input-read-result session-id token
+                                         (try (pending-input-forms session-id)
+                                              (catch Exception _ nil))]))))
 
 (defn- replay-live-views!
   "Mount every live view `session-id` is SHOWING right now, oldest first.
@@ -7154,6 +7155,59 @@
       (doseq [cleanup cleanups]
         (cleanup)))))
 
+(defn- repair-session!
+  [pending generation sid tab-id]
+  (let [owns? #(and (identical? generation @pending)
+                    (= tab-id (state/tab-id-for-session @state/app-db sid)))
+        tasks-before (get-in @state/app-db [:background-tasks (str sid)])
+        ready (some-> (vis/session-events-snapshot sid) chat/gateway-event->chunk)
+        page (chat/history-page sid {:limit chat/resume-tail-turns})]
+    (when (and ready (not (:failed page)))
+      (let [before (state/repair-baseline @state/app-db tab-id)
+            views (into [] (keep hi/live-view<-wire) (vis/gateway-live-views sid))
+            queue (vis/queued-turns sid)
+            token (Object.)
+            read-input? (locking pending
+                          (when (owns?)
+                            (state/dispatch [:human-input-read sid token])
+                            true))]
+        (when read-input?
+          (let [forms (pending-input-forms sid)]
+            (locking pending
+              (when (owns?)
+                (state/dispatch [:repair-transcript tab-id sid (:messages page)])
+                (state/dispatch [:repair-session-mirrors tab-id sid before views queue])
+                (state/dispatch [:sync-background-tasks sid ready tasks-before])
+                (agent-team/stream-ready! sid (:agents ready) (:team-clocks ready))
+                (state/dispatch [:sync-agent-name tab-id ready])
+                (state/dispatch [:sync-gateway-ready tab-id (assoc ready :is-repair true)])
+                (state/dispatch [:human-input-read-result sid token forms])
+                (vis/refresh-session-model! sid)
+                (let [after (state/repair-baseline @state/app-db tab-id)]
+                  (= (select-keys before [:pane-close-revision :queue-delete-revision])
+                     (select-keys after [:pane-close-revision :queue-delete-revision])))))))))))
+
+(defn- wait-repair-retry!
+  []
+  (Thread/sleep 500))
+
+(defn- run-session-repair!
+  [pending sid]
+  (loop []
+    (let [token @pending]
+      (when (and token (not= :closed token))
+        (if-let [tab-id (state/tab-id-for-session @state/app-db sid)]
+          (if (try (repair-session! pending token sid tab-id)
+                   (catch Exception e
+                     (tel/log! {:level :debug :id ::session-repair-failed :error e
+                                :msg "Session repair read failed"})
+                     false))
+            (when-not (compare-and-set! pending token nil) (recur))
+            (when-not (= :closed @pending)
+              (wait-repair-retry!)
+              (recur)))
+          (when-not (compare-and-set! pending token nil) (recur)))))))
+
 (defn- subscribe-session-live!
   "Per-OPEN-session live subscription bundle. Returns a zero-arg cleanup fn.
 
@@ -7189,6 +7243,19 @@
                                          (fn [pending?]
                                            (when (= session-id (current-session-id))
                                              (state/dispatch [:title-loading (boolean pending?)]))))
+
+        pending (atom nil)
+        repair! (fn [chunk]
+                  (let [token (Object.)
+                        previous (locking pending
+                                   (let [previous @pending]
+                                     (when-not (= :closed previous)
+                                       (reset! pending token)
+                                       (when (:is-repair chunk)
+                                         (state/dispatch [:sync-background-tasks session-id chunk])))
+                                     previous))]
+                    (when (nil? previous)
+                      (vis/worker-future "tui-session-repair" (fn [] (run-session-repair! pending session-id))))))
 
         events-cleanup
         (try
@@ -7325,37 +7392,24 @@
                   :live-view-close
                   (when-let [view-id (:view-id chunk)]
                     (state/dispatch [:live-view-close view-id
-                                     (hi/live-result<-wire (:result chunk))]))
+                                     (hi/live-result<-wire (:result chunk)) session-id]))
 
                   ;; The server's `subscription.ready` verdict: it names the turn the
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
-                  :gateway-elided
-                  (do (read-human-input! session-id)
-                      (read-app-states! session-id)
-                      (replay-live-views! session-id)
-                      (vis/refresh-session-model! session-id)
-                      (when-let [ready (vis/session-events-snapshot session-id)]
-                        (let [chunk (chat/gateway-event->chunk ready)]
-                          (state/dispatch [:sync-background-tasks session-id chunk])
-                          (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
-                          (state/dispatch [:sync-agent-name tab-id chunk])
-                          (state/dispatch [:sync-gateway-ready tab-id (assoc chunk :is-repair true)])))
-                      (let [page (chat/history-page session-id {:limit chat/resume-tail-turns})]
-                        (when-not (:failed page)
-                          (state/dispatch [:repair-transcript tab-id session-id (:messages page)]))))
+                   :gateway-elided
+                   (repair! chunk)
 
-                  :gateway-ready
-                  (do (state/dispatch [:sync-background-tasks session-id chunk])
-                      (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
-                      ;; A reconnect can hide a model change; read the pref again.
-                      (vis/refresh-session-model! session-id)
-                      ;; Read pending forms even when the replay misses an open or a close.
-                      (read-human-input! session-id)
-                      ;; It can hide a change of an app too: no `view.patch` comes again.
-                      (read-app-states! session-id)
-                      (state/dispatch [:sync-agent-name tab-id chunk])
-                      (state/dispatch [:sync-gateway-ready tab-id chunk]))
+                   :gateway-ready
+                   (if (:is-repair chunk)
+                     (repair! chunk)
+                     (do (state/dispatch [:sync-background-tasks session-id chunk])
+                         (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
+                         (vis/refresh-session-model! session-id)
+                         (read-human-input! session-id)
+                         (read-app-states! session-id)
+                         (state/dispatch [:sync-agent-name tab-id chunk])
+                         (state/dispatch [:sync-gateway-ready tab-id chunk])))
 
                   nil))))
           (catch Throwable _
@@ -7369,7 +7423,8 @@
         (vis/refresh-session-model! session-id)
 
         cleanup
-        #(do (vis/remove-title-listener! session-id listener)
+        #(do (locking pending (reset! pending :closed))
+             (vis/remove-title-listener! session-id listener)
              (vis/remove-title-pending-listener! session-id pending-listener)
              (events-cleanup))]
 

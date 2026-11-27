@@ -133,16 +133,12 @@
 
                 (when-not follow? (expect (number? row-before)))
                 (if (= :cancel-ack source)
-                  (do
-                    ;; Cancel ACK parks only :trace, without the terminal event's :status.
-                    (swap! state/app-db assoc :cancelling? true :cancelling-at-ms 1000)
-                    (state/dispatch [:gateway-cancel-result 1000 {:status "cancelling"}])
-                    (expect (nil? (get-in @state/app-db [:messages 1 :terminal-pending :status]))))
-                  (#'state-test/sync-terminal-without-timer! {:turn-id "t1" :status (name status)}))
+                  (do (swap! state/app-db assoc :cancelling? true :cancelling-at-ms 1000)
+                      (state/dispatch [:gateway-cancel-result 1000 {"status" "cancelling"}])
+                      (expect (= 12 (count (get-in @state/app-db [:messages 1 :traces])))))
+                  (do (#'state-test/sync-terminal-without-timer! {:turn-id "t1" :status (name status)})
+                      (expect (= 12 (count (get-in @state/app-db [:messages 1 :terminal-pending :trace]))))))
                 (expect (false? (:loading? @state/app-db)))
-                (expect (nil? (get-in @state/app-db [:messages 1 :traces])))
-                (expect (= 12
-                           (count (get-in @state/app-db [:messages 1 :terminal-pending :trace]))))
                 (let [pending (paint! ts)
                       pending-again (paint! ts)]
 
@@ -156,9 +152,7 @@
                     (do (expect (= row-before (painted-row ts checkpoint)))
                         (expect (= code-row-before (painted-row ts "CODE")))
                         (expect (= (:eff-scroll before) (:eff-scroll pending)))))
-                  (if (= :cancel-ack source)
-                    (state/dispatch [:message-received nil ""
-                                     {:client-turn-id "c1" :status :cancelled}])
+                  (when-not (= :cancel-ack source)
                     (#'state-test/settle-marked-terminal!))
                   (expect (false? (boolean (get-in @state/app-db [:messages 1 :pending?]))))
                   (let [settled (paint! ts)

@@ -44,6 +44,147 @@
            [java.io ByteArrayInputStream ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]))
 
+(defdescribe stream-repair-retries-a-failed-snapshot
+  (it "reads the snapshot again without another SSE frame"
+      (let [reads (atom 0)
+            retries (atom 0)
+            events (atom [])
+            sink (atom nil)
+            workers (atom [])
+            failures (atom [])
+            repair @#'screen/repair-session!]
+        (with-redefs [state/app-db (atom {:session {:id "s1"} :active-tab-id :main})
+                      state/tab-id-for-session (constantly :main)
+                      state/dispatch #(swap! events conj %)
+                      agent-team/stream-ready! (constantly nil)
+                      vis/add-title-listener! (constantly nil)
+                      vis/add-title-pending-listener! (constantly nil)
+                      vis/remove-title-listener! (constantly nil)
+                      vis/remove-title-pending-listener! (constantly nil)
+                      chat/subscribe-session-events! (fn [_ f] (reset! sink f) (fn []))
+                      vis/worker-future (fn [_ f] (swap! workers conj f))
+                      vis/refresh-session-model! (constantly nil)
+                      vis/gateway-input-views (constantly [])
+                      vis/gateway-live-views (constantly [])
+                      vis/queued-turns (constantly {"turns" []})
+                      vis/session-events-snapshot (fn [_]
+                                                    (if (= 1 (swap! reads inc))
+                                                      (throw (ex-info "Temporary failure" {}))
+                                                      {"type" "subscription.ready" "is_live" false}))
+                      chat/history-page (constantly {:messages [{:session-turn-id "t1"}]})]
+          (with-redefs-fn {#'screen/repair-session! (fn [& args]
+                                                      (try (apply repair args)
+                                                           (catch Exception e
+                                                             (swap! failures conj (ex-message e))
+                                                             (throw e))))
+                           #'screen/wait-repair-retry! #(when (> (swap! retries inc) 1)
+                                                        (throw (ex-info (str "Repair did not finish: " @failures) {})))}
+            (fn []
+              (let [stop (#'screen/subscribe-session-live! "s1")]
+                (try
+                  (@sink {:phase :gateway-elided})
+                  (doseq [run @workers] (run))
+                  (expect (= 2 @reads))
+                  (expect (some #(= :repair-transcript (first %)) @events))
+                  (finally (stop))))))))))
+
+(defdescribe stream-repair-closes-during-read
+  (it "does not publish the snapshot after subscription cleanup"
+      (let [sink (atom nil) workers (atom {}) stop (atom nil) events (atom [])]
+        (with-redefs [state/app-db (atom {:active-tab-id :main :session {:id "s1"}})
+                      state/dispatch #(swap! events conj (first %))
+                      vis/add-title-listener! (constantly nil)
+                      vis/add-title-pending-listener! (constantly nil)
+                      vis/remove-title-listener! (constantly nil)
+                      vis/remove-title-pending-listener! (constantly nil)
+                      chat/subscribe-session-events! (fn [_ f] (reset! sink f) #(swap! events conj :closed))
+                      vis/worker-future (fn [name work] (swap! workers assoc name work))
+                      vis/session-events-snapshot (constantly {"type" "subscription.ready" "is_live" false})
+                      chat/history-page (constantly {:messages [{:session-turn-id "t1"}]})
+                      vis/gateway-live-views (constantly [])
+                      vis/queued-turns (constantly {"turns" []})
+                      vis/gateway-input-views (fn [_] (@stop) [])
+                      agent-team/stream-ready! (constantly nil)
+                      vis/refresh-session-model! (constantly nil)]
+          (reset! stop (#'screen/subscribe-session-live! "s1"))
+          (@sink {:phase :gateway-elided})
+          ((get @workers "tui-session-repair"))
+          (expect (= [:human-input-read :closed] @events))))))
+
+(defdescribe stream-repair-does-not-remount-a-closed-panel
+  (it "retries a stale view read after a close without a local open"
+      (let [sink (atom nil)
+            workers (atom {})
+            reads (atom 0)
+            visible-on-retry (atom nil)
+            panel {"id" "missed-open" "session_id" "s1" "placement" "panel" "seq" 1 "nodes" []}]
+        (with-redefs [state/app-db (atom {:active-tab-id :main :session {:id "s1"}})
+                      vis/add-title-listener! (constantly nil)
+                      vis/add-title-pending-listener! (constantly nil)
+                      vis/remove-title-listener! (constantly nil)
+                      vis/remove-title-pending-listener! (constantly nil)
+                      chat/subscribe-session-events! (fn [_ f] (reset! sink f) (fn []))
+                      vis/worker-future (fn [name work] (swap! workers assoc name work))
+                      vis/session-events-snapshot (constantly {"type" "subscription.ready" "is_live" false})
+                      chat/history-page (constantly {:messages []})
+                      vis/gateway-live-views (fn [_]
+                                               (if (= 1 (swap! reads inc))
+                                                 (do (@sink {:phase :live-view-close :view-id "missed-open"})
+                                                     [panel])
+                                                 []))
+                      vis/queued-turns (constantly {"turns" []})
+                      vis/gateway-input-views (constantly [])
+                      agent-team/stream-ready! (constantly nil)
+                      vis/refresh-session-model! (constantly nil)]
+          (with-redefs-fn {#'screen/wait-repair-retry!
+                           #(reset! visible-on-retry (mapv lv/view-id (:live-views @state/app-db)))}
+            (fn []
+              (let [stop (#'screen/subscribe-session-live! "s1")]
+                (try
+                  (@sink {:phase :gateway-elided})
+                  ((get @workers "tui-session-repair"))
+                  (expect (empty? (:live-views @state/app-db)))
+                  (expect (= [] @visible-on-retry))
+                  (expect (= 2 @reads))
+                  (finally (stop))))))))))
+
+(defdescribe rewind-repairs-tasks-before-async-reads
+  (it "does not discard a new-epoch terminal Task event behind an old watermark"
+      (doseq [elided? [false true]]
+        (let [sink (atom nil)
+              workers (atom {})
+              task {"id" "job" "session_id" "s1" "name" "Watch" "state" "running"}
+              other (assoc task "id" "other")
+               ready (if elided?
+                       {:phase :gateway-elided :is-repair true}
+                       {:phase :gateway-ready :is-repair true :tasks [task other] :task-seq 5})]
+          (with-redefs [state/app-db (atom {:active-tab-id :main :session {:id "s1"}})
+                        vis/add-title-listener! (constantly nil)
+                        vis/add-title-pending-listener! (constantly nil)
+                        vis/remove-title-listener! (constantly nil)
+                        vis/remove-title-pending-listener! (constantly nil)
+                        chat/subscribe-session-events! (fn [_ f] (reset! sink f) (fn []))
+                        vis/worker-future (fn [name work] (swap! workers assoc name work))
+                        vis/session-events-snapshot (fn [_]
+                                                      (@sink {:phase :task-sync :seq 6 :event-type "task.ended"
+                                                              :task (assoc task "state" "completed")})
+                                                      {"type" "subscription.ready" "is_live" false
+                                                       "tasks" [task other] "tasks_seq" 5})
+                        chat/history-page (constantly {:messages []})
+                        vis/gateway-live-views (constantly [])
+                        vis/queued-turns (constantly {"turns" []})
+                        vis/gateway-input-views (constantly [])
+                        agent-team/stream-ready! (constantly nil)
+                        vis/refresh-session-model! (constantly nil)]
+            (state/dispatch [:sync-background-tasks "s1" {:tasks [] :task-seq 100}])
+            (let [stop (#'screen/subscribe-session-live! "s1")]
+              (try
+                (@sink ready)
+                ((get @workers "tui-session-repair"))
+                (expect (= ["other"] (mapv #(get % "id") (get-in @state/app-db [:background-tasks "s1" :rows]))))
+                (expect (= 6 (get-in @state/app-db [:background-tasks "s1" :seq])))
+                (finally (stop)))))))))
+
 (defdescribe remaining-messages-jump-test
              (it
                "counts bubbles whose end still sits below the viewport, including a partial bubble"

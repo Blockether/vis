@@ -1034,6 +1034,11 @@
        (catch clojure.lang.ExceptionInfo e
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
+(defn queued-turns
+  "Read the current queue and its pause state without loading turn history."
+  [sid]
+  (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns?status=queued")))
+
 (defn list-turns [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/turns")) "turns"))
 
 (defn transcript
@@ -2111,11 +2116,22 @@
                       {:http-status (:status response) :body body})))
     body))
 
-(defn cancel-task!
-  "Request a stop of one Task. Return true if the gateway accepted it."
+(defn- task-path
   [sid id]
-  (true? (get (parsed-response! (request! :post (str "/v1/sessions/" (enc sid) "/tasks/" (enc id) "/cancel")))
-              "requested")))
+  (str "/v1/sessions/" (enc sid) "/tasks/" (enc id)))
+
+(defn cancel-task!
+  "Return the gateway's acceptance or refusal for a Task stop."
+  [sid id]
+  (parsed-response! (request! :post (str (task-path sid id) "/cancel"))))
+
+(defn get-task
+  "Read one Task row, or return nil when it no longer exists."
+  [sid id]
+  (try (get (parsed-response! (request! :get (task-path sid id))) "task")
+       (catch clojure.lang.ExceptionInfo e
+         (when-not (= "task-not-found" (get-in (ex-data e) [:body "error" "type"]))
+           (throw e)))))
 
 (def ^:private session-export-timeout-ms
   "A whole session arrives as ONE body. The page-sized read timeout would stop the
@@ -2221,8 +2237,11 @@
     (with-open [^InputStream in (:body response)]
       (let [job (read-sse-frames! in
                                   (fn [event]
-                                    (when on-progress (on-progress event))
-                                    (when (true? (get event "is_done")) event))
+                                    (let [job (if (true? (get event "is_elided"))
+                                                (parsed-response! (request! :get (speech-job-path sid direction job-id "")))
+                                                event)]
+                                      (when on-progress (on-progress job))
+                                      (when (true? (get job "is_done")) job)))
                                   nil)]
         (when-not (map? job)
           (throw (ex-info "speech job stream closed before completion"
@@ -2303,6 +2322,23 @@
   [sid]
   (get @stream-seen* (str sid)))
 
+(defn- advance-session-cursor!
+  "Apply an explicit reset and mark a frame that rewinds the cursor."
+  [cursor* event]
+  (let [type (get event "type")
+        ready? (= "subscription.ready" type)
+        elided? (= "event.elided" type)
+        reset? (or ready?
+                   (and elided? (or (= "subscription.ready" (get event "event_type"))
+                                    (= "replay_unavailable" (get event "reason")))))
+        cursor (get event "cursor")]
+    (if (and reset? (number? cursor))
+      (let [[before after] (reset-vals! cursor* (long cursor))]
+        (cond-> event (< (long after) (long before)) (assoc "is_repair" true)))
+      (do (when-let [seq (get event "seq")]
+            (swap! cursor* max (long seq)))
+          event))))
+
 (defn- open-sse-events!
   "Open ONE SSE connection for `sid` from `cursor` and read it with
    [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
@@ -2318,9 +2354,7 @@
       (read-sse-frames! in
                         (fn [event]
                           (note-stream-seen! sid)
-                          (when-let [s (get event "seq")]
-                            (swap! cursor* max (long s)))
-                          (handle event))
+                          (handle (advance-session-cursor! cursor* event)))
                         nil))))
 
 (defn- mux-sids-param
@@ -2332,33 +2366,6 @@
        (map (fn [[sid {:keys [cursor-atom]}]]
               (str sid ":" (long @cursor-atom))))
        (str/join ",")))
-
-(defn- mux-advance-cursor!
-  "Move one session's replay cursor after a frame was delivered.
-
-   An ordinary event advances it to the highest `\"seq\"` seen, so a reconnect
-   resumes exactly where this client stopped. `subscription.ready` is different:
-   it echoes the cursor the daemon ACTUALLY resumed from (server.clj's
-   `resolve-sse-cursor` / `sse-ready!`), and it OVERRIDES the running max rather
-   than joining it.
-
-   Without that override a RESTARTED daemon is unrecoverable for this client.
-   The gateway's counter is per-process, so a restart renumbers BELOW what we
-   already saw; every reconnect then asks for a cursor above that session's
-   high-water, the server clamps it to the running turn (or to live-only), and
-   the session replays nothing but a tail — for good, since a monotonic max
-   never comes back down. The symptom is a connected, heartbeating stream that
-   silently never delivers the `turn.completed` the TUI is waiting for. The echo
-   is the documented heal; the companion client already honours it (gateway.ts)."
-  [cursor-atom event]
-  (if (or (= "subscription.ready" (get event "type"))
-          (and (= "event.elided" (get event "type"))
-               (= "subscription.ready" (get event "event_type"))))
-    (let [cursor (get event "cursor")]
-      (when (number? cursor) (reset! cursor-atom (long cursor))))
-    (when-let [s (get event "seq")]
-      (swap! cursor-atom max (long s))))
-  nil)
 
 (defn- mux-broadcast!
   "Deliver a synthetic connection event to EVERY live sink (shared stream =
@@ -2405,9 +2412,9 @@
 
                             (when (seq sinks)
                               (note-stream-seen! esid)
-                              (mux-advance-cursor! cursor-atom event)
-                              (doseq [[_ sink] sinks]
-                                (try (sink event) (catch Throwable _ nil)))))
+                              (let [event (advance-session-cursor! cursor-atom event)]
+                                (doseq [[_ sink] sinks]
+                                  (try (sink event) (catch Throwable _ nil))))))
                           nil)
                         (fn []
                           (when (not= my-epoch (:epoch @mux)) [:epoch-changed]))))))
@@ -2633,10 +2640,12 @@
                                  [:terminal settled])))
 
                          (= "subscription.ready" (get event "type"))
-                         (when-not (= (str (get event "current_turn_id")) (str wanted-turn-id))
-                           (when-let [settled (gateway-contract/settled-turn-event
-                                                (get-turn sid wanted-turn-id) wanted-turn-id)]
-                             [:terminal settled]))
+                         (do (when (and on-event (get event "is_repair")) (on-event event))
+                             (when (or (get event "is_repair")
+                                       (not= (str (get event "current_turn_id")) (str wanted-turn-id)))
+                               (when-let [settled (gateway-contract/settled-turn-event
+                                                    (get-turn sid wanted-turn-id) wanted-turn-id)]
+                                 [:terminal settled])))
 
                          :else
                          (let [[action event'] (sse-event-action event wanted-turn-id)]
