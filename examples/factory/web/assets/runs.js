@@ -1,7 +1,7 @@
 // Run history, details and decisions.
 import {
   OPEN, TONE, activities, activity, ago, api, back, bar, button, chip, date, decided, empty, field,
-  filePath, fileRow, fill, gate, h, icon, item, loadError, loading, padded, panel, panes, poll,
+  filePath, fileRow, fill, fold, gate, h, icon, item, loadError, loading, padded, panel, panes, plural, poll,
   press, preview, redraw, select, selection, sessionPath, setSelection, structured, update, value, versionOf,
 } from "./common.js";
 
@@ -52,10 +52,6 @@ async function readList() {
   }
 }
 
-function more(title, ...children) {
-  return h("details", { class: "fold" }, h("summary", { text: title }), children);
-}
-
 function documentRow(session, file) {
   if (!session || !file?.name) return null;
   const path = filePath(session, file.name);
@@ -100,14 +96,14 @@ function draw(run) {
     ],
     waiting && gate(run, refresh),
     run.error && h("pre", { class: "problem", text: run.error }),
-    Object.keys(run.input || {}).length > 0 && more("Input", padded(value(run.input))),
+    Object.keys(run.input || {}).length > 0 && fold("Input", "", padded(value(run.input))),
     h("h3", { text: "Steps" }),
     steps.length ? h("div", { class: "timeline" }, steps.map((step, index) => stepCard(run, step, index))) : h("p", { class: "muted", text: "This run has no recorded steps." }),
     (run.notes || []).map((note) => h("p", { class: "note", text: note.text })),
     run.result && [h("h3", { text: "Result" }), padded(structured(run.result.value ?? run.result))],
     run.files?.length > 0 && [h("h3", { text: "Documents" }), run.files.map((file) => documentRow(session, file))],
-    rows.length > 0 && more("Vis activities", h("div", { class: "acts" }, rows.map(activity))),
-    run.sessions?.length > 0 && more("Related sessions", h("div", { class: "stack" }, run.sessions.map((related) => {
+    rows.length > 0 && fold("Vis activities", plural(rows.length, "step"), h("div", { class: "acts" }, rows.map(activity))),
+    run.sessions?.length > 0 && fold("Related sessions", "", h("div", { class: "stack" }, run.sessions.map((related) => {
       const id = typeof related === "string" ? related : related.id || related.session_id;
       return id && id !== session && h("a", { href: sessionPath(id), text: related.title || id });
     }))),

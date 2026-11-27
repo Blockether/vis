@@ -253,6 +253,12 @@ const SIGNAL = { observation: "eye", mutation: "pencil", verification: "check", 
 /** Return a white box with padding. */
 export const padded = (...children) => h("div", { class: "block pad" }, ...children);
 
+/** Return a part that opens. `head` is its title, or the nodes of its row. `note` is the short text after a title. */
+export function fold(head, note, ...children) {
+  const row = typeof head === "string" ? [h("span", { class: "fold-title", text: head }), note && h("span", { class: "fold-note", text: note })] : head;
+  return h("details", { class: "fold" }, h("summary", {}, row), h("div", { class: "fold-body" }, children));
+}
+
 /** Return one content part of a Vis activity. An unknown type shows as JSON. */
 function block(part) {
   if (part.type === "table") {
@@ -278,14 +284,14 @@ export function activity(row) {
   const failed = row.state === "failed";
   const parts = (shown.content || []).map(block);
   if (failed && row.error_summary && !parts.length) parts.push(h("div", { class: "block" }, h("pre", { text: row.error_summary })));
-  const summary = h(
-    "summary",
-    {},
+  const head = [
     h("span", { class: "sig", title: row.signal || "" }, icon(failed ? "x" : SIGNAL[row.signal] || "spark")),
-    h("span", { class: "line" }, h("span", { class: "headline", text: shown.headline || row.summary || row.operation || "Step" }), h("span", { class: "sum", text: shown.summary || "" })),
+    h("span", { class: "line" }, h("span", { class: "fold-title", text: shown.headline || row.summary || row.operation || "Step" }), h("span", { class: "fold-note", text: shown.summary || "" })),
     h("span", { class: "ms", text: span(row.duration_ms) }),
-  );
-  return h("details", { class: `act ${row.signal || ""} ${failed ? "failed" : ""}` }, summary, h("div", { class: "act-body" }, shown.summary && h("div", { class: "small muted" }, inline(shown.summary)), parts));
+  ];
+  const part = fold(head, "", shown.summary && h("div", { class: "small muted" }, inline(shown.summary)), parts);
+  part.className = `fold act ${row.signal || ""} ${failed ? "failed" : ""}`;
+  return part;
 }
 
 /** Return the Vis activities of one turn of the JSON transcript, in the order of the work. */
@@ -329,7 +335,7 @@ export function structured(data) {
       .map(([key, item]) =>
         typeof item === "string" && item.length <= 400
           ? h("div", { class: "long" }, h("span", { class: "label", text: key }), value(item))
-          : h("details", { class: "fold" }, h("summary", {}, h("span", { class: "label", text: key }), h("span", { class: "small muted", text: Array.isArray(item) ? plural(item.length, "item") : typeof item === "string" ? "text" : plural(Object.keys(item).length, "field") })), value(item)),
+          : fold(key, Array.isArray(item) ? plural(item.length, "item") : typeof item === "string" ? "text" : plural(Object.keys(item).length, "field"), value(item)),
       ),
   );
 }

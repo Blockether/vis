@@ -58,6 +58,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .input { width: 100%; padding: 6px 10px; border: 1px solid var(--line-strong); background: var(--input); font-size: 12px; }
 textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 .input:focus { outline: 1px solid var(--amber-deep); outline-offset: 0; border-color: var(--amber-deep); }
+/* A select has the box of an input and its own chevron. The native arrow has a different size and place in each browser. */
+select.input { appearance: none; -webkit-appearance: none; border-radius: 0; padding-right: 30px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23625d57' stroke-width='1.5'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px; cursor: pointer; text-overflow: ellipsis; }
 
 .chip { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 6px; border: 1px solid var(--line-strong); font-size: 10px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; text-decoration: none; background: transparent; color: var(--muted); white-space: nowrap; }
 .chip.mono { text-transform: none; letter-spacing: 0; }
@@ -93,20 +95,15 @@ textarea.input { min-height: 84px; resize: vertical; line-height: 1.5; }
 /* -- Vis activities --------------------------------------------- */
 .acts { display: grid; gap: 2px; }
 
-.act > summary { list-style: none; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 9px; align-items: center; padding: 6px 8px; cursor: pointer; }
-.act > summary::-webkit-details-marker { display: none; }
-.act > summary:hover { background: rgba(63, 63, 63, .05); }
-.act[open] > summary { background: rgba(63, 63, 63, .05); }
 .act .sig { width: 22px; height: 22px; display: grid; place-items: center; background: rgba(63, 63, 63, .08); color: var(--charcoal); }
 .act .sig svg { width: 13px; height: 13px; }
 .act.observation .sig { background: var(--info-soft); color: var(--info); } .act.mutation .sig { background: var(--amber-soft); color: var(--warn); }
 .act.verification .sig { background: var(--good-soft); color: var(--good); } .act.external .sig { background: var(--violet-soft); color: var(--violet); }
 .act.failed .sig { background: var(--bad-soft); color: var(--bad); }
-.act .line { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
-.act .headline { font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.act .sum { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.act .line { display: flex; gap: 8px; align-items: baseline; min-width: 0; flex: 1; }
+.act .fold-title, .act .fold-note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act .fold-note { min-width: 0; flex: 1; }
 .act .ms { font: 10px var(--mono); color: var(--muted); }
-.act-body { margin: 4px 0 8px 31px; display: grid; gap: 8px; }
 .block { border: 1px solid var(--line); background: var(--input); overflow: hidden; }
 .block.pad { padding: 10px 12px; }
 .block pre { padding: 10px 12px; max-height: 340px; overflow: auto; font-size: 11px; line-height: 1.5; }
@@ -162,12 +159,16 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .result { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; font-size: 11px; }
 .result .label { color: var(--muted); font: 11px var(--mono); }
 .result .long { display: grid; gap: 2px; overflow-wrap: anywhere; }
-.fold > summary { display: flex; gap: 8px; align-items: baseline; cursor: pointer; padding: 2px 0; list-style: none; }
+/* Each part that opens has one look: a chevron, a title and a note. Its body starts below the title. */
+.fold > summary { list-style: none; display: flex; gap: 8px; align-items: center; min-height: 28px; padding: 3px 8px; cursor: pointer; }
 .fold > summary::-webkit-details-marker { display: none; }
-.fold > summary::before { content: ""; width: 6px; height: 6px; flex: none; align-self: center; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .12s; }
+.fold > summary::before { content: ""; width: 6px; height: 6px; flex: none; margin: 0 2px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); transition: transform .12s; }
 .fold[open] > summary::before { transform: rotate(45deg); }
-.fold[open] > summary { margin-bottom: 4px; }
-.fold + .fold, .long + .fold, .kv + .fold, .kv + .long { border-top: 1px solid var(--line); padding-top: 8px; }
+.fold > summary:hover, .fold[open] > summary { background: rgba(63, 63, 63, .05); }
+.fold-title { font-weight: 600; font-size: 11px; }
+.fold-note { color: var(--muted); font-size: 11px; }
+.fold-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 6px 0 8px 26px; }
+.result > .fold + .fold, .result > .long + .fold, .result > .kv + .fold, .result > .kv + .long { border-top: 1px solid var(--line); padding-top: 8px; }
 .kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 12px; font-size: 11px; }
 .kv dt { color: var(--muted); font: 11px var(--mono); } .kv dd { margin: 0; overflow-wrap: anywhere; }
 .decision { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; background: var(--ink); color: var(--amber); font: 600 11px var(--mono); }
@@ -201,7 +202,7 @@ dialog::backdrop { background: rgba(38, 38, 38, .42); }
 .status-line { padding: 6px 14px; margin: 0; }
 .status-line:empty, .trigger-status:empty { display: none; }
 pre.source { max-height: 62vh; white-space: pre; overflow: auto; tab-size: 4; line-height: 1.5; }
-select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 8px; }
+select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 30px 0 8px; }
 .trigger, .entry, .comment { padding: 10px 12px; border: 1px solid var(--line); background: var(--cream); }
 .comment p { white-space: pre-wrap; margin: 4px 0 0; }
 .entry pre { margin-top: 6px; }
@@ -225,8 +226,8 @@ select.versions { width: auto; max-width: 100%; height: 28px; padding: 0 8px; }
   .workspace.has-detail > aside { display: none; }
   .workspace:not(.has-detail) > .detail { display: none; }
   .list { max-height: none; }
-  .act-body { margin-left: 0; }
-  .act .sum { display: none; }
+  .fold-body { margin-left: 0; }
+  .act .line .fold-note { display: none; }
   .toasts { right: 12px; }
   dialog { width: calc(100vw - 16px); }
 }
