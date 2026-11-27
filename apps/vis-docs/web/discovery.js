@@ -22,6 +22,7 @@ const officialExtensions = [
   },
   { repository: 'blockether/vis-lang-interface', subdirectory: '', name: 'vis-lang-interface' },
   { repository: 'blockether/vis-lang-python', subdirectory: '', name: 'vis-lang-python' },
+  { repository: 'blockether/vis-music', subdirectory: '', name: 'vis-music' },
   { repository: 'blockether/vis-optmem', subdirectory: '', name: 'vis-optmem' },
   { repository: 'blockether/vis-podcaster', subdirectory: '', name: 'vis-podcaster' },
   { repository: 'blockether/vis-reel', subdirectory: '', name: 'vis-reel' },

@@ -276,8 +276,9 @@ The same workflow also runs every 15 minutes as a catch-up. GitHub starts schedu
 repository some hours late, and it can drop a run. A scheduled run finds the newest GitHub release and
 each release of the last 7 days of each first-party repository it lists: `vis-lang-interface`,
 `vis-lang-python`, `vis-lang-javascript`, `vis-lang-clojure`, `vis-decisions`, `vis-optmem`,
-`vis-graphify`, `vis-podcaster`, `vis-reel` and `vis-spel`. It publishes only the releases that the
-public catalog does not list yet. When the catalog lists all of them, the run stops before the build.
+`vis-graphify`, `vis-music`, `vis-podcaster`, `vis-reel` and `vis-spel`. It publishes only the
+releases that the public catalog does not list yet. When the catalog lists all of them, the run stops
+before the build.
 Thus a release that a newer release replaced in the same week also reaches the catalog. Publishing a
 release that is already in the catalog is a no-op, so a repeated sweep cannot replace a reviewed
 commit. Dispatch the workflow without inputs to publish the newest release of each repository
