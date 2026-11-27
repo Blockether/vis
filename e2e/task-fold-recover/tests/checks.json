@@ -7,9 +7,6 @@
   "want_tools": [
     "shell"
   ],
-  "forbid_tools": [
-    "patch"
-  ],
   "want_fold_first": true,
   "want_folded_prefix": true,
   "want_requested_route": true

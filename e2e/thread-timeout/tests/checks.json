@@ -65,6 +65,5 @@
       "return reorder(order_id, user_id)\n",
       "return cancel_order(order_id)\n"
     ]
-  },
-  "max_patch_calls_per_file": 1
+  }
 }

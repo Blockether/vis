@@ -164,8 +164,6 @@ A trial passes only when all its checks pass. Most tasks need these checks:
 | `want_tools` | The agent used each named tool. |
 | `verify` | A Python file in `tests/` grades the trial with the rules of this task. |
 | `forbid_tools` | The agent did not use any named tool. |
-| `max_patch_calls_per_file` | The agent changed each file with at most this number of successful `patch` calls. |
-| `max_patch_refusals` | At most this number of `patch` calls were refused in the run. |
 | `max_total_output_chars` | The tool output of the run stayed below this size. |
 
 `want_answer_program` names a file relative to `checks.json`, for example `"check_answer.py"`. The

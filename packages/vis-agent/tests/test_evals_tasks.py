@@ -118,7 +118,7 @@ def test_write_task_writes_a_vis_harbor_task(tmp_path):
     script = folder / "tests/test.sh"
     assert script.stat().st_mode & stat.S_IXUSR
     # The e2e tasks of the repository use the same grader script.
-    assert script.read_text() == (E2E / "py-add-func/tests/test.sh").read_text()
+    assert script.read_text() == (E2E / "py-project-paths/tests/test.sh").read_text()
     assert read_tasks(tmp_path) == (task,)
 
 

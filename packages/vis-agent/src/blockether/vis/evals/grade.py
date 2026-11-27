@@ -53,8 +53,6 @@ CHECK_KEYS = frozenset(
         "forbid_tools",
         "id",
         "max_form_output_chars",
-        "max_patch_calls_per_file",
-        "max_patch_refusals",
         "max_total_output_chars",
         "measurement",
         "verify",
@@ -538,32 +536,6 @@ def structured_failures(sc, work, answer, activities):
         ]
         if actual != expected:
             failures.append(f"activity sequence {actual!r} != expected {expected!r}")
-    limit = sc.get("max_patch_calls_per_file")
-    if type(limit) is int:
-        patched = collections.Counter(
-            call.get("summary")
-            for row in activities
-            if row["operation"] == "patch"
-            for call in row.get("children") or [row]
-            if call.get("state", row.get("state")) == "succeeded"
-        )
-        for path, count in sorted(patched.items()):
-            if count > limit:
-                failures.append(
-                    f"{path} was patched {count} times; collect its edits into at most {limit} patch call(s)"
-                )
-    # User report 2026-10-31: each refused patch cost the agent one more step.
-    limit = sc.get("max_patch_refusals")
-    if type(limit) is int:
-        refused = sum(
-            1
-            for row in activities
-            if row["operation"] == "patch"
-            for call in row.get("children") or [row]
-            if call.get("state", row.get("state")) == "failed"
-        )
-        if refused > limit:
-            failures.append(f"patch was refused {refused} times; the limit is {limit}")
     forbidden = set(sc.get("forbid_tools") or [])
     for operation in sorted({row["operation"] for row in activities} & forbidden):
         failures.append(f"forbidden tool {operation!r} was used")
@@ -1763,12 +1735,7 @@ def grade_trial(
 
     correct = all(checks.guards.values())
     detail = checks.detail
-    used_patch = "patch" in toolset
-    path = "patch" if used_patch else "cat-only"
-    if path == "cat-only" or errs or not (done and correct):
-        detail.append(
-            "tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset))
-        )
+    detail.append("tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset)))
     evidence = []
     if type(output_limit) is int and output_limit >= 0:
         evidence.append(f"max-form-output={largest_form_output}/{output_limit} chars")
@@ -1864,8 +1831,6 @@ def grade_trial(
         "discovery": discovery,
         "helper_reuse": helper_reuse,
         "measurement": measurement,
-        "used_patch": used_patch,
-        "edit_path": path,
         "detail": detail,
         "behavior": behavior,
         "evidence": evidence,

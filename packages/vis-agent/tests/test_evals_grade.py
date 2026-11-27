@@ -74,7 +74,6 @@ def test_a_complete_trial_passes_every_guard(tmp_path):
     assert result.result["model"] == MODEL
     assert result.result["forms"] == 1
     assert result.result["provider_calls"] == 2
-    assert result.result["edit_path"] == "patch"
     assert result.result["wall"] == 1.2
 
 

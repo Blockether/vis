@@ -7,7 +7,6 @@
     "shell"
   ],
   "forbid_tools": [
-    "patch",
     "_shell-stop"
   ]
 }

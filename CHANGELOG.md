@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Session introspection: a printed row of `read_session`, `list_sessions` or `get_session` omits its empty fields. The fields stay in the data: `row["error"]` and `row.get("error")` still give `None`. The same applies to the nested maps of other tool results.
 - Logs: the svar stream progress profile records the time until the response headers arrived (`headers-ms`) and the provider request ID (`request-id`). A long wait before the first token now shows if the provider held the request or sent nothing on an open stream. Svar is pinned at 0.7.251.
+- Evals: the check keys `max_patch_calls_per_file` and `max_patch_refusals` are removed, because the `patch` tool no longer exists. The grader now refuses a `checks.json` that has them. `grade.json` no longer has `used_patch` and `edit_path`.
 
 ### Fixed
 

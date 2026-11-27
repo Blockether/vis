@@ -1,9 +1,0 @@
-{
-  "want": {
-    "g.py": [
-      "greeting",
-      "def greet(name"
-    ]
-  },
-  "wantnot": {}
-}

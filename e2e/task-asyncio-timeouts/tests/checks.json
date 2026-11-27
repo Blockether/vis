@@ -9,7 +9,6 @@
     "task_probe.release"
   ],
   "forbid_tools": [
-    "patch",
     "shell"
   ],
   "want_json_files": {

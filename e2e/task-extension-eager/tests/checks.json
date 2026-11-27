@@ -7,7 +7,6 @@
     "task_probe.started"
   ],
   "forbid_tools": [
-    "patch",
     "shell"
   ],
   "want_json_files": {

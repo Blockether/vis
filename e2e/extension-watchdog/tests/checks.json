@@ -9,8 +9,7 @@
     "watchdog_probe.poll_async"
   ],
   "forbid_tools": [
-    "shell",
-    "patch"
+    "shell"
   ],
   "verify": "verify.py"
 }

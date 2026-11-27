@@ -22,7 +22,6 @@
     ]
   },
   "forbid_tools": [
-    "patch",
     "shell",
     "council.run"
   ],

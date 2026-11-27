@@ -27,6 +27,5 @@
       "30 seconds",
       "returns `count`"
     ]
-  },
-  "max_patch_calls_per_file": 1
+  }
 }

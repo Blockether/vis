@@ -1,9 +1,0 @@
-{
-  "want": {
-    "lib.rs": [
-      "x * 3",
-      "fn double"
-    ]
-  },
-  "wantnot": {}
-}

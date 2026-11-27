@@ -15,7 +15,5 @@
       "\"1 DONE\"]",
       "\t"
     ]
-  },
-  "max_patch_calls_per_file": 1,
-  "max_patch_refusals": 0
+  }
 }

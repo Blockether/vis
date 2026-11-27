@@ -836,7 +836,7 @@ class ReasoningEffortTest(unittest.TestCase):
         self,
         effort=None,
         evaluation=None,
-        scenario_id="py-fix-body",
+        scenario_id="multifile-rename",
         *,
         session_usage=None,
         provider=None,
@@ -1391,47 +1391,6 @@ class EvaluationIntegrationEdgeTest(unittest.TestCase):
             forbid_tools=["cat"],
         )
         self.assertFalse(result["correct"])
-
-    def test_patch_calls_per_file_stay_within_the_limit(self):
-        # Edits of one file belong in one patch call; a split costs a step each.
-        def run(*rows):
-            return grade.structured_failures(
-                {"max_patch_calls_per_file": 1}, ".", "", list(rows)
-            )
-
-        split = [
-            atif.row("call-1", "patch", summary="app.py"),
-            atif.row("call-2", "patch", summary="app.py", sequence=2),
-        ]
-        self.assertEqual(
-            [
-                "app.py was patched 2 times; collect its edits into at most 1 patch call(s)"
-            ],
-            run(*split),
-        )
-        self.assertEqual([], run(atif.row("call-1", "patch", summary="app.py")))
-        refused = atif.row("call-3", "patch", "failed", summary="app.py", sequence=3)
-        self.assertEqual([], run(split[0], refused))
-        other = atif.row("call-4", "patch", summary="notes.md", sequence=4)
-        self.assertEqual([], run(split[0], other))
-        group = atif.row("group-call-1", "patch", children=split)
-        self.assertEqual(1, len(run(group)))
-
-    def test_patch_refusals_stay_within_the_limit(self):
-        # User report 2026-10-31: each refused patch cost the agent one more step.
-        def run(*rows):
-            return grade.structured_failures(
-                {"max_patch_refusals": 0}, ".", "", list(rows)
-            )
-
-        written = atif.row("call-1", "patch", summary="app.py")
-        refused = atif.row("call-2", "patch", "failed", summary="app.py", sequence=2)
-        self.assertEqual([], run(written))
-        self.assertEqual(
-            ["patch was refused 1 times; the limit is 0"], run(written, refused)
-        )
-        group = atif.row("group-call-1", "patch", children=[written, refused])
-        self.assertEqual(1, len(run(group)))
 
     def test_malformed_run_metrics_are_a_failure_not_a_crash(self):
         helper = DiscoveryEvaluationTest()

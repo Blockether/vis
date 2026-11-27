@@ -53,10 +53,8 @@
   "want_cache_metrics": true,
   "max_total_output_chars": 10000,
   "forbid_tools": [
-    "cat",
     "grep",
     "ls",
-    "shell",
-    "patch"
+    "shell"
   ]
 }

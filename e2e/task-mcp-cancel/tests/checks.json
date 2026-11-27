@@ -7,7 +7,6 @@
     "call"
   ],
   "forbid_tools": [
-    "patch",
     "shell"
   ],
   "want_json_files": {

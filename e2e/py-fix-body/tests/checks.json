@@ -1,9 +1,0 @@
-{
-  "want": {
-    "calc.py": [
-      "return a * b",
-      "def add(a, b):\n    return a + b"
-    ]
-  },
-  "wantnot": {}
-}

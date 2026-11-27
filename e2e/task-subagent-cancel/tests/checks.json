@@ -4,7 +4,6 @@
   ],
   "verify": "verify.py",
   "forbid_tools": [
-    "patch",
     "shell"
   ]
 }

@@ -13,8 +13,5 @@
   "want_answer": [
     "followup-done"
   ],
-  "forbid_tools": [
-    "patch"
-  ],
   "want_council_attempts": "followup"
 }
