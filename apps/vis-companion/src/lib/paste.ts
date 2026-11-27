@@ -1,3 +1,5 @@
+import type { ClipboardEvent } from 'react';
+
 export const PASTE_INLINE_MAX_CHARS = 80;
 
 export interface ComposerPaste {
@@ -112,6 +114,55 @@ function splitImagePaths(part: { type: 'text'; text: string; key: string }): Use
   const rest = part.text.slice(offset);
   if (rest) out.push({ type: 'text', text: rest, key: `${part.key}-t${index}` });
   return out;
+}
+
+// The tags of a user message row: one authored line, or one paste.
+const ROW_TAGS = new Set(['P', 'DIV', 'DETAILS']);
+
+/**
+ * Copy a selection inside the parts of one user message with each closed paste written
+ * out whole: the clipboard gets the pasted text, never its `[Pasted #N]` summary. A
+ * selection that leaves the message bubble or touches no paste keeps the native copy.
+ */
+export function copyWithPastes(event: ClipboardEvent<HTMLElement>): void {
+  const root = event.currentTarget;
+  const selection = root.ownerDocument.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  // Selecting the whole bubble starts the range on the bubble, around the parts.
+  if (!(root.parentElement ?? root).contains(range.commonAncestorContainer)) return;
+  const pastes = Array.from(root.querySelectorAll('details[data-paste]'));
+  if (!pastes.some((paste) => range.intersectsNode(paste))) return;
+  let text = '';
+  let hasRow = false;
+  let afterBlock = false;
+  for (const child of Array.from(root.childNodes)) {
+    if (!range.intersectsNode(child)) continue;
+    const block = child instanceof Element && ROW_TAGS.has(child.tagName);
+    if (hasRow && (block || afterBlock)) text += '\n';
+    text += selectedText(child, range);
+    hasRow = true;
+    afterBlock = block;
+  }
+  event.preventDefault();
+  event.clipboardData.setData('text/plain', text);
+}
+
+function selectedText(node: Node, range: Range): string {
+  if (!range.intersectsNode(node)) return '';
+  if (node.nodeType === Node.TEXT_NODE) {
+    const text = node.textContent ?? '';
+    const start = node === range.startContainer ? range.startOffset : 0;
+    return text.slice(start, node === range.endContainer ? range.endOffset : text.length);
+  }
+  if (!(node instanceof Element) || node.tagName === 'SUMMARY') return '';
+  if (node instanceof HTMLDetailsElement && node.hasAttribute('data-paste')) {
+    // A closed paste, or a selection of only its summary, stands for the whole paste.
+    const body = node.querySelector('pre');
+    if (!node.open || !body || !range.intersectsNode(body))
+      return node.querySelector('code')?.textContent ?? '';
+  }
+  return Array.from(node.childNodes, (child) => selectedText(child, range)).join('');
 }
 
 function formatBytes(bytes: number): string {

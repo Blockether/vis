@@ -233,6 +233,31 @@ describe('native composer input', () => {
     expect(composer.value).toMatch(/^Before \[Pasted #1[^\]]*\] after$/);
   });
 
+  // User report: copying a `[Pasted #N]` token copied the token, not the pasted text.
+  it.each(['copy', 'cut'] as const)('puts the pasted text on the clipboard on %s', async (verb) => {
+    await act(async () => {
+      renderSessionScreen();
+    });
+    const composer = screen.getByLabelText('Message Vis') as HTMLTextAreaElement;
+    const pasted = 'Many lines of text\n'.repeat(30);
+    act(() => {
+      flushSync(() => {
+        fireEvent.input(composer, { target: { value: 'Before  after' } });
+      });
+      composer.setSelectionRange(7, 7);
+      flushSync(() => {
+        fireEvent.paste(composer, { clipboardData: { files: [], getData: () => pasted } });
+      });
+    });
+    const setData = vi.fn();
+    act(() => {
+      composer.setSelectionRange(0, composer.value.length);
+      fireEvent[verb](composer, { clipboardData: { setData } });
+    });
+    expect(setData).toHaveBeenCalledWith('text/plain', `Before ${pasted} after`);
+    expect(composer.value).toBe(verb === 'cut' ? '' : composer.value);
+  });
+
   it('does not replay pending input into the next session', async () => {
     let view: ReturnType<typeof renderSessionScreen>;
     await act(async () => {

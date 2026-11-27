@@ -100,7 +100,7 @@ import {
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import { councilMarkdown } from '../lib/council-markdown';
-import { parseUserMessage, type UserMessagePart } from '../lib/paste';
+import { copyWithPastes, parseUserMessage, type UserMessagePart } from '../lib/paste';
 import { filePathOfUrl, remarkBareLinks } from '../lib/message-links';
 import { TEXT_LINK as MARKDOWN_LINK, fileUrlLink, linkedText, type OpenPath } from './linked-text';
 import { useOpenPath } from '../lib/open-path';
@@ -5315,7 +5315,7 @@ function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
   // Inline image chips must stay in their authored position within the text.
   const hasInlineImage = parts.some((part) => part.type === 'image');
   return (
-    <>
+    <div className="contents" onCopy={copyWithPastes}>
       {parts.map((part) =>
         part.type === 'text' ? (
           hasInlineImage || !part.text ? (
@@ -5338,9 +5338,10 @@ function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
           // padding.
           <details
             key={part.key}
+            data-paste
             className="group -mx-3 my-3 block max-w-none border-y border-code-edge bg-code text-code-foreground first:mt-0 last:mb-0"
           >
-            <summary className="cursor-pointer list-none select-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
+            <summary className="cursor-pointer list-none px-3 py-2 font-mono text-meta font-semibold text-accent-ink marker:hidden [&::-webkit-details-marker]:hidden">
               <ChevronIcon className="mr-1.5 inline-block text-dialog-hint group-open:rotate-90" />
               {part.summary}
             </summary>
@@ -5350,7 +5351,7 @@ function UserMessageParts({ parts }: { parts: UserMessagePart[] }) {
           </details>
         ),
       )}
-    </>
+    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { IterationTrace } from './ChatContent';
@@ -90,6 +90,72 @@ describe('a queued message delivered into the turn', () => {
     expect(disclosure?.querySelector('summary')?.textContent).toBe('[Pasted #1: 1 line, 40B]');
     expect(disclosure?.querySelector('code')?.textContent).toBe(paste);
     expect(band?.textContent).toContain('PIN THE SDK!');
+  });
+
+  // User report: copying a sent message copied `[Pasted #1: ...]`, not the pasted text.
+  it('copies the pasted text in place of the closed disclosure', () => {
+    const paste = 'The run_tests interpreter lacks the SDK.\nSecond line.';
+    const { container } = render(
+      <IterationTrace
+        iterations={[
+          {
+            position: 39,
+            user_input: [
+              {
+                request: `Look:\n${paste}\n PIN THE SDK!`,
+                display_request: ['Look:', '````vis-paste', '[Pasted #1: 2 lines, 53B]', paste, '````', ' PIN THE SDK!'].join('\n'),
+              },
+            ],
+          },
+        ]}
+        whole
+      />,
+    );
+
+    const disclosure = bands(container)[0]?.querySelector('details');
+    const bubble = disclosure?.parentElement?.parentElement as HTMLElement;
+    const range = document.createRange();
+    range.selectNodeContents(bubble);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    const setData = vi.fn();
+    fireEvent.copy(bubble.querySelector('summary') as HTMLElement, { clipboardData: { setData } });
+
+    expect(setData).toHaveBeenCalledWith('text/plain', `Look:\n${paste}\n PIN THE SDK!`);
+  });
+
+  it('copies the whole paste from a selection of its summary', () => {
+    const paste = 'first line\nsecond line';
+    const { container } = render(
+      <IterationTrace
+        iterations={[
+          {
+            position: 3,
+            user_input: [
+              {
+                request: paste,
+                display_request: ['````vis-paste', '[Pasted #1: 2 lines, 22B]', paste, '````'].join('\n'),
+              },
+            ],
+          },
+        ]}
+        whole
+      />,
+    );
+
+    const summary = bands(container)[0]?.querySelector('details summary') as HTMLElement;
+    const label = Array.from(summary.childNodes).find((node) => node.nodeType === Node.TEXT_NODE)!;
+    const range = document.createRange();
+    range.setStart(label, 1);
+    range.setEnd(label, 8);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    for (const open of [false, true]) {
+      (summary.parentElement as HTMLDetailsElement).open = open;
+      const setData = vi.fn();
+      fireEvent.copy(summary, { clipboardData: { setData } });
+      expect(setData).toHaveBeenCalledWith('text/plain', paste);
+    }
   });
 
   describe('with the pictures it carried', () => {

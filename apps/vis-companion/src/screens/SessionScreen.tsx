@@ -4391,6 +4391,21 @@ export function SessionScreen({
     });
   }
 
+  // The composer shows a long paste as its token. Copy and cut carry the pasted text.
+  function handleComposerCopy(event: ReactClipboardEvent<HTMLTextAreaElement>) {
+    const input = event.currentTarget;
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? start;
+    const selected = input.value.slice(start, end);
+    const copied = expandPastePlaceholders(selected, pastes);
+    if (copied === selected) return;
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', copied);
+    if (event.type !== 'cut') return;
+    setPrompt(`${input.value.slice(0, start)}${input.value.slice(end)}`);
+    window.requestAnimationFrame(() => composerRef.current?.setSelectionRange(start, start));
+  }
+
   async function toggleVoice() {
     if (liveVoiceActive || voiceAcquisitionRef.current || voiceHandoffRef.current) return;
     if (isVoiceElsewhere) {
@@ -6704,6 +6719,8 @@ export function SessionScreen({
                     aria-haspopup="listbox"
                     className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:whitespace-nowrap placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1 mouse:text-title"
                     onPaste={handlePaste}
+                    onCopy={handleComposerCopy}
+                    onCut={handleComposerCopy}
                     onFocus={handleComposerFocus}
                     onSelect={(event) => {
                       const position = event.currentTarget.selectionStart ?? 0;
