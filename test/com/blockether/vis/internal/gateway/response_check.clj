@@ -119,13 +119,11 @@
    [:post "/v1/sessions/:sid/agents/deny"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/extend"] "needs a running engine turn with subagents"
    [:post "/v1/sessions/:sid/agents/grant"] "needs a running engine turn with subagents"
-   [:post "/v1/sessions/:sid/cancel-current"] "needs a running engine turn in the registry"
    [:post "/v1/sessions/:sid/client-calls/:call_id/activity"]
    "needs a registered client extension with a pending engine call"
    [:post "/v1/sessions/:sid/client-calls/:call_id/result"]
    "needs a registered client extension with a pending engine call"
    [:post "/v1/sessions/:sid/speech"] "needs a local speech or voice model and a running job"
-   [:post "/v1/sessions/:sid/turns/:tid/cancel"] "needs a running engine turn in the registry"
    [:post "/v1/sessions/:sid/voice"] "needs a local speech or voice model and a running job"
    [:post "/v1/settings/:id/preview"] "needs an extension setting with a preview function"
    [:post "/v1/systemone"] "needs an installed decision model"
