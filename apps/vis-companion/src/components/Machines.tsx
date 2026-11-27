@@ -679,6 +679,7 @@ export function MachineRows({
         // The open row and the "you are here" row wear one paper: a list does one of
         // the two, and a machine standing out of it looks the same either way.
         const isMarked = isOpen || conn.url === selectedUrl;
+        const isPrimaryMark = isFleet && conn.url === primaryUrl;
         const panelId = `${listId}-machine-${index}`;
         // Is there a route to CHOOSE? One address and no pin is simply "the address".
         const bindable = Boolean(onSelectAddress) && canBind(conn);
@@ -765,14 +766,15 @@ export function MachineRows({
                     <Text variant="label" className="truncate">
                       {name}
                     </Text>
-                    {isFleet && conn.url === primaryUrl && (
+                    {isPrimaryMark && (
                       <span className="shrink-0 text-accent-ink">
                         <Text variant="meta" tone="inherit">
                           Primary
                         </Text>
                       </span>
                     )}
-                    {conn.pinned && (
+                    {/* `Primary` already says why this device stays on the row. */}
+                    {conn.pinned && !isPrimaryMark && (
                       <span className="shrink-0 text-accent-ink">
                         <Text variant="meta" tone="inherit">
                           Pinned

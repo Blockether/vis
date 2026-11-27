@@ -51,4 +51,14 @@ describe('what a machine row says about its rank', () => {
     expect(lineOf('tower')).toContain('tower');
   });
 
+  // Regression, user report: the primary's row said `Primary` and `Pinned` side by
+  // side. `Primary` alone is enough there.
+  it('shows only Primary on a pinned primary', () => {
+    const other: GatewayConn = { url: 'http://192.168.0.7:7890', label: 'laptop' };
+    rows({ conns: [{ ...tower, pinned: true }, { ...other, pinned: true }] });
+
+    expect(lineOf('tower')).toContain('Primary');
+    expect(lineOf('tower')).not.toContain('Pinned');
+    expect(lineOf('laptop')).toContain('Pinned');
+  });
 });
