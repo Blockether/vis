@@ -13,6 +13,7 @@
   "name": "vis-companion-relay",
   "main": "src/index.ts",
   "compatibility_date": "2025-01-01",
+  "send_metrics": false,
   "observability": { "enabled": true },
   // Metering without storage. `namespace_id` is any integer unique to the
   // account; `period` may only be 10 or 60 seconds. Counters are kept in the

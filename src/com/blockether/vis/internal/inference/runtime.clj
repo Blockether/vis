@@ -26,12 +26,19 @@
   "ORT 1.30 starts Microsoft 1DS telemetry with its first environment unless this is set."
   "ORT_DISABLE_TELEMETRY")
 
+(def tracking-property
+  "DJL `HuggingFaceTokenizer` probes the EC2 metadata endpoint and reports usage unless this is true."
+  "OPT_OUT_TRACKING")
+
 (defn- disable-telemetry!
-  "Set [[telemetry-env]] in the native process environment before ORT loads.
-   On macOS the telemetry uploads through CFNetwork. CFNetwork writes the shared
-   `~/Library/Caches/net.java.openjdk.java/Cache.db` and logs SQLite disk I/O
-   errors to stderr. An explicit value stays."
+  "Turn off the usage reports of ORT and of DJL tokenizers. Each tokenizer opens after
+   [[ensure-ort!]]. [[telemetry-env]] goes into the native process environment before
+   ORT loads. On macOS ORT uploads through CFNetwork, which writes the shared
+   `~/Library/Caches/net.java.openjdk.java/Cache.db` and logs SQLite disk I/O errors
+   to stderr. An explicit value stays."
   []
+  (when-not (or (System/getenv tracking-property) (System/getProperty tracking-property))
+    (System/setProperty tracking-property "true"))
   (when-not (System/getenv telemetry-env)
     (try
       (let [^MethodHandle setenv
@@ -153,11 +160,11 @@
    An explicit Java native path is respected when complete. Other platforms
    retain their independent upstream loaders."
   []
+  @telemetry-disabled
   (let [token (platform-token)]
     (if-not (contains? shared-platforms token)
       {:source :upstream :platform token}
       (locking ort-native-path-property
-        @telemetry-disabled
         (let [[runtime jni _] (library-names)
               given (System/getProperty ort-native-path-property)]
 

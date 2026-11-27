@@ -91,7 +91,8 @@
         (with-redefs [runtime/platform-token (constantly "osx-x64")]
           (expect (= {:source :upstream :platform "osx-x64"} (runtime/ensure-ort!)))
           (expect (= old-path (System/getProperty runtime/ort-native-path-property))))))
-  (it "turns off ONNX Runtime telemetry before the runtime loads"
-      (when (contains? runtime/shared-platforms (runtime/platform-token))
-        (runtime/ensure-ort!)
-        (expect (some? (native-env runtime/telemetry-env))))))
+  (it "turns off ONNX Runtime and DJL telemetry before the runtime loads"
+      (runtime/ensure-ort!)
+      (expect (some? (native-env runtime/telemetry-env)))
+      (expect (or (System/getenv runtime/tracking-property)
+                  (= "true" (System/getProperty runtime/tracking-property))))))

@@ -3,6 +3,7 @@
   "name": "vis-docs",
   "main": "worker.js",
   "compatibility_date": "2026-02-01",
+  "send_metrics": false,
   "workers_dev": true,
   "preview_urls": false,
   "triggers": {"crons": ["*/5 * * * *"]},
