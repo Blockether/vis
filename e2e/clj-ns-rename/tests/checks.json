@@ -16,6 +16,6 @@
     ]
   },
   "want_tools": [
-    "patch"
+    "grep"
   ]
 }

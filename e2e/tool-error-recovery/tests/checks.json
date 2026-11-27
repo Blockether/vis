@@ -8,9 +8,6 @@
   "want_answer": [
     "tool-error-recovery-ok"
   ],
-  "want_tools": [
-    "cat"
-  ],
   "want_forms": [
     "attach(",
     "get_attachment(",
