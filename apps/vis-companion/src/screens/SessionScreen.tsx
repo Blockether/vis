@@ -3595,6 +3595,10 @@ export function SessionScreen({
       const delay = forceFlush ? 0 : RUNNING_TURN_BODY_THROTTLE_MS;
       timerId = window.setTimeout(flushEvents, delay);
     }, { from: lastRunningTurnSeqRef.current });
+    // The hub hands over the frames that it buffered while this screen was away in
+    // the call above. They are catch-up, not a stream: paint them at once, or the
+    // cached bubble shows first and the missed steps land one throttle later.
+    if (eventQueue.length) flushEvents();
 
     return () => {
       disposed = true;
