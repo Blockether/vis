@@ -6,7 +6,7 @@
     "beta_reversed_count": 119
   },
   "want_forms": [
-    "read_session()"
+    "read_session("
   ],
   "want_stdout_recovery": {
     "min_chars": 120000,

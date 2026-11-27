@@ -161,7 +161,7 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                         )
                     )
                     saved[mode] = raw
-                self.assertIn("read_session()", sc["want_forms"])
+                self.assertIn("read_session(", sc["want_forms"])
                 self.assertIn("target data row", sc["prompt"])
                 for key in sc["want_answer_json"]:
                     self.assertIn(key, sc["prompt"])
@@ -597,7 +597,7 @@ class StdoutGoalRecoveryTest(unittest.TestCase):
         self.assertTrue(scenario["want_goal_complete"])
         self.assertTrue(scenario["want_cache_metrics"])
         self.assertTrue(scenario["want_cache_read"])
-        self.assertIn("read_session()", scenario["want_forms"])
+        self.assertIn("read_session(", scenario["want_forms"])
         self.assertIn("later iteration", scenario["prompt"])
         self.assertIn("trailing newline", scenario["prompt"])
         self.assertIn("Do not inspect", scenario["prompt"])

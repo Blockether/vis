@@ -21,7 +21,7 @@ def check(tmp_path, name, *blocks, host=None):
     return result.result["guards"]["task"]
 
 
-@pytest.mark.parametrize("case", ["valid", "dead", "marker-outside-handler"])
+@pytest.mark.parametrize("case", ["valid", "loop", "dead", "marker-outside-handler"])
 def test_shield_binding_needs_a_live_timeout_handler(tmp_path, case):
     first = """plain = task_probe.hold("plain")
 await task_probe.started("plain")
@@ -47,7 +47,18 @@ second = await shielded
 print(second)
 print(json.dumps(dict(plain_cancelled=plain_cancelled, shielded_running=shielded_running, results=[first, second])))
 """
-    if case == "dead":
+    if case == "loop":
+        # Two awaits in a loop are two awaits of the original Task.
+        last = """shielded_running = not shielded.done()
+await task_probe.release("shielded")
+results = []
+for _ in range(2):
+    result = await shielded
+    print(result)
+    results.append(result)
+print(json.dumps(dict(plain_cancelled=plain_cancelled, shielded_running=shielded_running, results=results)))
+"""
+    elif case == "dead":
         shield = "if False:\n" + textwrap.indent(shield, "    ")
     elif case == "marker-outside-handler":
         shield = shield.replace(
@@ -65,7 +76,7 @@ print(json.dumps(dict(plain_cancelled=plain_cancelled, shielded_running=shielded
         tmp_path,
         "task-asyncio-timeouts",
         atif.block("t1/i1/f1", code, stdout=stdout),
-    ) is (case in {"valid", "alias"})
+    ) is (case in {"valid", "loop"})
 
 
 def test_eager_case_reports_missing_trajectory(tmp_path):

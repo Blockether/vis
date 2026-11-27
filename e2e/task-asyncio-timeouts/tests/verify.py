@@ -56,12 +56,20 @@ def method(tree, task, name):
 
 
 def direct_awaits(tree, task):
+    """Give the line of each direct await of `task`. An await in a loop counts two times."""
+    looped = {
+        id(node)
+        for loop in ast.walk(tree)
+        if isinstance(loop, (ast.For, ast.AsyncFor, ast.While, ast.ListComp))
+        for node in ast.walk(loop)
+    }
     return sorted(
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Await)
         and isinstance(node.value, ast.Name)
         and node.value.id == task
+        for _ in range(2 if id(node) in looped else 1)
     )
 
 

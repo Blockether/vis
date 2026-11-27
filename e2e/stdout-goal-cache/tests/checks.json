@@ -6,7 +6,7 @@
     "record-03500;"
   ],
   "want_forms": [
-    "read_session()",
+    "read_session(",
     "update_goal("
   ],
   "want_requested_route": true,
