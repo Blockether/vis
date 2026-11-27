@@ -86,6 +86,19 @@
                 "a wildcard bind still offers every interface")))))
 
 (defdescribe
+  ipv6-bind-gives-a-valid-address
+  (it "puts an IPv6 host in brackets, in the pairing link and in an advertised address"
+      (with-redefs-fn {#'pairing/iface-addresses (fn []
+                                                   ["192.168.0.116"])}
+        (fn []
+          (expect (str/includes? (pairing/pairing-url
+                                   {:host "2001:db8::140" :port 7890 :token "tok"})
+                                 "url=http%3A%2F%2F%5B2001%3Adb8%3A%3A140%5D%3A7890"))))
+      (expect (= "http://[2001:db8::140]:7890" (pairing/advertised-url "2001:db8::140" 7890)))
+      (expect (= "http://[2001:db8::140]:8080"
+                 (pairing/advertised-url "[2001:db8::140]:8080" 7890)))))
+
+(defdescribe
   advertised-url-completes-an-operator-address
   (it "a bare host, a host:port and a full URL all become one base URL"
       (expect (= "http://192.168.0.1:7890" (pairing/advertised-url "192.168.0.1" 7890)))

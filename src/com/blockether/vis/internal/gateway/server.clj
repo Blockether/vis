@@ -2901,7 +2901,7 @@
           (.println config/original-stdout ^String (str line))
           (.flush config/original-stdout))]
 
-    (emit! (str "vis-agent gateway listening on http://" host ":" port))
+    (emit! (str "vis-agent gateway listening on http://" (pairing/url-host host) ":" port))
     (when (web/configured-root)
       (emit!
         (str "web app: http://" (if (pairing/wildcard-bind? host) "127.0.0.1" host) ":" port "/")))

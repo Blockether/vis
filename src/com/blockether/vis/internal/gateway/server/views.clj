@@ -336,7 +336,7 @@
     (->> (concat [(pairing/advertised-url advertise port)]
                  (->> (pairing/candidate-hosts bind)
                       (remove str/blank?)
-                      (map #(str scheme "://" % ":" port)))
+                      (map #(str scheme "://" (pairing/url-host %) ":" port)))
                  (when (pairing/wildcard-bind? bind) [(str scheme "://127.0.0.1:" port)]))
          (remove str/blank?)
          distinct

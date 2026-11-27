@@ -147,7 +147,7 @@
           (str "gateway running pid="
                pid
                " url=http://"
-               host
+               (pairing/url-host host)
                ":"
                port
                " db="
@@ -388,7 +388,7 @@
     (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
       (when-let [others (->> (pairing/candidate-hosts host)
                              (remove #{"127.0.0.1" "::1" "localhost"})
-                             (map #(str "http://" % ":" port "/"))
+                             (map #(str "http://" (pairing/url-host %) ":" port "/"))
                              seq)]
         (commandline/stdout! (str "Other devices: " (str/join ", " others)))
         (commandline/stdout! (str

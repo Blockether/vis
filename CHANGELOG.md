@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Session introspection: the hint of a clipped result tells how to read the next slice of the saved output (`offset=b.get("stdout_next_offset")`, `limit` to 65536), and `doc("read_session")` says that the last slice has no `stdout_next_offset`. Before, the agent read 4096 characters in each call and got a `KeyError` at the last slice.
 - Subagents: `doc("council.run")` names the roles that a task can have (`research`, `implement` and `verify`). Before, the agent could learn them only from the error of a refused call.
 - Gateway: `vis-agent gateway status` and the other commands on the same machine find a gateway that is bound to an IPv6 address (`--host 2001:db8::1`). Before, they made an address without brackets, the request failed, and the status said `gateway stopped` while the gateway ran.
+- Gateway: `vis-agent gateway pair`, `vis-agent gateway status`, the start line of the gateway and the pairing page put an IPv6 address in brackets (`http://[2001:db8::1]:7890`). Before, a gateway that was bound to an IPv6 address printed `http://2001:db8::1:7890`, and a device could not open the pairing link. `--advertise` also accepts `[2001:db8::1]:7890`.
 
 ## [v0.5.35] - 2026-11-27
 
