@@ -105,6 +105,14 @@
     (swap! (:threads runtime) conj thread)
     thread))
 
+(def ^:private input-audio-frames
+  "Most audio frames that the input queue holds: all the speech that the coordinator
+   admits (pending utterances of the longest duration), in full frames. Model steps can
+   take longer than `input-buffer-ms`, so a bound of that size failed live speech on
+   slow steps."
+  (* (long (:max-pending-utterances contract/limits))
+     (quot (long (:max-utterance-ms contract/limits)) (long (:frame-ms contract/limits)))))
+
 (defn- enqueue-input!
   [runtime [operation _ generation :as command]]
   ;; Snapshot occupancy under the producer lock. Polling only releases capacity.
@@ -114,22 +122,20 @@
 
         result
         (locking queue
-          (let [commands
-                (seq (.toArray queue))
+          (let [^objects commands
+                (.toArray queue)
 
+                ;; This runs for each frame under the coordinator lock: count without a lazy seq.
                 frames
-                (count (filter #(= :feed (first %)) commands))
+                (areduce commands i n 0 (if (= :feed (nth (aget commands i) 0)) (inc n) n))
 
                 lifecycle
-                (- (count commands) frames)
+                (- (alength commands) frames)]
 
-                audio-limit
-                (quot (:input-buffer-ms contract/limits) (:frame-ms contract/limits))]
-
-            (if (and (if (= :feed operation) (< frames audio-limit) (< lifecycle 6))
+            (if (and (if (= :feed operation) (< frames (long input-audio-frames)) (< lifecycle 6))
                      (.offer queue command))
               true
-              {:queue-depth (count commands)
+              {:queue-depth (alength commands)
                :buffered-ms (* frames (:frame-ms contract/limits))
                :audio-frames frames})))]
 
@@ -467,8 +473,7 @@
         (engine-api)
 
         input
-        (ArrayBlockingQueue.
-          (int (+ 6 (quot (:input-buffer-ms contract/limits) (:frame-ms contract/limits)))))
+        (ArrayBlockingQueue. (int (+ 6 (long input-audio-frames))))
 
         output
         (ArrayBlockingQueue. (int (:max-pending-segments contract/limits)))

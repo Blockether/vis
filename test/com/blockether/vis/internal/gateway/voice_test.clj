@@ -747,6 +747,42 @@
                 (expect (= "live" (:capture (:state (voice/snapshot runtime)))))
                 (expect (= 1 (count @(:input-handles runtime))))
                 (finally (deliver release true))))))))
+    ;; Regression, live session 0e8070d8: one model step took longer than the 2 s input
+    ;; buffer, so speech that the coordinator had admitted overflowed the queue.
+    (it
+      "keeps admitted speech while a model step is slower than the input buffer"
+      (let [release
+            (promise)
+
+            fed
+            (atom 0)
+
+            frames
+            150]
+
+        (fixture
+          {:feed (fn [_ samples _]
+                   @release
+                   (swap! fed + (alength ^floats samples))
+                   nil)}
+          (fn [{:keys [start events admitted]}]
+            (let [runtime (open! start)]
+              (try
+                (expect (await! #(some (fn [event]
+                                         (= "session.ready" (:type event)))
+                                       @events)))
+                (control! runtime {:type "utterance.start" :capture-generation 0 :utterance-id 0})
+                (dotimes [i frames]
+                  (voice/message! runtime
+                                  (contract/encode-frame
+                                    {:generation 0 :stream-id 0 :sample-offset (* i 480)}
+                                    (byte-array 960))))
+                (control! runtime {:type "utterance.end" :capture-generation 0 :utterance-id 0})
+                (deliver release true)
+                (expect (await! #(= 1 (count @admitted))))
+                (expect (= (* frames 480) @fed))
+                (expect (not-any? #(= "utterance.rejected" (:type %)) @events))
+                (finally (deliver release true))))))))
     (it
       "streams a committed segment before completion and never repeats it at the terminal"
       (fixture
@@ -894,7 +930,8 @@
           (fn [{:keys [start events durable]}]
             (let [runtime (open! start)
                   effects (:effects (:coordinator runtime))
-                  frame {:generation 0 :pcm (byte-array 960) :sample-offset 0}]
+                  frame {:generation 0 :pcm (byte-array 960) :sample-offset 0}
+                  audio-frames (long @#'voice/input-audio-frames)]
 
               (try
                 (expect (await! #(some (fn [e]
@@ -904,7 +941,7 @@
                 (expect (await! #(contains? @(:input-handles runtime) 0)))
                 (if (= operation :feed) ((:feed-input effects) 0 frame) ((:finish-input effects) 0))
                 (expect (= true (deref entered 1000 :timeout)))
-                (expect (every? true? (repeatedly 100 #((:feed-input effects) 1 frame))))
+                (expect (every? true? (repeatedly audio-frames #((:feed-input effects) 1 frame))))
                 (expect ((:finish-input effects) 0))
                 (expect ((:open-input effects) 1 0))
                 (expect ((:finish-input effects) 1))
@@ -913,7 +950,8 @@
                 (expect (false? ((:feed-input effects) 2 frame)))
                 (let [[type payload] (last @durable)]
                   (expect (= "voice.input_overflow" type))
-                  (expect (= 2000 (:buffered-ms payload)))
+                  (expect (= (* audio-frames (long (:frame-ms contract/limits)))
+                             (:buffered-ms payload)))
                   (expect (= (name operation) (:active-operation payload)))
                   (expect (= "feed" (:operation payload)))
                   (expect (nat-int? (:active-duration-ms payload)))
@@ -924,10 +962,10 @@
                 (expect (false? ((:finish-input effects) 3)))
                 (expect (= [:finish :open :finish :open :finish :open]
                            (mapv first
-                                 (drop 100
+                                 (drop audio-frames
                                        (seq (.toArray ^java.util.concurrent.ArrayBlockingQueue
                                                       (:input runtime)))))))
                 ((:abort-input effects))
-                (expect (every? true? (repeatedly 100 #((:feed-input effects) 3 frame))))
+                (expect (every? true? (repeatedly audio-frames #((:feed-input effects) 3 frame))))
                 (expect (false? ((:feed-input effects) 3 frame)))
                 (finally (deliver release true))))))))))

@@ -17,6 +17,8 @@ import type {
 
 /** The microphone hears the assistant for this long after a played sample: latency and room echo. */
 const PLAYBACK_TAIL_MS = 500;
+/** The gateway loads the local speech models after the socket opens and before it is ready. */
+const PREPARING_MESSAGE = 'Preparing the local speech model. The first start can take a few seconds.';
 
 export interface LiveVoiceGateway {
   liveVoiceCapabilities(signal?: AbortSignal): Promise<LiveVoiceCapabilities>;
@@ -216,6 +218,7 @@ export class LiveVoiceSession {
     if (this.connectTimer) clearTimeout(this.connectTimer);
     this.connectTimer = null;
     this.lastServerMessage = Date.now();
+    if (!this.ready) this.update({ message: PREPARING_MESSAGE });
     this.heartbeat = setInterval(() => {
       if (Date.now() - this.lastServerMessage >= L.lease_ms) {
         void this.stop('Voice lease expired. Start again to reconnect.', true);
@@ -256,7 +259,10 @@ export class LiveVoiceSession {
         this.ready = true;
         if (this.connectTimer) clearTimeout(this.connectTimer);
         this.connectTimer = null;
-        this.update({ phase: 'live' });
+        this.update({
+          phase: 'live',
+          message: this.view.message === PREPARING_MESSAGE ? null : this.view.message,
+        });
         this.applyState(event.state);
         if (this.view.outputMuted) this.send({ type: 'output.mute', muted: true });
         break;

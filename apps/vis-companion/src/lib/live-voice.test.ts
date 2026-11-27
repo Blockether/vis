@@ -161,6 +161,15 @@ function harness(muted = false) {
 }
 
 describe('hands-free live session', () => {
+  it('tells the user that the local speech model is preparing until the gateway is ready', async () => {
+    const h = harness();
+    await h.session.start();
+    expect(h.session.current()).toMatchObject({ phase: 'starting' });
+    expect(h.session.current().message).toMatch(/Preparing the local speech model/);
+    h.ready();
+    expect(h.session.current()).toMatchObject({ phase: 'live', message: null });
+  });
+
   it('keeps native output playing through repeated muted states', async () => {
     const h = harness(true);
     Object.assign(h.audio, { captureRestartsOutput: true });
