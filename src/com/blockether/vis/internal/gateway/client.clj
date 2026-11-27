@@ -200,9 +200,16 @@
                                             (System/getenv REMOTE_TOKEN_ENV)))
       current)))
 
+(defn- url-host
+  "`host` as a URL writes it: an IPv6 literal goes in brackets."
+  [host]
+  (let [host (str host)]
+    (if (and (str/includes? host ":") (not (str/starts-with? host "["))) (str "[" host "]") host)))
+
 (defn- base-url
   [{:keys [host port] :as entry}]
-  (or (:base-url entry) (str "http://" (or host DEFAULT_HOST) ":" (or port DEFAULT_PORT))))
+  (or (:base-url entry)
+      (str "http://" (url-host (or host DEFAULT_HOST)) ":" (or port DEFAULT_PORT))))
 
 (defn- gw-send!
   "Perform a babashka.http-client request against gateway `entry`. `method` is a
@@ -2256,12 +2263,6 @@
    every interface answers on loopback, and browsers refuse to open 0.0.0.0."
   [host]
   (if (contains? #{"" "0.0.0.0" "::" "[::]"} (str/trim (str host))) DEFAULT_HOST (str host)))
-
-(defn- url-host
-  "`host` as a URL writes it: an IPv6 literal goes in brackets."
-  [host]
-  (let [host (str host)]
-    (if (and (str/includes? host ":") (not (str/starts-with? host "["))) (str "[" host "]") host)))
 
 (defn- web-url
   "The address a browser on this machine opens the web app of gateway `entry` at."

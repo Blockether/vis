@@ -360,6 +360,11 @@
                  (expect (= "https://gateway.example.com:443/"
                             ((rv 'web-url)
                               {:base-url "https://gateway.example.com:443" :remote? true}))))
+             (it "reaches a local daemon that is bound to an IPv6 address"
+                 (let [uri (java.net.URI. ((rv 'base-url) {:host "2001:db8::140" :port 7890}))]
+                   (expect (= "[2001:db8::140]" (.getHost uri)))
+                   (expect (= 7890 (.getPort uri))))
+                 (expect (= "http://127.0.0.1:7890" ((rv 'base-url) {:host "127.0.0.1" :port 7890}))))
              (it "matches a daemon by its port and its bound address, every interface or loopback"
                  (let [answers-at? (rv 'answers-at?)]
                    (expect (answers-at? {:host "0.0.0.0" :port 8080} "127.0.0.1" 8080))
