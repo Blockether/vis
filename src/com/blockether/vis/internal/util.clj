@@ -323,6 +323,12 @@
                   str/trim)]
     (when-not (str/blank? s) s)))
 
+(defn url-host
+  "`host` as a URL writes it: an IPv6 literal goes in brackets."
+  [host]
+  (let [host (str host)]
+    (if (and (str/includes? host ":") (not (str/starts-with? host "["))) (str "[" host "]") host)))
+
 (defn env-val
   "Environment variable `k`, trimmed, or nil when it is unset or blank."
   ^String [^String k]

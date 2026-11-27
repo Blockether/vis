@@ -21,12 +21,6 @@
 
 (defn- url-encode [s] (URLEncoder/encode (str s) StandardCharsets/UTF_8))
 
-(defn url-host
-  "`host` as a URL writes it: an IPv6 literal goes in brackets."
-  [host]
-  (let [host (str host)]
-    (if (and (str/includes? host ":") (not (str/starts-with? host "["))) (str "[" host "]") host)))
-
 (def ^:private LOOPBACK_HOSTS
   "Addresses that only this machine can dial. A bind on one of them serves
   nothing else, so neither the pairing link nor its `alt=` list may offer the
@@ -222,7 +216,7 @@
     (cond (str/blank? value) nil
           (str/includes? value "://") (str/replace value #"/+$" "")
           (re-matches #"(?:[^:/]+|\[[^\]/]+\]):\d+" value) (str "http://" value)
-          :else (str "http://" (url-host value) ":" port))))
+          :else (str "http://" (util/url-host value) ":" port))))
 
 (defn pairing-url
   "The `vis://gateway` deep link. `url=` is the best guess (Tailscale first), and
@@ -241,7 +235,7 @@
 
         ->url
         (fn [h]
-          (str "http://" (url-host h) ":" port))
+          (str "http://" (util/url-host h) ":" port))
 
         pinned
         (advertised-url advertise port)

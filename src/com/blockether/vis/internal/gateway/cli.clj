@@ -11,7 +11,8 @@
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.runtime :as gateway-runtime]
             [com.blockether.vis.internal.gateway.server :as gateway-server]
-            [com.blockether.vis.internal.gateway.server.web :as web]))
+            [com.blockether.vis.internal.gateway.server.web :as web]
+            [com.blockether.vis.internal.util :as util]))
 
 (defn- advertise-option
   "The address the pairing link must lead with, in precedence order: `--advertise`
@@ -147,7 +148,7 @@
           (str "gateway running pid="
                pid
                " url=http://"
-               (pairing/url-host host)
+               (util/url-host host)
                ":"
                port
                " db="
@@ -388,7 +389,7 @@
     (when-not (or remote? (contains? #{"127.0.0.1" "::1" "localhost"} (str host)))
       (when-let [others (->> (pairing/candidate-hosts host)
                              (remove #{"127.0.0.1" "::1" "localhost"})
-                             (map #(str "http://" (pairing/url-host %) ":" port "/"))
+                             (map #(str "http://" (util/url-host %) ":" port "/"))
                              seq)]
         (commandline/stdout! (str "Other devices: " (str/join ", " others)))
         (commandline/stdout! (str

@@ -20,7 +20,6 @@
             [com.blockether.vis.internal.config.core :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.diagnostics :as diagnostics]
-            [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.contract.wire :as wire]
@@ -204,7 +203,7 @@
 (defn- base-url
   [{:keys [host port] :as entry}]
   (or (:base-url entry)
-      (str "http://" (pairing/url-host (or host DEFAULT_HOST)) ":" (or port DEFAULT_PORT))))
+      (str "http://" (util/url-host (or host DEFAULT_HOST)) ":" (or port DEFAULT_PORT))))
 
 (defn- gw-send!
   "Perform a babashka.http-client request against gateway `entry`. `method` is a
@@ -2264,7 +2263,7 @@
   [entry]
   (if (:remote? entry)
     (str (base-url entry) "/")
-    (str "http://" (pairing/url-host (dial-host (:host entry))) ":" (:port entry) "/")))
+    (str "http://" (util/url-host (dial-host (:host entry))) ":" (:port entry) "/")))
 
 (defn- answers-at?
   "True when daemon `entry` answers at `host`:`port`: it listens on that port, bound
@@ -2338,7 +2337,7 @@
           (long (or port DEFAULT_PORT))
 
           url
-          (str (pairing/url-host host) ":" port)
+          (str (util/url-host host) ":" port)
 
           token
           (some-> (System/getenv REMOTE_TOKEN_ENV)

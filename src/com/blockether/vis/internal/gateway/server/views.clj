@@ -17,6 +17,7 @@
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.speech.core :as speech]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.view.core :as live-view]))
 
 (defn- client-extension-handler
@@ -336,7 +337,7 @@
     (->> (concat [(pairing/advertised-url advertise port)]
                  (->> (pairing/candidate-hosts bind)
                       (remove str/blank?)
-                      (map #(str scheme "://" (pairing/url-host %) ":" port)))
+                      (map #(str scheme "://" (util/url-host %) ":" port)))
                  (when (pairing/wildcard-bind? bind) [(str scheme "://127.0.0.1:" port)]))
          (remove str/blank?)
          distinct
