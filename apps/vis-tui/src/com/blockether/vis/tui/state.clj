@@ -5257,8 +5257,8 @@
 (defn- search-hits
   "Search `messages` for `query`. Returns {:hits [msg-indices] :total n}:
    :hits are indices of messages containing the query (the shape the painter
-   and scroll consume), :total counts occurrences in each message. A Council
-   note can also match without counting its body twice. `case?` true = case-sensitive;
+   and scroll consume), :total counts occurrences in each message. For a Council
+   turn, search the note when present, or the full entry text. `case?` true = case-sensitive;
    default is case-insensitive. Blank query -> no hits."
   [messages query case?]
   (let [needle
@@ -5269,19 +5269,17 @@
 
     (if (clojure.string/blank? needle)
       {:hits [] :total 0}
-      (let [occurrences (fn [text]
-                          (let [hay (cond-> (str text) (not case?) str/lower-case)]
-                            (loop [from 0
-                                   n 0]
-                              (let [pos (.indexOf ^String hay ^String needle (int from))]
-                                (if (neg? pos) n (recur (+ pos n-len) (inc n)))))))
-            counts (keep-indexed (fn [i m]
+      (let [counts (keep-indexed (fn [i m]
                                    (let [council (:council m)
-                                         text (or (presentation/council-content council) (:text m))
-                                         ;; The note summarizes the same message. Do not count it twice.
-                                         c (max (long (occurrences text))
-                                                (long (occurrences (get council "note"))))]
-                                     (when (pos? c) [i c])))
+                                         hay (cond-> (str (or (get council "note")
+                                                             (presentation/council-content council)
+                                                             (:text m)))
+                                               (not case?) str/lower-case)
+                                         c (loop [from 0
+                                                  n 0]
+                                             (let [pos (.indexOf ^String hay ^String needle (int from))]
+                                               (if (neg? pos) n (recur (+ pos n-len) (inc n)))))]
+                                     (when (pos? (long c)) [i c])))
                                  messages)]
         {:hits (mapv first counts) :total (long (reduce + 0 (map second counts)))}))))
 

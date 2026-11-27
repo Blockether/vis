@@ -217,7 +217,7 @@
             (expect (str/includes? (cap/frame-text frame) (or note content)))
             (expect (= full-content (#'screen/copyable-bubble-text projected width {} {})))
             (when entries
-              (expect (= {:hits [0] :total 1}
+              (expect (= {:hits [] :total 0}
                          (#'state/search-hits [message] "All parser tests pass." false)))
               (expect (= {:hits [0] :total 1}
                          (#'state/search-hits [message] "Started module checks." false)))
@@ -227,6 +227,8 @@
                     node-id (:node-id (last (:line-meta collapsed)))
                     expanded (virtual/project-message
                                no-note width {} (assoc opts :detail-expansions {["session" node-id] true}))]
+                (expect (= {:hits [0] :total 1}
+                           (#'state/search-hits [no-note] "All parser tests pass." false)))
                 (expect (some #(str/includes? (visible %) "All parser tests pass.")
                               (:prewrapped-lines expanded)))))
             (when note

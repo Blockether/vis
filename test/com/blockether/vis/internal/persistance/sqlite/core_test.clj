@@ -2906,9 +2906,9 @@
                      :council-entry-id (:entry_id first-entry)
                      :council-later-entry-ids [(:entry_id later)]
                      :user-request "Council notifications"})
-            entries #(mapv (juxt :entry-id :content) (get-in % [:council :entries]))
-            expected [[(:entry_id first-entry) "Started module checks"]
-                      [(:entry_id later) "Antaresquill passed"]]]
+            entries #(mapv (juxt :entry-id :content :reply-required) (get-in % [:council :entries]))
+            expected [[(:entry_id first-entry) "Started module checks" false]
+                      [(:entry_id later) "Antaresquill passed" false]]]
         (expect (= expected (entries (first (persistance/db-list-session-turns s cid)))))
         (expect (= expected
                    (entries (get-in (persistance/db-search-session-matches s :all "Antaresquill")

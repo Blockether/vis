@@ -157,10 +157,17 @@
     (str/join "\n\n" (map :content entries))
     (:content council)))
 
-(defn- turn-council [sid team entry]
+(defn- with-council-note [sid team entry]
   (if-let [note (and entry (not (:note entry)) (council-note sid @team entry))]
     (assoc entry :note note)
     entry))
+
+(defn- turn-council
+  "The wire `council` of a turn: its note, and the note of each entry that it took."
+  [sid team entry]
+  (with-council-note sid team (cond-> entry
+                                (:entries entry)
+                                (update :entries (partial mapv #(with-council-note sid team %))))))
 
 (defn- bounded-pr
   "Bound diagnostic `pr-str` values before they enter an event."
@@ -6846,6 +6853,12 @@
 
 (declare release-held-wakes!)
 
+(defn- bind-council-ping!
+  "Bind every Council entry of `council-ping` to activation `activation-id` of `sid`."
+  [{:keys [db entry-id others]} sid activation-id]
+  (doseq [id (cons entry-id (map :entry_id others))]
+    (persistance/db-council-bind-wake! db id (str sid) activation-id)))
+
 (defn submit-turn!
   "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
    A fresh idle submission clears a provider-failure pause before it starts;
@@ -7046,10 +7059,7 @@
       (let [[kind v paused] @decision]
         (case kind
           :council-active
-          (do (persistance/db-council-bind-wake! (:db council-ping)
-                                                 (:entry-id council-ping)
-                                                 (str sid)
-                                                 v)
+          (do (bind-council-ping! council-ping sid v)
               {:council-active? true})
 
           :council-unavailable
@@ -7082,10 +7092,8 @@
           :accepted
           (let [turn (get-turn sid tid)]
             (when council-ping
-              (try (persistance/db-council-bind-wake! (:db council-ping)
-                                                      (:entry-id council-ping)
-                                                      (str sid)
-                                                      (:activation-id wake-activation))
+              ;; Before the launch: the first iteration reads every entry of the turn.
+              (try (bind-council-ping! council-ping sid (:activation-id wake-activation))
                    (catch Exception e
                      (fail-orphaned-turn! sid
                                           tid
@@ -7195,23 +7203,28 @@
         (when handle (task/discard! owner (:id handle)))
         (restore!)))))
 
+(defn- entry-wakes?
+  "True when Council `entry` may still wake `sid`: same group, and its author may wake it."
+  [db sid entry]
+  (and (= (:group_id entry) (council/default-group db sid))
+       (agents/wake-allowed? db (:author_session_id entry) sid)))
+
 (defn council-wake!
   "Start `sid`'s notification turn for Council `entry`; throws when it may no
    longer be woken or the turn cannot start. The same turn takes the later entries
-   `others`, so its request names them too. While a rate limit hold lasts, the entry
-   starts no turn: see [[hold-wake!]]."
+   `others`, so its request names them too. While a rate limit hold lasts, the entries
+   start no turn: see [[hold-wake!]]."
   ([db sid entry] (council-wake! db sid entry nil))
   ([db sid entry others]
    (when-not (and (council/enabled?)
                   (council-wake-eligible? db sid)
-                  (= (:group_id entry) (council/default-group db sid))
-                  (agents/wake-allowed? db (:author_session_id entry) sid))
+                  (entry-wakes? db sid entry))
      (throw (ex-info "Council target changed groups before wake" {:error :invalid-recipient})))
    (locking agent-lock
      (when (and (:reply_to entry) (agents/attempt-cancelled? (agents/info db sid)))
        (agents/fail! :invalid-recipient "A reply does not restart a cancelled subagent"))
      (if-let [hold-ms (rate-limit-hold-ms db sid)]
-       (hold-wake! db sid entry hold-ms)
+       (last (mapv #(hold-wake! db sid % hold-ms) (cons entry others)))
        (let [restore! (prepare-council-wake! db sid entry)
              entries (cons entry others)
              result
@@ -7247,21 +7260,27 @@
          result)))))
 
 (defn- wake-held!
-  "Give the held Council `entries` of `sid` to the wake path, oldest first. One turn
-   takes them all: the first entry starts it or joins the running turn, and the others
-   join it as Council input. While a hold lasts, they are held again. An entry that
-   the wake path refuses loses its hold mark and stays in its thread."
+  "Give the held Council `entries` of `sid` to the wake path in one call, oldest first.
+   One turn takes them all: it starts with them, or they join the running turn. While a
+   hold lasts, they are held again. An entry that may no longer wake `sid`, or a batch
+   that the wake path refuses, loses its hold mark and stays in its thread."
   [db sid entries]
-  (doseq [[n entry] (map-indexed vector entries)]
-    (try (council-wake! db sid entry (when (zero? (long n)) (subvec entries 1)))
-         (catch Throwable t
-           (try (persistance/db-council-hold! db (:entry_id entry) (str sid) false)
-                (catch Throwable _ nil))
-           (tel/log! {:level :warn
-                      :id ::held-wake-skipped
-                      :data {:session-id sid
-                             :entry-id (:entry_id entry)
-                             :error-class (.getName (class t))}})))))
+  (let [skip! (fn [entry ^Throwable t]
+                (try (persistance/db-council-hold! db (:entry_id entry) (str sid) false)
+                     (catch Throwable _ nil))
+                (tel/log! {:level :warn
+                           :id ::held-wake-skipped
+                           :data {:session-id sid
+                                  :entry-id (:entry_id entry)
+                                  :error-class (when t (.getName (class t)))}}))
+        wakes (vec (filter #(try (entry-wakes? db sid %) (catch Throwable _ false)) entries))]
+    (doseq [entry (remove (set wakes) entries)]
+      (skip! entry nil))
+    (when (seq wakes)
+      (try (council-wake! db sid (first wakes) (subvec wakes 1))
+           (catch Throwable t
+             (doseq [entry wakes]
+               (skip! entry t)))))))
 
 (defn- release-held-wakes!
   "Give the Council entries that a rate limit held for `sid` to the wake path: see

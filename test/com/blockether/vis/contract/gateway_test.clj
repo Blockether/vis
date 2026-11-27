@@ -18,7 +18,10 @@
           (expect (document/valid? "gateway" "turn"
                                    (assoc turn :session_id "lead" :status "completed" :created_at 0)))
           (expect (= (:note council) (state/council-note "lead" agents (dissoc council :note)))
-                  (:turn_id turn))))))
+                  (:turn_id turn))
+          (doseq [entry (:entries council)]
+            (expect (= (:note entry) (state/council-note "lead" agents (dissoc entry :note)))
+                    [(:turn_id turn) (:entry_id entry)]))))))
 
 (def ^:private http-methods #{:delete :get :patch :post :put})
 

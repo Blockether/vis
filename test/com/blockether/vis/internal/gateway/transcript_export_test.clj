@@ -323,7 +323,21 @@
                                                 "\\[text\\]\\(url\\)\n\n")))
                 (expect (str/includes? out "## Council\n\nPlease read.\n\n**Second paragraph.**"))
                 (expect (not (str/includes? out "## You")))
-                (expect (not (str/includes? out "# Goal")))))))
+                (expect (not (str/includes? out "# Goal")))))
+            (it "shows each entry of a turn that took several, as its note or its text"
+                (let [out (transcript-export/markdown
+                            {"session" {"id" "s1"}
+                             "turns" [{"request_kind" "council"
+                                       "council" {"content" "Started."
+                                                  "note" "VERIFY | #2: Started. (+2 more)"
+                                                  "entries" [{"content" "Started." "note" "VERIFY | #2: Started."}
+                                                             {"content" "Subagent fix — completed\nTask: # Goal"
+                                                              "note" "IMPLEMENT | Fix parser: completed"}
+                                                             {"content" "Peer text."}]}}]})]
+                  (expect (str/includes? out (str "## Council\n\nVERIFY \\| \\#2\\: Started\\.\n\n"
+                                                  "IMPLEMENT \\| Fix parser\\: completed\n\nPeer text.\n\n")))
+                  (expect (not (str/includes? out "# Goal")))
+                  (expect (not (str/includes? out "(+2 more)")))))))
 
 (defn- metric
   "The value of the row `label` in the Metrics table of `markdown`."

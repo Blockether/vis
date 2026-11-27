@@ -624,6 +624,12 @@
         council
         (get turn "council")
 
+        entries
+        (seq (get council "entries"))
+
+        council-text
+        (or (get council "content") request)
+
         answer
         (str/join "\n\n"
                   (keep #(when (= "prose" (get % "type"))
@@ -636,11 +642,15 @@
                     [(get turn "meta_summary") (web-duration (get turn "duration_ms"))]))]
 
     (str (if council?
-           (str "## Council\n\n" (if-let [note (get council "note")]
-                                      (plain-markdown note)
-                                      (or (some->> (get council "entries") seq (map #(get % "content")) (str/join "\n\n"))
-                                          (get council "content")
-                                          request))
+           (str "## Council\n\n"
+                (cond
+                  ;; Like Compact mode: one line for each entry, its note when it has one.
+                  entries (str/join "\n\n" (map #(if-let [note (get % "note")]
+                                                    (plain-markdown note)
+                                                    (get % "content"))
+                                                 entries))
+                  (get council "note") (plain-markdown (get council "note"))
+                  :else council-text)
                 "\n\n")
            (str "## You\n\n" (if (str/blank? request) "_(empty)_" request)
                 "\n\n" (when-let [attachments (seq (get turn "attachments"))]

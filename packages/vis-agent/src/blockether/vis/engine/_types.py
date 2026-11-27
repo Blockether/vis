@@ -501,6 +501,7 @@ class TurnCouncilEntry(TypedDict):
     title: NotRequired[str | None]
     content: str
     reply_required: NotRequired[bool]
+    note: NotRequired[str]
 
 
 class TurnCouncil(TypedDict):

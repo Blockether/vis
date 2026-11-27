@@ -4504,8 +4504,9 @@
                              ;; The turn that takes an entry binds its ping.
                              #'state/submit-turn! (fn [_ opts]
                                                     (swap! submitted conj opts)
-                                                    (swap! marks dissoc
-                                                      (get-in opts [:council-ping :entry-id]))
+                                                    (apply swap! marks dissoc
+                                                      (get-in opts [:council-ping :entry-id])
+                                                      (get-in opts [:engine-opts :council-later-entry-ids]))
                                                     {:turn {}})}
               #(f submitted scheduled))))
 
@@ -4530,7 +4531,7 @@
                  (state/council-wake! ::db "lead" (entry id)))
                (end-hold!)
                (#'state/release-held-wakes! "lead")
-               (expect (= [1 2 3 4] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (= [1] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
                (expect (str/includes? (:request (first @submitted))
                                       "Council notifications #1, #2, #3, #4."))
                (expect (= "result 1\n\nresult 2\n\nresult 3\n\nresult 4"
@@ -4548,7 +4549,8 @@
                ;; A new process has no registry entry of the hold.
                (reset! @#'state/registry {"lead" {:turns {}}})
                (expect (= 2 (state/restore-held-wakes!)))
-               (expect (= [1 2] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (= [1] (mapv #(get-in % [:council-ping :entry-id]) @submitted)))
+               (expect (= [2] (get-in (first @submitted) [:engine-opts :council-later-entry-ids])))
                (expect (str/includes? (:request (first @submitted))
                                       "Council notifications #1, #2."))
                (expect (= 0 (state/restore-held-wakes!)) "a turn took the entries"))))

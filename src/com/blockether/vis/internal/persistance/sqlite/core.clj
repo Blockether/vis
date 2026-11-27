@@ -2463,7 +2463,8 @@
                  :author-session-id (:council_author_sid row)
                  :source (:council_source row)
                  :reply-required (= 1 (:council_reply_required row))}
-          later (some-> (:council_later_json row) (json/read-json :key-fn keyword) seq)]
+          later (some->> (some-> (:council_later_json row) (json/read-json :key-fn keyword) seq)
+                         (map #(update % :reply-required (fn [v] (or (true? v) (= 1 v))))))]
       (cond-> entry
         later (assoc :entries (into [entry] later))))))
 
@@ -6788,7 +6789,8 @@
      :copy-histories!    (fn [forms] {old-history-id new-history-id}) copies the
                          Activity histories that one iteration's forms name
      :council-entry-ids  old to new Council entry ids, or nil to keep the ids; a turn
-                         whose entry is not in the map becomes a user turn"
+                         keeps its entries in the map, the first of them starts it,
+                         and a turn with none becomes a user turn"
   [tx-info {:keys [soul state iterations attachments council-later-entry-ids]} state-id position
    {:keys [now notice copy-histories! council-entry-ids]}]
   (let [new-turn-id
@@ -6811,15 +6813,18 @@
                      [(:id a) (str (new-uuid))]))
               attachments)
 
-        entry-id
-        (some->> (:council_entry_id soul)
-                 (get council-entry-ids))]
+        ;; A copy keeps the Council entries that it can map; the first one starts the turn.
+        entry-ids
+        (when (:council_entry_id soul)
+          (cond->> (cons (:council_entry_id soul) council-later-entry-ids)
+            council-entry-ids (keep council-entry-ids)
+            true vec))
 
-    (when (and soul (or entry-id (and (nil? council-entry-ids) (:council_entry_id soul))))
-      (insert-council-later-entries! tx-info
-                                     new-turn-id
-                                     (cond->> council-later-entry-ids
-                                       council-entry-ids (keep council-entry-ids))))
+        entry-id
+        (first entry-ids)]
+
+    (when soul
+      (insert-council-later-entries! tx-info new-turn-id (rest entry-ids)))
     (when soul
       (execute! tx-info
                 {:insert-into :session_turn_soul
