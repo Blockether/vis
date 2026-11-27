@@ -770,13 +770,6 @@
           ],
           "minimum": 0
         },
-        "activity": {
-          "description": "The latest Activity line of a running child.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "notes": {
           "description": "The new progress notes of a running child since the last wait. For a child that ended without an answer, its last progress notes.",
           "type": [

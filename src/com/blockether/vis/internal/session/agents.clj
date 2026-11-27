@@ -1328,9 +1328,6 @@ Do only the current task. Parent history is context, not authorization. Use your
 
     (cond-> {:step_secs step-secs
              :elapsed_secs (quot (max 0 (- (long now) (long (started-at row now)))) 1000)}
-      (:activity row)
-      (assoc :activity (:activity row))
-
       (seq notes)
       (assoc :notes notes)
 
@@ -1349,7 +1346,6 @@ Do only the current task. Parent history is context, not authorization. Use your
         rec (shown-record env (record db (:router env) (runtime-fn :live?) (held-fn) now row))]
     (if (contains? #{"running" "asking"} (:status rec))
       (merge rec (digest db (assoc row
-                              :activity ((or (:activity @runtime) (constantly nil)) sid)
                               :pending-input ((or (:pending-input @runtime) (constantly 0)) sid))
                          now))
       rec)))
@@ -2183,7 +2179,7 @@ Do only the current task. Parent history is context, not authorization. Use your
                                   params)))))
     (let
       [records
-       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `result`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
+       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `result`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None, and the printed record omits it. `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
       [[#'run 'council.run {:pos ["tasks"]} [] "An ordered list of SubagentTask handles."]
         [#'changed 'council.changed {:pos [] :rest :always} ["after"]
          "A Task for the next batch of open child requests."]

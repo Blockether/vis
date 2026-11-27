@@ -65,8 +65,8 @@ class SubagentRecord:
     the working provider and model routes for a new child. Another provider failure gives code
     ``provider_failed``. Every record has the same keys
     for each status; a key without a value is ``None``. A running child has values in
-    ``activity``, ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its
-    current progress. A child that ended without an answer has its last ``notes``.
+    ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its current
+    progress. A child that ended without an answer has its last ``notes``.
     """
 
     session_id: str
@@ -84,7 +84,6 @@ class SubagentRecord:
     warning: str | None = None
     error: dict[str, Any] | None = None
     alternatives: list[dict[str, str]] | None = None
-    activity: str | None = None
     notes: list[str] | None = None
     messages: list[dict[str, Any]] | None = None
     step_secs: int | None = None

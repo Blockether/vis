@@ -9402,7 +9402,6 @@
    :awaits-person? #'agent-awaits-person?
    :leader-active? #'agent-leader-active?
    :held? #'agent-held?
-   :activity #'agent-activity
    :pending-input #'agent-pending-input
    :publish #'agent-publish
    :changed! #(team-changed! % true)})

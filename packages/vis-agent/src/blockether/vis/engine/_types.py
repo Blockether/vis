@@ -1033,7 +1033,6 @@ class AgentsRecord(TypedDict):
     files: NotRequired[AgentsFiles | None]
     iteration_budget: NotRequired[JSONValue]
     iterations_used: NotRequired[int | None]
-    activity: NotRequired[str | None]
     notes: NotRequired[list[str] | None]
     messages: NotRequired[list[AgentsRecordMessagesItem] | None]
     step_secs: NotRequired[int | None]
