@@ -316,6 +316,21 @@ describe('hands-free live session', () => {
     expect(h.views.at(-1)?.reconciled).toBe(true);
     expect(h.views.at(-1)?.receipts).toHaveLength(1);
   });
+  it('clears an old notice when a later request is admitted', async () => {
+    const h = harness();
+    await h.session.start();
+    h.ready();
+    h.emit({ type: 'error', code: 'admission_rejected', message: 'Not admitted.', fatal: false });
+    expect(h.views.at(-1)?.message).toBe('Not admitted.');
+    h.emit({
+      type: 'utterance.admitted',
+      utterance_id: 1,
+      turn_id: tid,
+      idempotency_key: 'v:1',
+      status: 'running',
+    });
+    expect(h.views.at(-1)?.message).toBeNull();
+  });
   it('ends without a warning after speech that held no words', async () => {
     const h = harness();
     await h.session.start();

@@ -314,7 +314,8 @@ export class LiveVoiceSession {
         this.ownedTurns.add(event.turn_id);
         if (this.ownedTurns.size > 128)
           this.ownedTurns.delete(this.ownedTurns.values().next().value!);
-        this.update({ turnId: event.turn_id });
+        // A notice describes an earlier request. A later admission makes it stale.
+        this.update({ turnId: event.turn_id, message: null });
         break;
       case 'speech.committed':
         if (
