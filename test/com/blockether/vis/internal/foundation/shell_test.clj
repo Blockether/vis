@@ -2189,6 +2189,16 @@
         (if (< n 160) (do (Thread/sleep 25) (recur (inc n))) false)
         true))))
 
+(defdescribe shell-observed-completion-fields-test
+  (it "reads final fields after an observation-only wait"
+      (with-shell-task-context
+        (fn [_ ctx]
+          (expect (= [true 0 "exited"]
+                     (py ctx (str "import asyncio\n"
+                                  "sh = await shell('printf observed')\n"
+                                  "done, _ = await asyncio.wait([sh], timeout=20)\n"
+                                  "[sh in done, sh.exit, sh.status]"))))))))
+
 (defdescribe shell-starter-cancellation-test
   (it "does not leave a child if the shell starter is cancelled during spawn"
       (with-shell-task-context
