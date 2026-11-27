@@ -500,6 +500,13 @@
                            (newThread [_ task]
                              (doto (Thread. task "vis-python-worker-spawn") (.setDaemon true))))))
 
+(defn- discard!
+  "Destroy a process that no caller owns. Nothing reads its output to the end, so
+   close the stream here: it holds a descriptor until then."
+  [^Process process]
+  (.destroyForcibly process)
+  (try (.close (.getInputStream process)) (catch Throwable _ nil)))
+
 (defn- spawn-within!
   "Answer the process of `spawn`, a function of no arguments, or throw when it
    does not return before `deadline`. The spawn is native code that an interrupt
@@ -512,7 +519,7 @@
         ^Callable start
         (bound-fn []
                   (let [^Process process (spawn)]
-                    (when-not (compare-and-set! claim ::waiting process) (.destroyForcibly process))
+                    (when-not (compare-and-set! claim ::waiting process) (discard! process))
                     process))
 
         task
@@ -526,7 +533,7 @@
          (catch ExecutionException e (throw (or (.getCause e) e)))
          (catch Throwable t
            (when-not (compare-and-set! claim ::waiting ::abandoned)
-             (.destroyForcibly ^Process @claim))
+             (discard! @claim))
            (throw t)))))
 
 (def ^:private STACK_CONTROL_MS
