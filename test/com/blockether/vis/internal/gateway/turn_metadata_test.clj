@@ -118,6 +118,7 @@
   (it "persisted turn list retains the canonical position"
       (let [turn (#'state/persisted-turn->wire
                   "session"
+                  (delay [])
                   {:id "turn" :position 42 :created-at (java.util.Date. 1234) :status :success})]
         (expect (= 42 (:position turn)))
         (expect (= 1234 (:created_at turn))))))

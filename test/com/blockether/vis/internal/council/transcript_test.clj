@@ -76,7 +76,7 @@
           (ps/db-list-session-turns db sid)
 
           wire
-          (#'state/persisted-turn->wire sid turn)
+          (#'state/persisted-turn->wire sid (delay (ps/db-agent-list db sid)) turn)
 
           transcript
           (with-redefs [lp/db-info (constantly db)]
