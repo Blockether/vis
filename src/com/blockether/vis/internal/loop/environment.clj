@@ -515,7 +515,7 @@
 
    Returns the vis environment map."
   [router {:keys [db session channel external-id title workspace-id sources tools origin parent-session-id
-                 defer-project-extensions?]}]
+                 claimed? defer-project-extensions?]}]
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the session is
   ;; built ~130 lines before this function returns, and workspace resolution,
@@ -604,11 +604,11 @@
                                                                    :title title
                                                                    :workspace-id (:id
                                                                                    active-workspace)
-                                                                   ;; Every session is created for somebody
-                                                                   ;; who asked for it, so it is claimed from
-                                                                   ;; the start and shows in the cross-channel
-                                                                   ;; list.
-                                                                   :claimed? true}
+                                                                   ;; A session is claimed from the start and
+                                                                   ;; shows in the cross-channel list.
+                                                                   ;; `:claimed? false` keeps scaffolding,
+                                                                   ;; such as a temporary automation run, out.
+                                                                   :claimed? (not (false? claimed?))}
                                                             root-provider
                                                             (assoc :provider root-provider)
 
@@ -2181,7 +2181,8 @@
    it opens with the global catalog, and the project is prepared in the background. The
    first turn, or the end of that preparation when the session is idle, rebuilds the env
    with the project catalog (#508)."
-  [id {:keys [channel external-id title workspace-id sources extensions tools origin parent-session-id]}]
+  [id {:keys [channel external-id title workspace-id sources extensions tools origin parent-session-id
+              claimed?]}]
   (let [db
         (config/resolve-db-spec)
 
@@ -2247,7 +2248,10 @@
                                   (assoc :origin origin)
 
                                   (and parent-session-id (not id))
-                                  (assoc :parent-session-id parent-session-id)))]
+                                  (assoc :parent-session-id parent-session-id)
+
+                                  (and (false? claimed?) (not id))
+                                  (assoc :claimed? false)))]
 
         (turn-off-extensions! env turned-off)
         (when deferred? (complete-deferred-env! (:session-id env) (workspace/cwd)))

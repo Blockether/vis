@@ -357,6 +357,11 @@
 (defn- session-opts
   [definition target]
   (cond-> {:title (str "Automation: " (get definition "name"))}
+    ;; A temporary session lives for one run. In a session list it showed and went
+    ;; away again at each run, so no list holds it.
+    (= "temporary" (get target "mode"))
+    (assoc :claimed? false)
+
     (get target "root")
     (assoc :root (get target "root"))
 

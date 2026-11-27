@@ -139,6 +139,7 @@
                        (expect (= "t-1" (:turn_id run)))
                        (expect (nil? (:session_id run)))
                        (expect (= "s-new" sid))
+                       (expect (false? (:claimed? (second (first (calls-of calls :create))))))
                        (expect (= "Check the build." (:display-request opts)))
                        (expect (str/ends-with? (:request opts) "\n\nCheck the build."))
                        (expect (= (str "automation-" (:id run)) (:idempotency-key opts)))

@@ -1998,10 +1998,10 @@
                                        :created_at now
                                        :owner_id (or owner-id "local")
                                        ;; adoption marker (V5). Unclaimed (NULL)
-                                       ;; = warm-pool scaffolding, hidden from
-                                       ;; db-list-sessions; claimed = a real
-                                       ;; conversation. Prewarm passes :claimed?
-                                       ;; false; everyone else defaults true.
+                                       ;; = scaffolding, such as the session of a
+                                       ;; temporary automation run, hidden from
+                                       ;; every session list; claimed = a real
+                                       ;; conversation. A turn does not claim it.
                                        :claimed_at (when claimed? now)}
                                 ;; child session → cross-soul link to the parent state;
                                 ;; keeps the child OUT of the top-level list (queryable
@@ -4738,14 +4738,6 @@
                                :status (normalize-status (or status :running))
                                :created_at now}]})
           (store-turn-attachments! tx-info (str soul-id) attachments now)
-          ;; A turn is intent: stamp the parent soul ADOPTED so a first-turn
-          ;; session (e.g. a warm-pool tab the user just typed into) leaves the
-          ;; unclaimed scaffolding state and becomes list-visible. Idempotent -
-          ;; only flips a still-NULL claimed_at, a no-op on every later turn.
-          (execute! tx-info
-                    {:update :session_soul
-                     :set {:claimed_at now}
-                     :where [:and [:= :id (->ref parent-session-id)] [:= :claimed_at nil]]})
           soul-id)))))
 
 (defn- row->attachment

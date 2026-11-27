@@ -3295,9 +3295,8 @@
         (expect (= [a] (persistance/db-search-session-ids s :tui "needle")))
         (expect (= #{a b} (set (persistance/db-search-session-ids s :all "needle")))))))
 
-;; Adoption marker (V5 claimed_at) - warm-pool scaffolding stays out of the
-;; cross-channel list until a tab claims it (explicitly at creation, or via its
-;; first turn).
+;; Adoption marker (V5 claimed_at) - scaffolding, such as the session of a temporary
+;; automation run, stays out of the cross-channel list until something claims it.
 
 (defdescribe session-adoption-claimed-test
              (it "defaults to CLAIMED: a normal session is list-visible immediately"
@@ -3317,31 +3316,29 @@
                  ;; ...yet the soul row exists and direct resume-by-id still works.
                  (expect (= 1 (raw-count s :session_soul)))
                  (expect (= "pool" (:title (persistance/db-get-session s id))))))
-             (it "the FIRST turn claims an unclaimed session, surfacing it in the list"
+             (it "a turn keeps an unclaimed session out of the list"
+                 ;; A temporary automation run made a listed session each minute; the
+                 ;; Companion list showed it and removed it again at each run.
                  (let [s
                        (h/store)
 
                        id
-                       (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
+                       (h/store-session! s {:channel :api :title "Automation: X desk" :claimed? false})]
 
+                   (persistance/db-store-session-turn!
+                     s
+                     {:parent-session-id id :user-request "run" :status :running})
                    (expect (= [] (vec (persistance/db-list-sessions s :all))))
-                   (persistance/db-store-session-turn!
-                     s
-                     {:parent-session-id id :user-request "hi" :status :running})
-                   (expect (= ["pool"] (mapv :title (persistance/db-list-sessions s :all))))))
-             (it "claiming is idempotent: a second turn does not disturb the claimed session"
+                   (expect (= [] (vec (persistance/db-search-session-ids s :all "desk"))))))
+             (it "claiming is idempotent"
                  (let [s
                        (h/store)
 
                        id
                        (h/store-session! s {:channel :tui :title "pool" :claimed? false})]
 
-                   (persistance/db-store-session-turn!
-                     s
-                     {:parent-session-id id :user-request "one" :status :running})
-                   (persistance/db-store-session-turn!
-                     s
-                     {:parent-session-id id :user-request "two" :status :running})
+                   (persistance/db-claim-session! s id)
+                   (persistance/db-claim-session! s id)
                    (expect (= ["pool"] (mapv :title (persistance/db-list-sessions s :all))))
                    (expect (= 1 (raw-count s :session_soul))))))
 

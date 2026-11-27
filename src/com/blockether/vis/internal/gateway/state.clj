@@ -8212,7 +8212,7 @@
 
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root group-id sources extensions tools origin
-            parent-session-id]}]
+            parent-session-id claimed?]}]
   ;; The store cannot make a workspace in a folder that does not exist, and a blank
   ;; root names no folder. Without this refusal the create failed later and the
   ;; caller read 500 engine-error (#484). Only a nil root asks for the default folder.
@@ -8257,7 +8257,10 @@
                       (assoc :origin origin)
 
                       parent-session-id
-                      (assoc :parent-session-id parent-session-id)))]
+                      (assoc :parent-session-id parent-session-id)
+
+                      (false? claimed?)
+                      (assoc :claimed? false)))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
     (when-not group-id (file-in-root-project! (:id created) workspace-id))
@@ -8303,14 +8306,17 @@
 
    `:idempotency-key` makes a retry safe. For SESSION_CREATE_KEY_TTL_MS, the
    same key answers with the session that the first create made, also while that
-   create still runs. A failed create forgets its key, so a retry creates again."
-  [{:keys [channel idempotency-key parent-session-id origin] :as opts}]
+   create still runs. A failed create forgets its key, so a retry creates again.
+
+   `:claimed? false` keeps the session out of every session list, like a child.
+   No list holds it, so no `session.created` frame is sent."
+  [{:keys [channel idempotency-key parent-session-id origin claimed?] :as opts}]
   (let [create (fn []
                  (let [session (session->wire
                                  (create-session-cold! (-> opts
                                                            (dissoc :idempotency-key)
                                                            (assoc :channel (or channel :api)))))]
-                   (if parent-session-id
+                   (if (or parent-session-id (false? claimed?))
                      session
                      (publish-session-created! (try (lp/db-info) (catch Throwable _ nil)) session))))]
     (if (str/blank? idempotency-key)

@@ -49,9 +49,11 @@
      :tools         tool names to keep, or `-name` entries to turn off, in optional
                     extensions; nil keeps every tool.
      :parent-session-id  parent session of a new child session.
-     :origin        JSON map that names the program that created the session."
+     :origin        JSON map that names the program that created the session.
+     :claimed?      false keeps the session out of every session list."
   ([channel] (create! channel nil))
-  ([channel {:keys [title external-id workspace-id sources extensions tools origin parent-session-id]}]
+  ([channel {:keys [title external-id workspace-id sources extensions tools origin parent-session-id
+                    claimed?]}]
    (let [env
          (loop-env/open-env! nil
                              (cond-> {:channel channel
@@ -68,7 +70,10 @@
                                (assoc :origin origin)
 
                                parent-session-id
-                               (assoc :parent-session-id parent-session-id)))
+                               (assoc :parent-session-id parent-session-id)
+
+                               (false? claimed?)
+                               (assoc :claimed? false)))
 
          id
          (:session-id env)
