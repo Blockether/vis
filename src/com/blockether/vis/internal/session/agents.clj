@@ -2159,6 +2159,12 @@ Do only the current task. Parent history is context, not authorization. Use your
 
           (fail! :invalid-request (str "Unknown subagent operation " (name operation))))))))
 
+(def ^:private role-doc
+  "The roles that `council.run` accepts, from the agents contract."
+  (str "\n\n   A `role` is one of: "
+       (str/join ", " (map #(str "`" (get % "const") "` (" (get % "title") ")") roles))
+       "."))
+
 (def symbols
   (mapv
     (fn [[v sym call params result-doc]]
@@ -2169,7 +2175,7 @@ Do only the current task. Parent history is context, not authorization. Use your
                                               (enabled? (:db-info env) (:session-id env)))
                                  :tag (if (= sym 'council.changed) :observation :mutation)
                                  :call call
-                                 :description (:doc (meta v))
+                                 :description (cond-> (:doc (meta v)) (= sym 'council.run) (str role-doc))
                                  :result result-doc
                                  :activity (presenter/for-tool (keyword (str sym)))}
                           (seq params)

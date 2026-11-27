@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Session introspection: `doc("read_session")` and `doc("list_sessions")` show their keys again (`view`, `turn`, `iteration`, `block`, `offset`, `limit` and `cursor`). Before, the signature named only the first argument.
 - Council: the agent guidance tells how to add to a thread (`thread_id`) and read it. Before, the agent used `reply_to` for its own thread and Council refused the message.
 - Tasks: a Task that ended before the Python worker stopped keeps its record. Before, a read, a cancel or an acknowledge of that Task answered `404`, while the client still showed its card.
+- Subagents: `doc("council.run")` names the roles that a task can have (`research`, `implement` and `verify`). Before, the agent could learn them only from the error of a refused call.
 
 ## [v0.5.35] - 2026-11-27
 
