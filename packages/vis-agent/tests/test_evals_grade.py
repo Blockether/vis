@@ -56,6 +56,18 @@ def _grade(work, *, text="fixed\n", answer="Done.", code=PATCH_CODE, operation="
     return grade.grade_trial(SCENARIO, work, _trial(document))
 
 
+def test_json_mismatch_names_keys_without_disclosing_values(tmp_path):
+    failures = grade.structured_failures(
+        {"want_answer_json": {"absent": "expected-1", "wrong": "expected-2"}},
+        tmp_path,
+        '{"wrong": "reported-1", "unexpected": "reported-2"}',
+        [],
+    )
+    assert failures == [
+        'answer JSON mismatch: missing keys ["absent"]; extra keys ["unexpected"]; different keys ["wrong"]'
+    ]
+
+
 def test_a_complete_trial_passes_every_guard(tmp_path):
     result = _grade(tmp_path)
 

@@ -1,7 +1,0 @@
-{
-  "want_answer_json": {
-    "marker": "HANDOFF-LIME-82"
-  },
-  "want_requested_route": true,
-  "verify": "verify.py"
-}

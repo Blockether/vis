@@ -63,6 +63,58 @@ def argument(call, index, name):
     )
 
 
+def writes_file(code, filename):
+    """Find explicit Python writes to the trial output, not path mentions in task text."""
+    try:
+        tree = live_form(code or "")
+    except SyntaxError:
+        return False
+
+    def name(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        return None
+
+    def is_target(value, line):
+        value = resolve(tree, value, line)
+        if isinstance(value, ast.Call) and name(value.func) == "Path":
+            return is_target(argument(value, 0, "path"), value.lineno)
+        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
+            return is_target(value.right, value.lineno)
+        if isinstance(value, ast.Call) and name(value.func) == "join" and value.args:
+            return is_target(value.args[-1], value.lineno)
+        return (
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and value.value.rsplit("/", 1)[-1] == filename
+        )
+
+    for call in ast.walk(tree):
+        if not isinstance(call, ast.Call):
+            continue
+        operation = name(call.func)
+        receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+        if operation in {"write_text", "write_bytes"} and is_target(receiver, call.lineno):
+            return True
+        if operation == "open":
+            if is_target(receiver, call.lineno):
+                mode = argument(call, 0, "mode")
+            elif is_target(argument(call, 0, "file"), call.lineno):
+                mode = argument(call, 1, "mode")
+            else:
+                continue
+            mode = resolve(tree, mode, call.lineno)
+            if (
+                isinstance(mode, ast.Constant)
+                and isinstance(mode.value, str)
+                and any(flag in mode.value for flag in "wax+")
+            ):
+                return True
+    return False
+
+
 def prints_marker(node, marker):
     """Check for an explicit print of the trial marker."""
     return (

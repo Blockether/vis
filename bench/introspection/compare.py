@@ -85,7 +85,7 @@ def estimates(tree):
 
 
 def handoff_estimates(tree):
-    if row := tree.get("handoff"):
+    if (row := tree.get("handoff")) and type(row.get("tokens")) is int:
         yield row
     for child in tree.get("children", []):
         yield from handoff_estimates(child)
@@ -137,10 +137,8 @@ def summarize(folder, result):
         data["initial_request_estimated_input_leader"] = (session_prompt.get("requests") or [{}])[0].get("input")
         data["initial_request_estimated_input_children"] = sum(c["requests"][0]["input"] for c in session_prompt.get("children", []) if c.get("requests"))
     if handoffs := list(handoff_estimates(session_prompt)):
-        for mode in ("full", "bounded"):
-            data[f"handoff_estimated_{mode}_input_children"] = sum(row[mode] for row in handoffs)
+        data["handoff_estimated_input_children"] = sum(row["tokens"] for row in handoffs)
         data["handoff_estimate_count"] = len(handoffs)
-        data["handoff_bounded_count"] = sum(row["mode"] == "bounded" for row in handoffs)
     routes = set()
     for doc in docs:
         info = doc.get("agent") or {}

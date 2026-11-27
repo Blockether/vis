@@ -10,7 +10,7 @@ FILE = "task-evidence.json"
 
 
 def capture(session_id, home, database):
-    """Collect Task transitions and Council questions addressed to this session."""
+    """Collect Task transitions and Council questions and replies for this session."""
     try:
         if str(uuid.UUID(session_id)) != session_id:
             return {}
@@ -36,21 +36,37 @@ def capture(session_id, home, database):
                 ):
                     events.append({"type": event["type"], "task": event["task"]})
     questions = []
+    replies = []
     children = {}
     shells = []
     if database.is_file():
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
-            questions = [
-                dict(row)
-                for row in db.execute(
-                    """SELECT e.author_sid AS session_id, e.id AS entry_id, e.content, p.state
+            for row in db.execute(
+                """SELECT e.author_sid AS session_id, e.id AS entry_id, e.content, p.state,
+                          r.id AS reply_entry_id, r.content AS reply_content,
+                          r.created_at AS reply_created_at
                    FROM council_entry e JOIN council_ping p ON p.entry_id = e.id
+                   LEFT JOIN council_entry r ON r.id = p.reply_entry_id
+                     AND r.author_sid = p.recipient_sid AND r.reply_to = e.id
                    WHERE p.recipient_sid = ? AND e.reply_required = 1
                    ORDER BY e.id""",
-                    (session_id,),
-                )
-            ]
+                (session_id,),
+            ):
+                question = dict(row)
+                reply_id = question.pop("reply_entry_id")
+                reply_content = question.pop("reply_content")
+                reply_created_at = question.pop("reply_created_at")
+                questions.append(question)
+                if reply_id is not None:
+                    replies.append(
+                        {
+                            "entry_id": reply_id,
+                            "reply_to": row["entry_id"],
+                            "content": reply_content,
+                            "created_at_ms": reply_created_at,
+                        }
+                    )
             children = {
                 f"a{row['ordinal']}": row["session_id"]
                 for row in db.execute(
@@ -88,6 +104,7 @@ def capture(session_id, home, database):
     return {
         "events": events,
         "questions": questions,
+        "replies": replies,
         "children": children,
         "shells": shells,
     }

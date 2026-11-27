@@ -4,5 +4,6 @@
     "entry_count": 2,
     "second_message": "Replay inspection complete."
   },
-  "want_requested_route": true
+  "want_requested_route": true,
+  "max_total_output_chars": 1000
 }

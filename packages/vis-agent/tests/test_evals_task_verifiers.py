@@ -1,6 +1,7 @@
 """Regression checks for evidence that must distinguish real Task behavior."""
 
 import json
+import os
 import sqlite3
 import textwrap
 from pathlib import Path
@@ -19,6 +20,177 @@ def check(tmp_path, name, *blocks, host=None):
         {"verify": str(E2E / name / "tests/verify.py")}, tmp_path, trial
     )
     return result.result["guards"]["task"]
+
+
+def _council_trial(
+    leader, child, *, same_iteration=False, launch_operation="council.run", answer="done", **host
+):
+    launch = atif.block(
+        "t1/i2/f1", activity=atif.receipt(atif.row("run", launch_operation))
+    )
+    steps = [atif.step(1, leader, launch)] if same_iteration else (
+        [atif.step(1, leader), atif.step(2, launch)]
+    )
+    document = atif.trajectory(*steps, answer=answer)
+    document["subagent_trajectories"] = [child]
+    return atif.trial(
+        document,
+        host_evidence={
+            "children": {"a1": child["session_id"]},
+            "events": [
+                {
+                    "type": "task.started",
+                    "task": {"id": "t1", "kind": "subagent", "state": "running"},
+                },
+                {
+                    "type": "task.ended",
+                    "task": {"id": "t1", "kind": "subagent", "state": "done"},
+                },
+            ],
+            **host,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "case, passes",
+    [
+        ("valid", True),
+        ("decoy-in-child", False),
+        ("wrong-live-value", False),
+        ("same-iteration", True),
+        ("leader-wrote", False),
+        ("spaced-print", True),
+        ("backticked-task", True),
+        ("noncanonical-launch", True),
+        ("leader-printed-live", False),
+        ("leader-printed-bare", False),
+        ("join-path", True),
+        ("value-twice", True),
+        ("bang-answer", True),
+        ("blank-line-after", True),
+        ("leader-answered-live", False),
+    ],
+)
+def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, passes):
+    decoy = "STALE-" + "a" * 32
+    live = "LIVE-" + "b" * 32
+    write = atif.block(
+        "t1/i1/f1",
+        "open(os.path.join('.', 'answer.txt'), 'w').write(value)" if case == "join-path"
+        else "Path('answer.txt').write_text(value)",
+    )
+    child = atif.trajectory(
+        atif.step(1, write), answer="Written!" if case == "bang-answer" else "written",
+        session_id="child",
+    )
+    child["steps"][0]["message"] = (
+        f"Write `{live}` into answer.txt." if case == "backticked-task"
+        else f"Write {live} into answer.txt. Use exactly {live}." if case == "value-twice"
+        else f"Write {live} into answer.txt."
+    )
+    if case == "decoy-in-child":
+        child["steps"][-1]["message"] = f"written {decoy}"
+    (tmp_path / "answer.txt").write_text(
+        decoy if case == "wrong-live-value" else live + ("\n\n" if case == "blank-line-after" else "")
+    )
+    leader_form = """open('answer.txt', 'w').write(value)""" if case == "leader-wrote" else (
+        "task = 'Write the value into answer.txt'"
+    )
+    marker = decoy.replace("STALE-", "STALE- ") if case == "spaced-print" else decoy
+    trial = _council_trial(
+        atif.block(
+            "t1/i1/f1", leader_form,
+            stdout=f"note={marker}" + {
+                "leader-printed-live": f"\nlive={live}", "leader-printed-bare": "\nvalue=" + "b" * 32,
+            }.get(case, ""),
+        ), child,
+        same_iteration=case == "same-iteration",
+        launch_operation="vis.council.run" if case == "noncanonical-launch" else "council.run",
+        answer=f"done, the value is {live}" if case == "leader-answered-live" else "done",
+    )
+    result = grade.grade_trial(
+        {"verify": str(E2E / "subagent-task-isolation/tests/verify.py")}, tmp_path, trial
+    )
+    assert result.result["guards"]["task"] is passes
+
+
+@pytest.mark.parametrize(
+    "case, problem",
+    [
+        ("valid", None),
+        ("no-ask", "Expected one successful council.ask call."),
+        ("noncanonical-ask", "Expected one successful council.ask call."),
+        ("no-reply", "The leader must reply to the child's question with the code."),
+        ("early-write", "The child must write code.txt after the reply."),
+        ("early-reply", "The leader must reply after the child asks."),
+        ("leader-wrote", "The leader must not write code.txt."),
+        ("empty-question", "The child must ask for the code."),
+        ("spaced-print", None),
+        ("copied-file", None),
+        ("same-iteration", None),
+        ("one-block", None),
+        ("leaked-task", "The leader must not give the code before the child asks."),
+        ("leaked-upper", "The leader must not give the code before the child asks."),
+        ("bang-answer", None),
+        ("no-done", "The child must answer done."),
+    ],
+)
+def test_ask_parent_requires_question_and_reply_before_the_child_write(tmp_path, case, problem):
+    code = "a" * 32
+    output = tmp_path / "code.txt"
+    output.write_text(code)
+    # A copied output need not retain its original mtime.
+    mtime = 30 if case == "copied-file" else 5
+    os.utime(output, (mtime, mtime))
+    operation = "vis.council.ask" if case == "noncanonical-ask" else "council.ask"
+    ask = atif.block("t1/i1/f1", activity=atif.receipt(atif.row("ask", operation)))
+    ask["tool_call"]["extra"].update(started_at_ms=4000, finished_at_ms=4500)
+    write = atif.block("t1/i2/f1", "Path('code.txt').write_text(code)")
+    write["tool_call"]["extra"].update(started_at_ms=4600, finished_at_ms=5500)
+    steps = [atif.step(2, write)]
+    if case == "one-block":
+        # The natural form: the child awaits the reply and writes it in the same block.
+        both = atif.block(
+            "t1/i1/f1", "code = await council.ask('Code?')\nPath('code.txt').write_text(code)",
+            activity=atif.receipt(atif.row("ask", operation)),
+        )
+        both["tool_call"]["extra"].update(started_at_ms=4000, finished_at_ms=5500)
+        steps = [atif.step(1, both)]
+    elif case != "no-ask":
+        steps.insert(0, atif.step(1, ask))
+    child = atif.trajectory(
+        *steps, answer={"no-done": "I wrote it", "bang-answer": "Done!"}.get(case, "done"),
+        session_id="child",
+    )
+    if case in {"leaked-task", "leaked-upper"}:
+        leaked = code.upper() if case == "leaked-upper" else code
+        child["steps"][0]["message"] = f"Write the release code into code.txt. The code is {leaked}."
+    leader_form = (
+        "open('code.txt', 'w').write(code)" if case == "leader-wrote"
+        else "task = 'Write the release code alone into code.txt'"
+    )
+    marker = f"release-code= {code}" if case == "spaced-print" else f"release-code={code}"
+    trial = _council_trial(
+        atif.block("t1/i1/f1", leader_form, stdout=marker), child,
+        same_iteration=case == "same-iteration",
+        questions=[{
+            "session_id": "child", "entry_id": 1, "state": "replied",
+            "content": "" if case == "empty-question" else "What is the release code?",
+        }],
+        replies=[] if case == "no-reply" else [{
+            "entry_id": 2,
+            "reply_to": 1,
+            "created_at_ms": {"early-write": 4700, "early-reply": 3900}.get(case, 4300),
+            "content": code,
+        }],
+    )
+    result = grade.grade_trial(
+        {"verify": str(E2E / "subagent-ask-parent/tests/verify.py")}, tmp_path, trial
+    )
+    assert result.result["guards"]["task"] is (problem is None)
+    if problem:
+        assert problem in result.result["detail"]
 
 
 @pytest.mark.parametrize("case", ["valid", "loop", "dead", "marker-outside-handler"])
@@ -340,25 +512,31 @@ print(json.dumps(dict(exit=result.get("exit"), out=result.get("out"))))
     ) is (case in {"unpack", "iterator", "filter", "dict", "attach", "split"})
 
 
-def test_host_capture_uses_only_the_trial_session_journal_and_questions(tmp_path):
+def test_host_capture_uses_only_the_trial_session_journal_and_replies(tmp_path):
     sid = "00000000-0000-4000-8000-000000000001"
     db = tmp_path / "trial.db"
     with sqlite3.connect(db) as connection:
         connection.executescript("""
             CREATE TABLE session_agent (ordinal, session_id, parent_id);
             CREATE TABLE extension_aggregate (index_data, extension_id, kind, session_soul_id);
-            CREATE TABLE council_entry (id, author_sid, content, reply_required);
-            CREATE TABLE council_ping (entry_id, recipient_sid, state);
-            INSERT INTO council_entry VALUES (1, 'child', 'question', 1),
-                (2, 'child', 'not a question', 0), (3, 'other-child', 'other question', 1);
+            CREATE TABLE council_entry (id, author_sid, content, reply_required, reply_to, created_at);
+            CREATE TABLE council_ping (entry_id, recipient_sid, state, reply_entry_id);
+            INSERT INTO council_entry VALUES (1, 'child', 'question', 1, NULL, 1000),
+                (2, 'child', 'not a question', 0, NULL, 1001), (3, 'other-child', 'other question', 1, NULL, 1002),
+                (4, 'child', 'other reply', 0, 1, 1003), (6, 'child', 'unrelated question', 1, NULL, 1005);
         """)
         connection.executemany(
-            "INSERT INTO council_ping VALUES (?, ?, ?)",
+            "INSERT INTO council_ping VALUES (?, ?, ?, ?)",
             [
-                (1, sid, "delivered"),
-                (2, sid, "delivered"),
-                (3, "other", "delivered"),
+                (1, sid, "replied", 5),
+                (2, sid, "delivered", None),
+                (3, "other", "replied", 7),
+                (6, sid, "replied", 4),
             ],
+        )
+        connection.executemany(
+            "INSERT INTO council_entry VALUES (?, ?, ?, 0, ?, ?)",
+            [(5, sid, "leader reply", 1, 1004), (7, sid, "unrelated reply", 3, 1006)],
         )
         connection.execute("INSERT INTO session_agent VALUES (1, 'child', ?)", (sid,))
         log = tmp_path / "logs/2026-01-01/shell" / sid / "one.log"
@@ -391,8 +569,17 @@ def test_host_capture_uses_only_the_trial_session_journal_and_questions(tmp_path
                 "session_id": "child",
                 "entry_id": 1,
                 "content": "question",
-                "state": "delivered",
-            }
+                "state": "replied",
+            },
+            {
+                "session_id": "child",
+                "entry_id": 6,
+                "content": "unrelated question",
+                "state": "replied",
+            },
+        ],
+        "replies": [
+            {"entry_id": 5, "reply_to": 1, "content": "leader reply", "created_at_ms": 1004}
         ],
     }
 

@@ -31,28 +31,35 @@
               (measure text)))
           (range 1 21))))
 
-(defn- measure-handoff [request]
-  (if-let [checkpoint (ns-resolve 'com.blockether.vis.internal.session.agents 'handoff-checkpoint)]
-    (let [estimate (ns-resolve 'com.blockether.vis.internal.session.agents 'handoff-estimates)
-          ;; A deterministic past conversation, independent of the live trial and its answer.
-          history (mapcat (fn [n]
-                            [{:role "user" :content (str ";; -- USER-REQUEST --\n"
-                                                        "Review earlier release " n ". Compare its test results and keep the workspace unchanged.")}
-                             {:role "assistant" :content
-                              (str/join "\n" (for [i (range 15)]
-                                                (str "Release " n " check " i
-                                                     " completed. Read the report for the exact result.")))}])
-                          (range 1 31))
-          messages (into [{:role "system" :content ";; -- SYSTEM-PROMPT --\nUse the Council tools."}
-                          {:role "system" :content ";; -- PROJECT-INSTRUCTIONS --\nDo not edit the fixtures."}
-                          {:role "system" :content (str ";; -- TURN-SYSTEM-CONTEXT --\n;; -- EXTENSIONS --\n"
-                                                       ";; -- EXTENSION memo --\nRead memory before work.\n"
-                                                       ";; -- EXTENSION graphify --\nRead the code graph.\n")}]
-                         (concat history
-                                 [{:role "user" :content "# ⋯ folded t1/* · Keep the release evidence separate."}
-                                  {:role "user" :content (str ";; -- USER-REQUEST --\n" request)}]))]
-      {:handoff (dissoc (estimate (checkpoint messages "full" "gpt-4o")) :mode)})
-    {:handoff nil}))
+(defn- measure-handoff
+  "The Svar estimate of the prefix that a child inherits from a synthetic parent history.
+   An older checkout has `handoff-checkpoint`: its default mode gives the baseline."
+  [request]
+  (let [agents 'com.blockether.vis.internal.session.agents
+        estimate (ns-resolve agents 'handoff-estimates)
+        old (ns-resolve agents 'handoff-checkpoint)
+        handoff (ns-resolve agents 'handoff)
+        mark #(with-meta {:role %2 :content %3} {:vis.handoff/kind %1})
+        ;; A deterministic past conversation, independent of the live trial and its answer.
+        history (mapcat (fn [n]
+                          [(mark :request "user"
+                                 (str ";; -- USER-REQUEST --\n"
+                                      "Review earlier release " n ". Compare its test results and keep the workspace unchanged."))
+                           (mark :answer "assistant"
+                                 (str/join "\n" (for [i (range 15)]
+                                                  (str "Release " n " check " i
+                                                       " completed. Read the report for the exact result."))))])
+                        (range 1 31))
+        messages (into [{:role "system" :content ";; -- SYSTEM-PROMPT --\nUse the Council tools."}
+                        {:role "system" :content ";; -- PROJECT-INSTRUCTIONS --\nDo not edit the fixtures."}
+                        {:role "system" :content (str ";; -- TURN-SYSTEM-CONTEXT --\n;; -- EXTENSIONS --\n"
+                                                     ";; -- EXTENSION graphify --\nRead the code graph.\n")}]
+                       (concat history
+                               [(mark :gist "user" "# ⋯ folded t1/* · Keep the release evidence separate.")
+                                (mark :request "user" (str ";; -- USER-REQUEST --\n" request))]))]
+    {:handoff (cond old (let [row (estimate (old messages "full" "gpt-4o"))]
+                          (-> row (dissoc :mode :full :bounded) (assoc :tokens (:full row))))
+                    (and estimate handoff) (estimate (handoff messages "gpt-4o")))}))
 
 (foundation/register!)
 

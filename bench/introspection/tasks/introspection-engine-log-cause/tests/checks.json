@@ -2,5 +2,6 @@
   "want_answer_json": {
     "reason": "VOICE_QUEUE_FULL"
   },
-  "want_requested_route": true
+  "want_requested_route": true,
+  "max_total_output_chars": 1000
 }

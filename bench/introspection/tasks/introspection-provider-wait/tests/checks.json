@@ -3,5 +3,6 @@
     "connection": "silent",
     "silent_ms": 47000
   },
-  "want_requested_route": true
+  "want_requested_route": true,
+  "max_total_output_chars": 6000
 }

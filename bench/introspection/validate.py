@@ -31,7 +31,7 @@ def load(path):
 
 def check_dataset(checkout, tmp):
     tasks = [task for task in read_tasks(TASKS) if task.name.startswith("introspection-")]
-    assert len(tasks) == 10
+    assert len(tasks) == 9
     cp = source_classpath("clojure", checkout)
     with ThreadPoolExecutor(max_workers=3) as workers:
         list(workers.map(lambda task: check_task(task, cp, tmp), tasks))
@@ -48,11 +48,20 @@ def check_task(task, cp, tmp):
     assert not check_problems(checks)
     assert not structured_failures(checks, work, json.dumps(expected), [])
     assert structured_failures(checks, work, '{"wrong":true}', [])
-    if kind in {"handoff", "resume"}:
-        endings = ["done"] * (1 if kind == "handoff" else 2)
-        events = [e for i, state in enumerate(endings, 1) for e in (
+    if kind != "resume":
+        # Allow selected saved facts, plus the entire documented fallback if needed.
+        diagnostics = work / "diagnostics"
+        fallback = diagnostics / ("vis.log" if kind == "log" else f"{SID}.ndjson")
+        targeted_chars = len(json.dumps(expected))
+        if kind == "block":
+            targeted_chars = max(targeted_chars, len(f"Verification code: {expected['verification_code']}\n"))
+        if fallback.is_file():
+            targeted_chars += len(fallback.read_text())
+        assert checks["max_total_output_chars"] >= 3 * targeted_chars
+    if kind == "resume":
+        events = [e for i in (1, 2) for e in (
             {"type": "task.started", "task": {"id": f"t{i}", "kind": "subagent", "state": "running"}},
-            {"type": "task.ended", "task": {"id": f"t{i}", "kind": "subagent", "state": state}},
+            {"type": "task.ended", "task": {"id": f"t{i}", "kind": "subagent", "state": "done"}},
         )]
         evidence = {"events": events, "children": {"a1": SID}}
         verifier = tests / checks["verify"]
@@ -62,11 +71,8 @@ def check_task(task, cp, tmp):
         assert not verifier_failures(verifier, SimpleNamespace(host_evidence=evidence, trajectory=trajectory))
         assert verifier_failures(verifier, SimpleNamespace(host_evidence=evidence, trajectory=None))
         assert verifier_failures(verifier, SimpleNamespace(host_evidence={}, trajectory=trajectory))
-        if kind == "handoff":
-            actual = {"marker": (work / "handoff.txt").read_text().splitlines()[1]}
-        else:
-            actual = {key: (work / f"{filename}.txt").read_text().strip()
-                      for key, filename in [("initial", "initial"), ("revised", "revised")]}
+        actual = {key: (work / f"{key}.txt").read_text().strip()
+                  for key in ("initial", "revised")}
     else:
         actual = None
         if rows := journal(kind):
@@ -131,17 +137,16 @@ def check_comparison(tmp):
         write_json(folder / "agent/trajectory.json", trajectory(inp, code, [trajectory(250, 'await council.get(1)')]))
         write_json(folder / "agent/prompt-accounting.json", {"requests": [{"projection": "prepared_request",
                    "input": inp, "parts": {"Vis core system prompt": 1250 if side == "baseline" else 1000}}],
-                   "children": [{"handoff": {"full": 800, "bounded": 300,
-                                              "mode": "full" if side == "baseline" else "bounded"}}]})
+                    "children": [{"handoff": {"source": "svar-estimate", "projection": "inherited-prefix",
+                                               "model": "same-model", "tokens": 800 if side == "baseline" else 300}}]})
     row = comparison(trials(tmp / "baseline"), trials(tmp / "candidate"))["introspection-test"]
     assert row["correct"] == [1, 1]
     delta = row["correct_trials_only"]
     assert delta["input_team"]["delta"] == -400 and delta["input_children"]["baseline_median"] == 250
     assert delta["estimated:Vis core system prompt"]["delta"] == -250
     assert delta["journal_read_blocks"]["delta"] == -1 and delta["council.get"]["candidate_median"] == 1
-    assert delta["handoff_estimated_full_input_children"]["baseline_median"] == 800
-    assert delta["handoff_estimated_bounded_input_children"]["candidate_median"] == 300
-    assert delta["handoff_bounded_count"]["delta"] == 1
+    assert delta["handoff_estimated_input_children"]["delta"] == -500
+    assert delta["handoff_estimate_count"]["candidate_median"] == 1
     print("PASS comparator: fixture team tokens, prompt accounting and fallback deltas")
 
 

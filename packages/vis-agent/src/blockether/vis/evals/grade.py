@@ -509,10 +509,31 @@ def structured_failures(sc, work, answer, activities):
         except ValueError:
             failures.append("answer is not a single JSON value")
         else:
-            if not same_json_value(actual, sc["want_answer_json"]):
-                failures.append(
-                    "answer JSON does not match the requested facts exactly"
-                )
+            expected = sc["want_answer_json"]
+            if not same_json_value(actual, expected):
+                if isinstance(actual, dict) and isinstance(expected, dict):
+                    keys = (
+                        ("missing", expected.keys() - actual.keys()),
+                        ("extra", actual.keys() - expected.keys()),
+                        (
+                            "different",
+                            {
+                                key
+                                for key in actual.keys() & expected.keys()
+                                if not same_json_value(actual[key], expected[key])
+                            },
+                        ),
+                    )
+                    detail = "; ".join(
+                        f"{kind} keys {json.dumps(sorted(names))}"
+                        for kind, names in keys
+                        if names
+                    )
+                    failures.append(f"answer JSON mismatch: {detail}")
+                else:
+                    failures.append(
+                        "answer JSON does not match the requested facts exactly"
+                    )
     for name, expected in (sc.get("want_json_files") or {}).items():
         try:
             with open(os.path.join(work, name)) as stream:

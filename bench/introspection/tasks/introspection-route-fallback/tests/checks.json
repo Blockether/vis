@@ -3,5 +3,6 @@
     "provider": "anthropic",
     "model": "demo-mini"
   },
-  "want_requested_route": true
+  "want_requested_route": true,
+  "max_total_output_chars": 1000
 }

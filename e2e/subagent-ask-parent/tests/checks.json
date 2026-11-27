@@ -1,0 +1,10 @@
+{
+  "want_answer": [
+    "done"
+  ],
+  "verify": "verify.py",
+  "forbid_tools": [
+    "patch",
+    "shell"
+  ]
+}

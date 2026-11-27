@@ -38,7 +38,7 @@ def run_fixture(task, scratch, cp, render):
         prefix = "VIS_BENCH_STATIC "
         return next(line[len(prefix):] for line in proc.stdout.splitlines() if line.startswith(prefix))
 
-    if kind in {"handoff", "resume"}:
+    if kind == "resume":
         env.update(VIS_BENCH_MEASURE="handoff", VIS_BENCH_REQUEST=(task / "instruction.md").read_text())
         command[-1] = f'(load-file {json.dumps(str(HERE / "measure_static.clj"))})'
         return task.name, json.loads(run())

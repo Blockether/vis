@@ -65,11 +65,6 @@ class InspectionAgent(VisAgent):
         home.mkdir(parents=True, exist_ok=True)
         config = {"providers": [{"id": self.provider, "api_key": "${VIS_BENCH_API_KEY}",
                                  "models": [self.model]}]}
-        handoff = os.environ.get("VIS_BENCH_HANDOFF")
-        if handoff is not None:
-            if handoff not in {"full", "bounded"}:
-                raise ValueError("VIS_BENCH_HANDOFF must be full or bounded")
-            config["toggles"] = {"subagent_handoff": handoff}
         (home / "config.yml").write_text(json.dumps(config) + "\n", encoding="utf-8")
         return values
 
@@ -92,7 +87,7 @@ class InspectionAgent(VisAgent):
             'export VIS_BENCH_ROOT="$VIS_HARBOR_WORKSPACE" VIS_BENCH_DB="$VIS_DB_PATH"; '
             'unset VIS_GATEWAY_URL; '
         )
-        if self.kind not in {"handoff", "resume"}:
+        if self.kind != "resume":
             prelude += f'{self.harness_command("seed.clj")} > /dev/null || exit $?; '
         return prelude + super().shell_command()
 

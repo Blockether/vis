@@ -1,2 +1,0 @@
-Verify the candidate output.
-HANDOFF-LIME-82
