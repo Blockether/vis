@@ -9,7 +9,7 @@ from pathlib import Path
 from blockether.vis.evals.agent import VisAgent, source_classpath
 
 HERE = Path(__file__).resolve().parent
-TASKS = HERE.parents[1] / "e2e"
+TASKS = HERE / "tasks"
 SID = "10200000-0000-4000-8000-000000000001"
 TURN = "10200000-0000-4000-8001-000000000002"
 

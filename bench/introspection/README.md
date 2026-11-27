@@ -21,7 +21,7 @@ Each folder is named `introspection-<case>`. Read `instruction.md` for the exact
 
 ## Layout and isolation
 
-- The cases are in `e2e/introspection-<case>/`. Run them with `InspectionAgent` and use the task filter below.
+- The cases are in `bench/introspection/tasks/introspection-<case>/`, not in `e2e/`: the standard agent has no seeded session and cannot pass them. Run them with `InspectionAgent`.
 - `bench_agent:InspectionAgent` uses the normal Vis agent/Harbor host environment. It seeds a new private trial database before the first model request; fixture construction uses the product SQLite backend and real persisted form envelopes. The saved data is a different session from the measured agent, so seed tokens do not count. The same harness checkout seeds both arms. Only the exact synthetic IDs appear in the workspace.
 - Fallback rows for wait, request origin, and Task settlement are scoped NDJSON with realistic distractors. The same journal is seeded in the trial home, and in the readable workspace `diagnostics` path. Both arms can use this fallback. The log case is a deliberately bounded worker-log negative control. The request-origin case may already be answerable from persisted Council attribution; it checks that the answer remains correct without a redundant raw read.
 - Real Council verifier tasks exercise `council.run`, the child prompt, and same-child follow-up without any embedded answer. The Harbor grader requires exact JSON plus one owned child and the expected number of completed gateway Task attempts. These are the only cases that make additional model calls when run in Harbor.
@@ -57,7 +57,7 @@ Run this only with approval for model calls. Use the same SDK, fixture seeder, p
 export HARBOR_TELEMETRY=off VIS_BENCH_SOURCE="$VIS"
 BENCH="$VIS/bench/introspection"
 export PYTHONPATH="$BENCH:$VIS/packages/vis-agent/src"
-common=(--path "$VIS/e2e" --include-task-name 'introspection-*'
+common=(--path "$BENCH/tasks"
         --agent bench_agent:InspectionAgent
         --env blockether.vis.evals.environment:HostEnvironment
         --model "$ROUTE" --n-attempts 3 --jobs-dir "$JOBS")
