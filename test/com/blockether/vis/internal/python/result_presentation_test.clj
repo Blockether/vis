@@ -151,6 +151,39 @@
       (check-result {"op" "other" "optional" nil "value" [1 2]}
                     "assert repr(r) == repr(dict(r))\nassert r['optional'] is None")))
 
+(defdescribe
+  compact-session-fields-test
+  (it "hides null fields in session displays but keeps them in the data"
+      (let [block {"error" nil "success" false "offset" 0 "tags" [] "details" {} "values" [nil]}
+            row {"id" "demo" "goal_status" nil}]
+        (tpc/with-own [ctx {'read_session (fn []
+                                          {"op" "read_session" "session" row "current_turn" nil
+                                           "transcript" {"turns" [{"iterations" [{"blocks" [block]}]}]}})
+                            'list_sessions (fn [] [row])
+                            'get_session (fn [] (assoc row "op" "get_session"))}]
+          (let [result (ep/run-python-block
+                         ctx
+                         (str "import json\n"
+                              "session = await read_session()\n"
+                              "rows = await list_sessions()\n"
+                              "descriptor = await get_session()\n"
+                              "block = session['transcript']['turns'][0]['iterations'][0]['blocks'][0]\n"
+                              "for row, field in [(block, 'error'), (rows[0], 'goal_status'), (descriptor, 'goal_status')]:\n"
+                              "    assert field not in repr(row), repr(row)\n"
+                              "    assert row[field] is row.get(field, object()) is None\n"
+                              "    assert field in row and dict(row)[field] is None\n"
+                              "    assert json.loads(json.dumps(row))[field] is None\n"
+                              "assert 'goal_status' not in repr(rows)\n"
+                              "assert 'current_turn' not in repr(session) and session['current_turn'] is None\n"
+                              "assert all(field in repr(block) for field in (\"'success': False\", \"'offset': 0\", \"'tags': []\", \"'details': {}\", \"'values': [None]\"))\n"
+                              "assert 'missing' not in block and block.get('missing') is None\n"
+                              "try:\n    block['missing']\nexcept KeyError:\n    pass\nelse:\n    raise AssertionError('missing key did not raise')\n"
+                              "block['cycle'] = block\n"
+                              "assert \"'cycle': {...}\" in repr(block)\n"
+                              "print('verified')"))]
+            (expect (nil? (:error result)) (pr-str (:error result)))
+            (expect (= "verified\n" (:stdout result))))))))
+
 (defn- council-entry
   [entry-id]
   {"entry_id" entry-id

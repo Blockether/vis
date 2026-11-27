@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Session introspection: a printed row of `read_session`, `list_sessions` or `get_session` omits its empty fields. The fields stay in the data: `row["error"]` and `row.get("error")` still give `None`. The same applies to the nested maps of other tool results.
 - Logs: the svar stream progress profile records the time until the response headers arrived (`headers-ms`) and the provider request ID (`request-id`). A long wait before the first token now shows if the provider held the request or sent nothing on an open stream. Svar is pinned at 0.7.251.
 
 ### Fixed

@@ -2,11 +2,13 @@
 
 Only presentation lives here. The runtime still owns result identity, shell handles,
 paging and execution. Installation changes the session-local result classes, never
-builtins.dict or a process-global runtime class. Unknown operations keep dict repr. Use
-the variable holding a result to inspect keys, or pass it to dict()/json.dumps().
+builtins.dict or a process-global runtime class. Unknown operations keep dict repr
+at the top level. Use the variable holding a result to inspect keys, or pass it
+to dict()/json.dumps().
 """
 
 from collections import Counter
+from reprlib import recursive_repr
 
 
 def _bounded(value, source, limit):
@@ -77,7 +79,8 @@ def _session(result):
     lines.extend(_details(result))
     if result.get("next_offset") is not None:
         lines.append(f"Next offset: {result['next_offset']}")
-    lines.append("Fields: " + ", ".join(result.keys()))
+    fields = (key for key, value in result.items() if value is not None)
+    lines.append("Fields: " + ", ".join(fields))
     return "\n".join(lines)
 
 
@@ -173,12 +176,19 @@ def _council(result):
     return "\n".join(lines)
 
 
+@recursive_repr(fillvalue="{...}")
+def _mapping_repr(result):
+    return repr({key: value for key, value in result.items() if value is not None})
+
+
 def _result_repr(result):
     """Render known model-facing results without changing their underlying data."""
     op = result.get("op")
     try:
         if op == "read_session":
             return _session(result)
+        if op == "get_session":
+            return _mapping_repr(result)
         if op in ("council.publish", "council.get", "council.read", "council.threads"):
             return _council(result)
     except (AttributeError, KeyError, TypeError, ValueError):
@@ -197,5 +207,6 @@ def _shell_repr(result):
 
 def install(namespace):
     """Attach host presentation to this session's runtime-owned result classes."""
+    namespace["__VisDict__"].__repr__ = _mapping_repr
     namespace["__VisResult__"].__repr__ = _result_repr
     namespace["__VisShell__"].__repr__ = _shell_repr
