@@ -727,36 +727,47 @@
 
 (defn- extensions-prompt-block
   "Collect prompt text from every active extension that declares
-   `:ext/prompt-fn`. Each prompt is `(fn [env] -> string)` (normalized at
-   registration). Non-blank results are normalized, wrapped as labeled
-   extension fragments, then joined into one extension context block.
+   `:ext/prompt-fn` or `:ext/leader-prompt-fn`. Each prompt is
+   `(fn [env] -> string)` (normalized at registration). Non-blank results are
+   normalized, wrapped as labeled extension fragments, then joined into one
+   extension context block. A subagent gets no `:ext/leader-prompt-fn` text.
 
    Returns `{:content <block> :parts [{:label … :content …}]}` with one part per
    fragment, so the context breakdown separates built-in rules from each
-   installed extension instead of billing them as one opaque runtime row."
-  [environment active-extensions]
+   installed extension instead of billing them as one opaque runtime row. A
+   leader-only part has `:audience :leader`, so a handoff to a child can drop it."
+  [environment active-extensions subagent?]
   (let [;; Built-ins first so the core kernel prompt (foundation) leads the
         ;; block, header-less, before any third-party `;; -- EXTENSION --`.
         active-extensions
         (sort-by (complement extension/ext-builtin?) (or active-extensions []))
 
+        fragment
+        (fn [ext k leader?]
+          (when-let [f (get ext k)]
+            (try (let [result (call-extension-callback ext f environment)]
+                   (when (util/non-blank-string? result)
+                     (when-let [body (extension-prompt-fragment ext result)]
+                       (cond-> {:label (str (if (extension/ext-builtin? ext)
+                                              "Built-in tools and rules"
+                                              (str "Extension: " (extension-prompt-id ext)))
+                                            (when leader? " (leader)"))
+                                :content body}
+                         leader?
+                         (assoc :audience :leader)))))
+                 (catch Throwable t
+                   (tel/log! {:level :warn
+                              :id ::extension-prompt-error
+                              :data {:ext (:ext/name ext) :key k :error (ex-message t)}}
+                             "Extension prompt fn threw")
+                   nil))))
+
         fragments
-        (keep (fn [ext]
-                (when-let [f (:ext/prompt-fn ext)]
-                  (try (let [result (call-extension-callback ext f environment)]
-                         (when (util/non-blank-string? result)
-                           (when-let [body (extension-prompt-fragment ext result)]
-                             {:label (if (extension/ext-builtin? ext)
-                                       "Built-in tools and rules"
-                                       (str "Extension: " (extension-prompt-id ext)))
-                              :content body})))
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::extension-prompt-error
-                                    :data {:ext (:ext/name ext) :error (ex-message t)}}
-                                   "Extension :ext/prompt-fn fn threw")
-                         nil))))
-              active-extensions)]
+        (mapcat (fn [ext]
+                  (keep identity
+                        [(fragment ext :ext/prompt-fn false)
+                         (when-not subagent? (fragment ext :ext/leader-prompt-fn true))]))
+                active-extensions)]
 
     (when (seq fragments)
       {:content (prompt-block "extensions" (str/join "\n\n" (map :content fragments)))
@@ -819,8 +830,7 @@
             ;; The limit is `VIS_PY_SCAN_ENTRIES` in vis-python-runtime `vispython.c`.
             "\nDirectory walks cap at 10,000 entries. Narrow `ls` or `grep`."
             "\nTasks start on call. `await asyncio.wait([task], timeout=seconds)` does not cancel. "
-            "Read live fields. Await results. Do not wrap or retry Tasks. See `asyncio.all_tasks()`. "
-            "For child requests, wait on the child Task and a saved `council.changed()` (`FIRST_COMPLETED`); cancel it when done."
+            "Read live fields. Await results. Do not wrap or retry Tasks. See `asyncio.all_tasks()`."
             "\nFor app input, `await asyncio.wait([app.changed()])`, then call `app.events()`."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
@@ -837,9 +847,9 @@
    Returns `{:content <block> :parts [{:label … :content …}]}` so each built-in or
    installed extension prompt and the sandbox surface are attributed separately
    in the context breakdown."
-  [environment active-extensions]
+  [environment active-extensions subagent?]
   (let [extensions
-        (extensions-prompt-block environment active-extensions)
+        (extensions-prompt-block environment active-extensions subagent?)
 
         shims
         (sandbox-shims-prompt-block active-extensions)
@@ -898,8 +908,10 @@
         (standing session state: workspace / env / routing / tools). Embedded
         ONCE here as a cached system message; the loop re-emits only the
         `session[...] = …` structural delta in the conversation when it changes
-        mid-turn."
-  [environment {:keys [system-prompt active-extensions session-context] :as opts}]
+        mid-turn.
+     `:subagent?`                - true for a child session. It gets no leader-only
+        extension prompt."
+  [environment {:keys [system-prompt active-extensions session-context subagent?] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
                     {:type :vis/missing-active-extensions})))
@@ -927,7 +939,7 @@
         (project-instructions-block environment active-extensions)
 
         turn-system-block
-        (turn-system-context-block environment active-extensions)
+        (turn-system-context-block environment active-extensions subagent?)
 
         ;; Standing session context (workspace/env/routing/tools), rendered
         ;; into the cached prefix so it isn't re-billed every iteration. The

@@ -470,3 +470,31 @@ def test_an_agent_takes_the_count_of_extensions_of_the_schema(monkeypatch):
     ClientExtensions(two[:1])
     with pytest.raises(ValueError, match="limited to 1 extensions"):
         ClientExtensions(two)
+
+
+def test_an_extension_takes_the_prompt_audiences_of_the_schema(monkeypatch):
+    def read() -> list:
+        """Read the state."""
+        return []
+
+    def declaration(audience):
+        return vis.Extension(
+            name="one",
+            description="Application-owned tools.",
+            alias="one",
+            prompt="Read the state first.",
+            prompt_audience=audience,
+            symbols=[vis.Symbol(read, activity=vis.Activity(label="Read"))],
+        )
+
+    audiences = _contracts.rule(
+        "gateway", "client_extensions", "properties", "extensions", "items"
+    )["properties"]["prompt_audience"]
+    # The engine reads this field of the manifest. Without it, each session gets the prompt.
+    assert ClientExtensions([declaration("leader")]).manifest[0]["prompt_audience"] == (
+        "leader"
+    )
+    assert "prompt_audience" not in ClientExtensions([declaration("all")]).manifest[0]
+    monkeypatch.setitem(audiences, "enum", ["all"])
+    with pytest.raises(ValueError, match="prompt_audience must be one of: all$"):
+        declaration("leader")

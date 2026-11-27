@@ -1041,7 +1041,7 @@
       (iteration/final-answer-gate-error env 1 [] "an answer" [ext])
       (extension/ctx-contributions env [ext])
       (prompt/active-extensions env)
-      (#'prompt/extensions-prompt-block env [ext])
+      (#'prompt/extensions-prompt-block env [ext] false)
       (expect (= #{:turn.answer/validate :ext/ctx-fn :ext/prompt-fn :ext/activation-fn}
                  (set (map :site @seen))))
       ;; ONE context: same session, same workspace, same identity, every site.

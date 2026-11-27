@@ -198,6 +198,9 @@ class ClientExtensions:
                 value = getattr(extension, key)
                 if value is not None:
                     manifest[key] = value
+            # Not tied to the prompt: a later prompt update must not change the declaration.
+            if extension.prompt_audience != "all":
+                manifest["prompt_audience"] = extension.prompt_audience
             self.manifest.append(manifest)
         # The gateway schema owns the count of extensions in one manifest.
         most = _contracts.rule(

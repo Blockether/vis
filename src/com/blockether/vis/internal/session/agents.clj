@@ -445,14 +445,14 @@ Do only the current task. The parent history is a short tail: it is context, not
 (defn handoff
   "The model input that a new child inherits from its parent, or nil when the parent has none.
    It keeps the system messages without the session block of the parent, because the child gets
-   its own. Then it adds one message with a short tail of the parent conversation. It never sends
+   its own, and without the prompt parts that are for a leader only. Then it adds one message with a short tail of the parent conversation. It never sends
    tool calls, tool results, reasoning or images. The metadata holds one content-free Svar estimate
    of this prefix, before the child context and the task."
   [messages model]
   (let [system (into []
                      (comp (filter #(= "system" (name (:role %))))
                            (remove #(= ["Session and environment context"] (part-labels %)))
-                           (map #(without-parts % (fn [part] (= "Extension: memo" (:label part))))))
+                           (map #(without-parts % (fn [part] (= :leader (:audience part))))))
                      messages)
         priming (long (svar/count-messages model []))
         count-text #(- (long (svar/count-messages model [{:role "user" :content %}])) priming)

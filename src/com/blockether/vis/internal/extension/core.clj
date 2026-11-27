@@ -709,7 +709,8 @@
        (optional-field? x :ext/source-nses #(vector-of? symbol? %))
        (optional-field? x :ext/kind non-blank-string?)
        (every? #(optional-field? x % fn?)
-               [:ext/activation-fn :ext/prompt-fn :ext/ctx-fn :ext/doctor-fn :ext/app-hook-fn])
+               [:ext/activation-fn :ext/prompt-fn :ext/leader-prompt-fn :ext/ctx-fn :ext/doctor-fn
+                :ext/app-hook-fn])
        (optional-field? x :ext/hooks #(vector-of? hook? %))
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
        (optional-field? x :ext/retire-op-hooks-fn ifn?)
@@ -1295,6 +1296,13 @@
         :else (throw (ex-info ":ext/prompt-fn must be a string or (fn [env] string)"
                               {:got (type prompt)}))))
 
+(defn- normalize-prompts
+  "Normalize the prompt for each session and the prompt that only a leader gets."
+  [ext]
+  (reduce (fn [ext k] (cond-> ext (contains? ext k) (update k normalize-prompt)))
+          ext
+          [:ext/prompt-fn :ext/leader-prompt-fn]))
+
 (defn- extension-symbol-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
@@ -1339,9 +1347,7 @@
       (ex-info
         ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt-fn"
         {:type :extension/retired-environment-prompt-fn :name (:ext/name ext)})))
-  (let [ext (cond-> ext
-              (contains? ext :ext/prompt-fn)
-              (update :ext/prompt-fn normalize-prompt))]
+  (let [ext (normalize-prompts ext)]
     (when-let [binding (first (remove keybinding? (:ext/keybindings ext)))]
       (throw (ex-info
                (str
@@ -2771,9 +2777,7 @@
    extension uses the [[extension]] macro, which also records its namespace."
   [spec]
   (-> spec
-      (cond->
-        (contains? spec :ext/prompt-fn)
-        (update :ext/prompt-fn normalize-prompt))
+      normalize-prompts
       (cond->
         (not (:ext/activation-fn spec))
         (assoc :ext/activation-fn (constantly true))

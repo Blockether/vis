@@ -4,6 +4,7 @@
             [com.blockether.vis.internal.config.scoped :as scoped]
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.context.loop :as ctx-loop]
+            [com.blockether.vis.internal.context.prompt :as prompt]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.loop.environment :as loop-env]
@@ -240,6 +241,13 @@
              (expect (str/includes? inherited ";; -- PARENT-REQUEST --\nThird parent request"))
              (expect (re-find #";; -- PARENT-FOLD-GIST --\n[^;]*Parent gist" inherited))
              (expect (not (str/includes? inherited "Raw parent evidence")))
+             ;; #520: a child cannot use the history of other sessions, so it gets no rules for it.
+             (expect (str/includes? (prompt/stable-prompt-text
+                                      (prompt/assemble-stable-prompt-messages
+                                        parent
+                                        {:active-extensions (prompt/active-extensions parent)}))
+                                    "## Session introspection"))
+             (expect (not (str/includes? inherited "## Session introspection")))
 
              (try (with-redefs
                     [svar/ask-code!

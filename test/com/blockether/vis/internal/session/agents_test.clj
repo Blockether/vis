@@ -1475,7 +1475,8 @@
                         (with-meta {:role "system"
                                     :content (str ";; -- EXTENSIONS --\nBuilt-in rules.\n\n" memo "\n\n" graph)}
                           {parts [{:label "Built-in tools and rules" :content "Built-in rules."}
-                                  {:label "Extension: memo" :content memo}
+                                  ;; #520: the mark of the extension decides, never its name.
+                                  {:label "Extension: memo (leader)" :audience :leader :content memo}
                                   {:label "Extension: graphify" :content graph}]})
                         (with-meta {:role "system" :content session}
                           {parts [{:label "Session and environment context" :content session}]})
@@ -1611,7 +1612,7 @@
           (expect (str/ends-with? turn "\n\n## Session\nRead it."))
           (expect (not (str/includes? turn "Previous leader guide.")))))
     ;; Review of #520: the memo part stayed when it was the first part or when a part quoted it.
-    (it "removes the memo part by its place, also first and with a quoted copy"
+    (it "removes a leader part by its place, also first and with a quoted copy"
         (let [parts :com.blockether.vis.internal.context.prompt/parts
               memo ";; -- EXTENSION memo --\nSave a memory."
               other (str ";; -- EXTENSION notes --\nThe memo guide says:\n" memo)
@@ -1620,7 +1621,7 @@
               system (with-meta {:role "system"
                                  :content (str ";; -- TURN-SYSTEM-CONTEXT --\n;; -- EXTENSIONS --\n"
                                                memo "\n\n" other "\n\n" built-in)}
-                       {parts [{:label "Extension: memo" :content memo}
+                       {parts [{:label "Extension: memo (leader)" :audience :leader :content memo}
                                {:label "Extension: notes" :content other}
                                {:label "Built-in tools and rules" :content built-in}]})
               rules {:role "system" :content "Rules\n\n## Subagents (Council)\nA project rule."}

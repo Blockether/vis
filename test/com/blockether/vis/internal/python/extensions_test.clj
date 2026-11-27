@@ -3963,6 +3963,17 @@ vis.register_extension(vis.Extension(
                               (fn [_ _]
                                 (expect (= "counter_ surface active."
                                            ((:ext/prompt-fn (registered "counter")) {}))))))
+             ;; #520: an extension had no way to keep its prompt from a subagent.
+             (it "a prompt for the leader becomes :ext/leader-prompt-fn"
+                 (with-loaded {"counter.py" (str/replace counter-py
+                                                         "prompt=\"counter_ surface active.\","
+                                                         (str "prompt=\"counter_ surface active.\","
+                                                              " prompt_audience=\"leader\","))}
+                              (fn [_ _]
+                                (let [ext (registered "counter")]
+                                  (expect (nil? (:ext/prompt-fn ext)))
+                                  (expect (= "counter_ surface active."
+                                             ((:ext/leader-prompt-fn ext) {})))))))
              (it "vis.slash run-fns receive the slim ctx and map vis.ok to :slash/*"
                  (with-loaded
                    {"counter.py" counter-py}
@@ -10477,7 +10488,7 @@ vis.register_extension(vis.Extension(
                 (expect (= "vis-greeter" (:extension failure)))
                 (expect (not= (:loaded-fingerprint failure) (:requested-fingerprint failure)))
                 (let [loader (registered "python-extensions")
-                      context (#'prompt-context/turn-system-context-block {} [loader])
+                      context (#'prompt-context/turn-system-context-block {} [loader] false)
                       checks (#'pyx/doctor-fn {})]
 
                   (expect ((:ext/activation-fn loader) {}))

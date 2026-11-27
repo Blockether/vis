@@ -1375,6 +1375,24 @@ class Setting(Generic[_SettingValue]):
         return _host.setting(self.id, self.default if saved is None else saved)
 
 
+def _prompt_audiences() -> tuple[str, ...]:
+    """The sessions that can get an extension prompt. The gateway schema owns the names."""
+    from blockether.vis import _contracts
+
+    return tuple(
+        _contracts.rule(
+            "gateway",
+            "client_extensions",
+            "properties",
+            "extensions",
+            "items",
+            "properties",
+            "prompt_audience",
+            "enum",
+        )
+    )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Extension:
     """Group tools and host capabilities in one immutable declaration.
@@ -1388,6 +1406,8 @@ class Extension:
         kind: Optional extension kind understood by the host.
         activation: Optional host activation callback.
         prompt: Instructions as text or a host callback.
+        prompt_audience: `"all"` (the default) or `"leader"`. A subagent does not
+            get a `"leader"` prompt.
         slash_commands: `SlashCommand` declarations.
         keybindings: `Keybinding` declarations: TUI keys after C-x.
         session_app: One `SessionApp`: an app that each session lists before
@@ -1425,6 +1445,7 @@ class Extension:
     activation: Callable[..., Any] | None = None
     symbols: Sequence[Symbol] = ()
     prompt: str | Callable[..., Any] | None = None
+    prompt_audience: str = "all"
     slash_commands: Sequence[SlashCommand] = ()
     keybindings: Sequence[Keybinding] = ()
     session_app: SessionApp | None = None
@@ -1461,6 +1482,14 @@ class Extension:
             and not callable(self.prompt)
         ):
             raise TypeError("vis.Extension prompt must be text or a callable")
+        # The default needs no schema read.
+        if self.prompt_audience != "all" and self.prompt_audience not in (
+            _prompt_audiences()
+        ):
+            raise ValueError(
+                "vis.Extension prompt_audience must be one of: "
+                + ", ".join(_prompt_audiences())
+            )
         for name, cls in (
             ("symbols", Symbol),
             ("slash_commands", SlashCommand),

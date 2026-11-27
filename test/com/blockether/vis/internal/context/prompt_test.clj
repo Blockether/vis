@@ -438,7 +438,46 @@
                        text
                        (prompt/stable-prompt-text messages)]
 
-                   (expect (not (str/includes? text "\n\n\n"))))))
+                   (expect (not (str/includes? text "\n\n\n")))))
+             ;; #520: a subagent got each prompt of its leader, also the rules that only a
+             ;; leader can use, such as the rules for a memory across sessions.
+             (it "gives a leader-only extension prompt to a leader and not to a subagent"
+                 (let [kernel
+                       {:ext/name "test.kernel"
+                        :ext/engine {:ext.engine/alias 'kernel :ext.engine/builtin? true}
+                        :ext/prompt-fn (constantly "Kernel rules.")
+                        :ext/leader-prompt-fn (constantly "Kernel history rules.")}
+
+                       memory
+                       {:ext/name "test.memory"
+                        :ext/engine {:ext.engine/alias 'memory}
+                        :ext/leader-prompt-fn (constantly "Memory rules.")}
+
+                       build
+                       (fn [opts]
+                         (prompt/assemble-stable-prompt-messages
+                           {:extensions (atom [kernel memory])}
+                           (assoc opts :active-extensions [kernel memory])))
+
+                       leader
+                       (prompt/stable-prompt-text (build {}))
+
+                       child
+                       (prompt/stable-prompt-text (build {:subagent? true}))]
+
+                   (doseq [rule ["Kernel rules." "Kernel history rules."
+                                 ";; -- EXTENSION memory --\nMemory rules."]]
+                     (expect (str/includes? leader rule)))
+                   (expect (str/includes? child "Kernel rules."))
+                   (expect (not (re-find #"history rules|Memory rules|EXTENSION memory" child)))
+                   ;; The handoff to a child reads this mark to drop the part.
+                   (expect (= [["Built-in tools and rules" nil]
+                               ["Built-in tools and rules (leader)" :leader]
+                               ["Extension: memory (leader)" :leader]]
+                              (->> (build {})
+                                   (mapcat #(::prompt/parts (meta %)))
+                                   (filter #(re-find #"^(Built-in|Extension)" (:label %)))
+                                   (mapv (juxt :label :audience))))))))
 
 (defdescribe
   one-system-prompt-test

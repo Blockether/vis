@@ -3349,6 +3349,9 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         prompt
         (get reg "prompt")
 
+        prompt-key
+        (if (= "leader" (get reg "prompt_audience")) :ext/leader-prompt-fn :ext/prompt-fn)
+
         ctx-fn
         (get reg "ctx")
 
@@ -3433,10 +3436,10 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
       (assoc :ext/retire-op-hooks-fn #(close-context! ctx))
 
       (string? prompt)
-      (assoc :ext/prompt-fn prompt)
+      (assoc prompt-key prompt)
 
       (fn? prompt)
-      (assoc :ext/prompt-fn (prompt-adapter ext-name ctx prompt))
+      (assoc prompt-key (prompt-adapter ext-name ctx prompt))
 
       (some? activation)
       (assoc :ext/activation-fn (activation-adapter ext-name ctx activation))

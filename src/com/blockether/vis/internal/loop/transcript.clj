@@ -2945,7 +2945,12 @@
             [(if entry :not-completed :route)])]
 
       (if (empty? failed)
-        {:messages (into (conj request (:assistant-message completed)) turn-messages)
+        ;; The stable maps of this turn replace their equal copies in the old request. The
+        ;; bytes are the same. The metadata is of this turn: a handoff to a child reads it.
+        {:messages (-> stable
+                       (into (subvec request stable-count))
+                       (conj (:assistant-message completed))
+                       (into turn-messages))
          :summaries summaries
          :resumed? true}
         (do

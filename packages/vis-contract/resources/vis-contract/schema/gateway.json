@@ -6426,6 +6426,13 @@
                 "type": "string",
                 "maxLength": 32768
               },
+              "prompt_audience": {
+                "description": "Which sessions get the prompt. A subagent does not get a `leader` prompt.",
+                "enum": [
+                  "all",
+                  "leader"
+                ]
+              },
               "version": {
                 "type": "string",
                 "minLength": 1,

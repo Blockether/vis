@@ -21,7 +21,7 @@
 (defn- combined-prompt
   "Render the toggle-gated core guidance."
   [env]
-  (->> [(shell/prompt env) (introspection/prompt env) (agents/prompt env) (council/prompt env)]
+  (->> [(shell/prompt env) (agents/prompt env) (council/prompt env)]
        (remove str/blank?)
        (str/join "\n\n")))
 
@@ -140,6 +140,8 @@
      :ext/cli shell/shell-cli
      :ext/ctx-fn combined-ctx
      :ext/prompt-fn combined-prompt
+     ;; A child gets its task from its parent. It does not read past sessions.
+     :ext/leader-prompt-fn introspection/prompt
      :ext/doctor-fn lazy-doctor-fn}))
 
 (defn register! [] (extension/register-extension! vis-extension))

@@ -2366,7 +2366,10 @@
               (prompt/assemble-stable-prompt-messages environment
                                                       {:system-prompt system-prompt
                                                        :active-extensions active-exts
-                                                       :session-context session-context})))
+                                                       :session-context session-context
+                                                       :subagent? (some? (agents/info
+                                                                           (:db-info environment)
+                                                                           (:session-id environment)))})))
 
         stable-prompt-messages
         (stable-prompt-messages-for static-context-str)

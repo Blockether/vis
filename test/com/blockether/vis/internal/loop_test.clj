@@ -1756,7 +1756,13 @@
       (let [base (resume history :zai-coding-plan "glm-5.3-flash" 2 summaries stable next-user)]
         (expect (:resumed? base))
         (expect (= request (subvec (:messages base) 0 (count request))))
-        (expect (= (into (conj request final-assistant) next-user) (:messages base))))))
+        (expect (= (into (conj request final-assistant) next-user) (:messages base))))
+      ;; #520: a hit kept the part marks of the old request. A handoff to a child then did not
+      ;; see that an extension prompt is now for the leader only.
+      (let [marked (mapv #(with-meta % {:mark :current}) stable)
+            base (resume history :zai-coding-plan "glm-5.3-flash" 2 summaries marked next-user)]
+        (expect (= (into (conj request final-assistant) next-user) (:messages base)))
+        (expect (= [{:mark :current}] (mapv meta (subvec (:messages base) 0 (count stable))))))))
   (it
     "refuses a stale entry, different route, non-adjacent turn, changed ledger, or changed system"
     (let [history

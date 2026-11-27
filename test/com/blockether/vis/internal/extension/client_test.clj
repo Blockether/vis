@@ -264,6 +264,27 @@
                          #(client/register! sid "owner" (payload "other") (constantly true) env))))
             (expect (= [entry] (client/extensions-for sid))))))))
 
+;; #520: an application had no way to keep the prompt of its extension from a subagent.
+(defdescribe
+  client-prompt-for-the-leader-test
+  (it "gives a prompt for the leader only to the leader"
+      (let [sid
+            (str (UUID/randomUUID))
+
+            env
+            {:extensions (atom [])}
+
+            [entry]
+            (client/register! sid
+                              "owner"
+                              (assoc-in (payload "lookup") ["extensions" 0 "prompt_audience"] "leader")
+                              (constantly true)
+                              env)]
+
+        (try (expect (nil? (:ext/prompt-fn entry)))
+             (expect (= "Use application data." ((:ext/leader-prompt-fn entry) env)))
+             (finally (client/detach! sid))))))
+
 (defdescribe detached-adapters-stay-inactive-after-owner-registers-again
              (it "detached adapters stay inactive after owner registers again"
                  (with-registration

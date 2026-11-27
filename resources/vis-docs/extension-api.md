@@ -112,6 +112,7 @@ SDK declarations and is stored as a tuple, not as a mutable registry.
 | `alias: str` | `None` (required with symbols) | Registry identity, not a tool-name prefix |
 | `symbols` | `()` | `vis.Symbol` declarations for callable tools |
 | `prompt: str` or callable | `None` | Model instructions. A callable receives the env dict each turn and returns text or `None` |
+| `prompt_audience: str` | `"all"` | The sessions that get `prompt`. With `"leader"`, a subagent does not get it |
 | `activation` | `None` | Optional `(env) -> bool`. `False` hides the extension for that turn |
 | `slash_commands` | `()` | `vis.SlashCommand` declarations for user commands |
 | `automations` | `()` | `vis.Automation` declarations for scheduled runs without a model (see [automations](#automations)) |
