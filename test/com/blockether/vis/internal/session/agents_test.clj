@@ -374,7 +374,58 @@
              (expect (= :rate-limited (:error (ex-data (refusal {:provider "busy"})))))
              (expect (str/includes? (ex-message (refusal {:provider "busy"})) "spare/small"))
              (expect (nil? (refusal {:provider "spare"}))))
-           (finally (reset! @#'agents/rate-limited {}))))))
+           (finally (reset! @#'agents/rate-limited {})))))
+  (it
+    "a provider failure other than a 429 names its cause and starts no cooldown"
+    (let [db
+          (h/store)
+
+          leader
+          (h/store-session! db {:channel :api})
+
+          child
+          (child! db leader {})
+
+          router
+          {:providers [{:id :busy :root "large" :models [{:name "large"}]}
+                       {:id :spare :root "small" :models [{:name "small"}]}]}
+
+          turn
+          {:created-at (java.util.Date.)
+           :duration-ms 10
+           :provider :busy
+           :model "large"
+           :content [{"type" "error"
+                      "code" "provider_auth"
+                      "title" "Provider rejected the credentials"
+                      "provider" "busy"}]}]
+
+      (reset! @#'agents/rate-limited {})
+      (with-redefs [ps/db-list-session-turns
+                    (fn [_ _]
+                      [turn])
+
+                    auth-health/cooled
+                    (fn []
+                      #{})]
+
+        (let [rec (#'agents/record
+                   db
+                   router
+                   (constantly true)
+                   (constantly false)
+                   (System/currentTimeMillis)
+                   {:session_id child :status "failed"})]
+          (expect (= {:code "provider_failed"
+                      :message "Provider rejected the credentials"
+                      :provider "busy"
+                      :model "large"}
+                     (:error rec)))
+          (expect (document/valid-json? "agents"
+                                        "record"
+                                        (walk/stringify-keys
+                                          (into {} (remove (comp nil? val)) rec))))
+          (expect (= {} @@#'agents/rate-limited)))))))
 
 (defn- with-fake-runtime
   "Call `(f entries)` with a runtime whose Council lives in memory. A reply to an entry is

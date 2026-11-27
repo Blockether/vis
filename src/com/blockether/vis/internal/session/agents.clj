@@ -657,16 +657,23 @@ Do only the current task. Parent history is context, not authorization. Use your
 ;; the window is short, and the next refusal records the provider again.
 (defonce ^:private rate-limited (atom {}))
 
-(defn- rate-limit-failure
-  "The 429 failure that ended the last turn of child `row`, as {:code \"rate_limited\" :message
-   :provider :model}, or nil. It also starts the cooldown of that provider. A child turn ends at
-   its first 429 (see [[restrict-router]]), so its parent chooses the next route."
+(defn- provider-failure
+  "The provider failure that ended the last turn of child `row`, as {:code :message :provider
+   :model}, or nil. A 429 gives code rate_limited and starts the cooldown of that provider; a child
+   turn ends at its first 429 (see [[restrict-router]]), so its parent chooses the next route.
+   Another provider failure gives code provider_failed."
   [db row]
   (let [turn
         (last (ps/db-list-session-turns db (:session_id row)))
 
+        blocks
+        (filter #(str/starts-with? (str (get % "code")) "provider_") (:content turn))
+
         block
-        (some #(when (= "provider_rate_limit" (get % "code")) %) (:content turn))
+        (or (some #(when (= "provider_rate_limit" (get % "code")) %) blocks) (first blocks))
+
+        limited?
+        (= "provider_rate_limit" (get block "code"))
 
         provider
         (or (get block "provider")
@@ -674,7 +681,7 @@ Do only the current task. Parent history is context, not authorization. Use your
                     name))]
 
     (when block
-      (when provider
+      (when (and limited? provider)
         (swap! rate-limited update
           provider
           (fnil max 0)
@@ -683,7 +690,10 @@ Do only the current task. Parent history is context, not authorization. Use your
                                (+ (long (or (:duration-ms turn) 0))))
                        (util/now-ms)))
              (long RATE_LIMIT_COOLDOWN_MS))))
-      (cond-> {:code "rate_limited" :message (or (get block "title") "Provider rate-limited")}
+      (cond-> (if limited?
+                {:code "rate_limited" :message (or (get block "title") "Provider rate-limited")}
+                {:code "provider_failed"
+                 :message (or (get block "title") (get block "message") "Provider failed")})
         provider
         (assoc :provider provider)
 
@@ -1133,7 +1143,7 @@ Do only the current task. Parent history is context, not authorization. Use your
         (when open? (get @questions sid))
 
         failure
-        (when (= "failed" status) (or (rate-limit-failure db row) (stop-failure db row)))
+        (when (= "failed" status) (or (provider-failure db row) (stop-failure db row)))
 
         blocked
         (when (= "blocked" status) (dependency-failure db row))

@@ -989,12 +989,19 @@ class AgentsRecordMessagesItem(TypedDict):
 
 class AgentsRecordError(TypedDict):
     """Why a failed child stopped. Code rate_limited means a 429 from its provider.
-    Code not_started means that its turn never started. Code interrupted means that
-    its turn stopped before its end. Code dependency_failed means that a task in
-    after did not complete, so a blocked child never started.
+    Code provider_failed means another provider failure. Code not_started means that
+    its turn never started. Code interrupted means that its turn stopped before its
+    end. Code dependency_failed means that a task in after did not complete, so a
+    blocked child never started.
     """
 
-    code: Literal["rate_limited", "not_started", "interrupted", "dependency_failed"]
+    code: Literal[
+        "rate_limited",
+        "provider_failed",
+        "not_started",
+        "interrupted",
+        "dependency_failed",
+    ]
     message: str
     provider: NotRequired[str]
     model: NotRequired[str]

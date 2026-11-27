@@ -849,7 +849,7 @@
           ]
         },
         "error": {
-          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end. Code dependency_failed means that a task in after did not complete, so a blocked child never started.",
+          "description": "Why a failed child stopped. Code rate_limited means a 429 from its provider. Code provider_failed means another provider failure. Code not_started means that its turn never started. Code interrupted means that its turn stopped before its end. Code dependency_failed means that a task in after did not complete, so a blocked child never started.",
           "type": [
             "object",
             "null"
@@ -858,6 +858,7 @@
             "code": {
               "enum": [
                 "rate_limited",
+                "provider_failed",
                 "not_started",
                 "interrupted",
                 "dependency_failed"

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - Live speech: speech no longer falls behind when one local speech model step takes more than 2 seconds. The gateway keeps all admitted speech. The Companion tells you that the local speech model prepares until live speech is ready.
+- Subagents: a child that a provider failure other than a 429 stopped now has `error` with the code `provider_failed`, the provider message and the working `alternatives`. Before, its `error` was empty.
 
 ## [v0.5.35] - 2026-11-27
 
