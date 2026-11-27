@@ -227,7 +227,7 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
   const context = new AudioContext({ latencyHint: 'interactive' });
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
-  const silentOutput = context.createGain();
+  const sink = context.createAnalyser();
   const chunks: Int16Array[] = [];
   // Ratio is >= 1; a device already at or below 16 kHz passes through untouched.
   const ratio = Math.max(1, context.sampleRate / TARGET_SAMPLE_RATE);
@@ -247,7 +247,6 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
   // binding that is still in its temporal dead zone.
   let onLimit: ((reason: string) => void) | null = null;
 
-  silentOutput.gain.value = 0;
   processor.onaudioprocess = (event) => {
     if (closed) return;
     const input = event.inputBuffer.getChannelData(0);
@@ -278,9 +277,14 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
       );
     }
   };
+  // The processor runs only while a node pulls it. An analyser with no output is pulled by the
+  // context itself, so nothing connects to `context.destination`. A connected destination plus
+  // the `play-and-record` session makes WebKit show the dictation as a "localhost" player in
+  // Now Playing on the iOS lock screen (AudioContext::isNowPlayingEligible). A context with an
+  // unconnected destination also keeps its background override
+  // (AudioContext::shouldOverrideBackgroundPlaybackRestriction).
   source.connect(processor);
-  processor.connect(silentOutput);
-  silentOutput.connect(context.destination);
+  processor.connect(sink);
 
   // ORDER MATTERS ON iOS. WebKit deactivates the audio session when capture stops, but it keeps
   // the session while the page still declares `play-and-record` or a live AudioContext needs it
@@ -292,7 +296,7 @@ export async function startWavRecording(options: WavRecordingOptions = {}): Prom
     releaseAudioSession();
     source.disconnect();
     processor.disconnect();
-    silentOutput.disconnect();
+    sink.disconnect();
     await context.close().catch(() => undefined);
     for (const track of stream.getTracks()) track.stop();
     await releaseAndroidRoute();

@@ -89,16 +89,19 @@ function fakeAudio({ resumes = true } = {}) {
     stop: () => events.push('track:stop'),
   };
   getUserMedia.mockResolvedValue({ getTracks: () => [track] });
-  const node = () => ({ connect: vi.fn(), disconnect: vi.fn() });
+  const speakers = {};
+  const wired: unknown[] = [];
+  const node = () => ({ connect: vi.fn((to: unknown) => void wired.push(to)), disconnect: vi.fn() });
   const processor = { ...node(), onaudioprocess: null as ((event: unknown) => void) | null };
+  const sink = node();
   class FakeAudioContext {
     sampleRate = 16000;
     state = 'suspended';
-    destination = {};
+    destination = speakers;
     onstatechange: (() => void) | null = null;
     createMediaStreamSource = node;
     createScriptProcessor = () => processor;
-    createGain = () => ({ ...node(), gain: { value: 1 } });
+    createAnalyser = () => sink;
     async resume() {
       if (resumes) this.state = 'running';
     }
@@ -110,7 +113,7 @@ function fakeAudio({ resumes = true } = {}) {
   vi.stubGlobal('AudioContext', FakeAudioContext);
   const speak = () =>
     processor.onaudioprocess?.({ inputBuffer: { getChannelData: () => new Float32Array(64).fill(0.5) } });
-  return { events, speak };
+  return { events, speak, wired, speakers, processor, sink };
 }
 
 it('releases the iOS audio session before the microphone stops when a dictation ends', async () => {
@@ -130,4 +133,18 @@ it('releases the iOS audio session the same way when the microphone cannot start
   await expect(startWavRecording()).rejects.toThrow('Microphone could not start');
 
   expect(events).toEqual(['session:play-and-record', 'session:auto', 'context:close', 'track:stop']);
+});
+
+// Regression, user report: a dictation put a player card named "localhost" on the iOS lock screen.
+// WebKit makes an AudioContext eligible for Now Playing when a node is connected to its
+// destination and the page declares `play-and-record` (AudioContext::isNowPlayingEligible). The
+// card title is then the page's domain. The recorder must drain into a node that is not the
+// destination.
+it('keeps a dictation out of the iOS Now Playing card', async () => {
+  const { wired, speakers, processor, sink } = fakeAudio();
+
+  await startWavRecording();
+
+  expect(wired).not.toContain(speakers);
+  expect(processor.connect).toHaveBeenCalledWith(sink);
 });
