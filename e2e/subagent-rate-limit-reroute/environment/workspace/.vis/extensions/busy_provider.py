@@ -72,9 +72,9 @@ vis.register_extension(
                 id="busy",
                 label="Busy",
                 is_managed=True,
-                preset=vis.ProviderPreset(
-                    base_url=URL, api_style="openai", default_models=[MODEL]
-                ),
+                # The port changes when a worker restart reruns this module. A sealed
+                # preset must not change, so the credential carries the URL.
+                preset=vis.ProviderPreset(api_style="openai", default_models=[MODEL]),
                 get_token_fn=credential,
                 enrich_models_fn=models,
             )
