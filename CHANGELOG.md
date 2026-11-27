@@ -7,12 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.5.35] - 2026-11-27
+
 ### Added
 
 - OpenAI Codex: choose Normal, Fast, or Ultrafast below the message input. Speed no longer appears in settings. Vis estimates Ultrafast at 6 times the standard cost.
 - Apps: the new `media` node (`vis.ui.media`) plays a sound or a video from bytes, a file or a web address in the terminal, the Companion and the web app. With `before`, it also plays the old version. One sound or video holds at most 8 MiB, and all media in one app hold at most 16 MiB. Review plays the old and the new version of a changed sound or video.
 - Apps: a `diff` node takes `previews` (`vis.ui.diff.preview(path, node)`). Each client shows the picture, sound or video of a changed file under the header of that file. Review shows its changed pictures, sounds and videos there and no longer has a separate list of them.
 - Provider: Google Antigravity (`antigravity`) signs in with a Google account and sends requests to the Cloud Code endpoint. Vis offers the models of the account, such as Gemini 4 Hydrogen, Gemini 3.8 Flash, Claude Opus 4.6 Thinking and GPT-OSS 120B, and takes their limits from the live model list. The provider limits show the remaining quota of each model pool (Gemini, Claude and GPT-OSS) and when an exhausted pool resets. Svar is pinned at 0.7.249.
+- Gateway: `POST /v1/sessions/:sid/tasks/:task-id/acknowledge` marks a finished Task receipt as read. The Python sandbox can call it as the `vis.task.acknowledge` Activity.
 
 ### Changed
 
@@ -21,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Tasks: shell handle fields now give the current process state on each read. Sandbox shell and subagent Tasks no longer have a `wait` method. Read `child.record()` for the current subagent record.
 - Python SDK: use `await asyncio.wait([sh], timeout=seconds)` for shell handles in async code, as in the sandbox. Use `concurrent.futures.wait([sh], timeout=seconds)` in a plain `def`.
 - Live views: wait for `view.changed()` with `asyncio.wait`. `view.events()` now reads new events without waiting.
+- Gateway: a turn cancel when no turn runs, or when the turn already ended, returns `accepted: false` with the reason `no_running_turn` or `not_running`. The terminal app, the Companion and the Python SDK show this answer.
+- Extensions: vis-lang-interface is pinned at 4.2.4, vis-lang-clojure at 1.20.27, vis-lang-python at 1.18.10 and vis-lang-javascript at 0.2.5.
 
 ### Fixed
 
@@ -32,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Provider: a provider error no longer keeps the sent request with its bearer token in the error data.
 - Provider: `vis-agent providers logout` fails when it cannot delete the sign-in file of Antigravity, Anthropic, GitHub Copilot, OpenAI Codex, or a provider with an API key. Before, it reported success while the credential stayed on disk.
 - Provider: a used-up ChatGPT Codex plan window is shown as an exhausted quota with its reset time. Before, Vis retried it as a short throttle. A used-up Claude subscription window also shows its reset time, and Vis does not retry inside it.
+- Gateway: one live event frame holds at most 1 MiB. A larger event becomes an `event.elided` marker, and the terminal app, the Companion and the Python SDK read the session again. They keep newer live data. Before, a very large event could stop the stream, or the client reconnected at the same cursor again and again. Task replay pages are now limited by count and by bytes.
+- Shell: `shell()` checks its start options, the project environment, the working directory and the spawn rules before the process starts. A wrong option now fails at once, and no process starts.
+- Tasks: when a Task that a sandbox block waits for is cancelled, Python gets `asyncio.CancelledError`, and a live view that the Task opened closes. Before, Vis interrupted the whole block with a `RuntimeError`.
 
 ## [v0.5.34] - 2026-11-24
 
