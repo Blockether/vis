@@ -1101,6 +1101,19 @@ ol.markdown-list > li::before {
   width: max-content;
   min-width: 100%;
 }
+/* Each chunk of rows is its own table, and only the chunks near the viewport mount. The longest
+   line of the file sets the code width of each, so the scroll width stays when a chunk leaves. */
+.app-diff[data-split='false'][data-wrap='false'] .diff-code {
+  min-width: calc(var(--diff-code-columns, 0) * 1ch + 24px);
+}
+.diff-chunk-gap {
+  background: var(--diff-paper);
+}
+/* Chunks mount and leave while the scroll moves. WebKit anchored the scroll to a node in the diff
+   and moved it by thousands of pixels for each swap. No node in the diff is a scroll anchor. */
+.app-diff {
+  overflow-anchor: none;
+}
 .app-diff[data-wrap='true'] .diff-table {
   table-layout: fixed;
 }

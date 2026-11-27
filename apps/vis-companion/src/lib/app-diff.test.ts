@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   anchorKey,
   changedWords,
-  diffModel,
+  diffShape,
   filterDiffFiles,
   findDiffMatches,
   fileChange,
@@ -13,6 +13,8 @@ import {
   hunkWordSpans,
   parseUnifiedDiff,
   splitRows,
+  wrappedLines,
+  strayThreads,
 } from './app-diff';
 
 const PATCH = [
@@ -125,17 +127,15 @@ describe('the diff model', () => {
     const on = (side: 'old' | 'new', line: number, path = 'src/core.clj') => ({
       anchor: { path, side, line },
     });
-    const model = diffModel(PATCH, [
-      on('new', 11),
-      on('old', 11),
+    const shape = diffShape(PATCH);
+    expect(shape.total).toEqual({ additions: 2, deletions: 2 });
+    expect(strayThreads(shape, [on('new', 11), on('old', 11), on('new', 99), on('new', 1, 'other.txt'), {}])).toEqual([
       on('new', 99),
       on('new', 1, 'other.txt'),
       {},
     ]);
-    expect(model.total).toEqual({ additions: 2, deletions: 2 });
-    expect(model.elsewhere).toEqual([on('new', 99), on('new', 1, 'other.txt'), {}]);
-    expect(model.digits.get('src/core.clj')).toBe(2);
-    expect(model.digits.get('old.txt')).toBe(1);
+    expect(shape.digits.get('src/core.clj')).toBe(2);
+    expect(shape.digits.get('old.txt')).toBe(1);
   });
 
   it('puts context on both sides and pairs removed with added lines, leaving the rest empty', () => {
@@ -165,6 +165,16 @@ describe('the diff model', () => {
       ['file', 1, 'x.ts'],
       ['file', 0, 'README.md'],
     ]);
+  });
+});
+
+// Report: with Wrap on a phone, the scroll length grew while the rows mounted. Prose wraps at spaces.
+describe('the wrapped lines of a code cell', () => {
+  it('breaks at a space, and inside a word only when it fills a line', () => {
+    expect(wrappedLines('hello world '.repeat(12), 10)).toBe(24);
+    expect(wrappedLines('x'.repeat(25), 10)).toBe(3);
+    expect(wrappedLines('ab cd', 5)).toBe(1);
+    expect(wrappedLines('', 10)).toBe(1);
   });
 });
 

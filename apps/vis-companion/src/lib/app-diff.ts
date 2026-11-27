@@ -438,8 +438,8 @@ export function fileTree(
   return rows;
 }
 
-/** What a diff node shows, worked out once for each patch and thread list. */
-export interface DiffModel<T extends { anchor?: ViewAnchor }> {
+/** What a diff node shows, worked out once for each patch. */
+export interface DiffShape {
   files: AppDiffFile[];
   /** The changed words of each paired line, by anchor key. */
   words: Map<string, DiffSpan[]>;
@@ -449,15 +449,15 @@ export interface DiffModel<T extends { anchor?: ViewAnchor }> {
   columns: Map<string, number>;
   /** The added and removed lines of all files. */
   total: { additions: number; deletions: number };
-  /** Threads without an anchor or on a line that the diff does not show. */
-  elsewhere: T[];
+  /** The anchor keys of the lines that the diff shows. */
+  shown: Set<string>;
 }
 
-/** The model of a diff node: its files, word tints, number and code widths, totals and stray threads. */
-export function diffModel<T extends { anchor?: ViewAnchor }>(
-  patch: string,
-  threads: readonly T[],
-): DiffModel<T> {
+/**
+ * The files, word tints, number and code widths and totals of a patch. A new thread
+ * does not change them, so a node parses its patch again only when the patch changes.
+ */
+export function diffShape(patch: string): DiffShape {
   const files = parseUnifiedDiff(patch);
   const words = new Map<string, DiffSpan[]>();
   const digits = new Map<string, number>();
@@ -484,8 +484,12 @@ export function diffModel<T extends { anchor?: ViewAnchor }>(
     total.additions += stat.additions;
     total.deletions += stat.deletions;
   }
-  const elsewhere = threads.filter((thread) => !thread.anchor || !shown.has(anchorKey(thread.anchor)));
-  return { files, words, digits, columns, total, elsewhere };
+  return { files, words, digits, columns, total, shown };
+}
+
+/** The threads without an anchor or on a line that the diff does not show. */
+export function strayThreads<T extends { anchor?: ViewAnchor }>(shape: DiffShape, threads: readonly T[]): T[] {
+  return threads.filter((thread) => !thread.anchor || !shape.shown.has(anchorKey(thread.anchor)));
 }
 
 /** The columns of `text` in a monospace font, with a tab stop each 8 columns, as CSS `tab-size` sets by default. */
@@ -493,6 +497,31 @@ export function textColumns(text: string): number {
   let at = 0;
   for (const char of text) at = char === '\t' ? at + 8 - (at % 8) : at + 1;
   return at;
+}
+
+/**
+ * The lines of `text` in a code cell of `columns` columns, as CSS `white-space: pre-wrap` and
+ * `overflow-wrap: anywhere` break it: at a space, and inside a word only when it fills a line.
+ */
+export function wrappedLines(text: string, columns: number): number {
+  let lines = 1;
+  let at = 0;
+  for (const [, word, space] of text.matchAll(/([^ \t]*)([ \t]*)/g)) {
+    if (!word && !space) continue;
+    if (at > 0 && at + word.length > columns) {
+      lines++;
+      at = 0;
+    }
+    at += word.length;
+    while (at > columns) {
+      lines++;
+      at -= columns;
+    }
+    for (const char of space) at = char === '\t' ? at + 8 - (at % 8) : at + 1;
+    // Spaces at the end of a line hang outside it.
+    at = Math.min(at, columns);
+  }
+  return lines;
 }
 
 /** Test paths follow common directory and filename conventions, not substrings. */

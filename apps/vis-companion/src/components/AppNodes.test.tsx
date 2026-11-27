@@ -571,6 +571,7 @@ function stubViewport() {
         notify = callback;
       }
       observe() {}
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -587,19 +588,89 @@ function stubViewport() {
 describe('a long diff', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('mounts the rows of a far file only near the viewport and keeps its height after', () => {
+  it('mounts the rows of a far file only near the viewport and keeps their height after', () => {
     const show = stubViewport();
     render(<DiffNodeView node={longDiff()} />);
     const far = screen.getByRole('region', { name: 'far.txt' });
     expect(screen.getByText('line 0')).toBeInTheDocument();
     expect(far.querySelector('[data-diff-scroll]')).toBeNull();
-    expect(far.style.minHeight).not.toBe('');
-    show(far, true);
-    expect(far.querySelector('[data-diff-scroll]')).toHaveTextContent('remote');
-    expect(far.style.minHeight).toBe('');
-    show(far, false, 321);
-    expect(far.querySelector('[data-diff-scroll]')).toBeNull();
-    expect(far.style.minHeight).toBe('321px');
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    expect(far.querySelector('[data-diff-scroll]')).not.toHaveTextContent('remote');
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    const rows = far.querySelector('[data-diff-scroll] [data-diff-chunk]')!;
+    expect(rows).toHaveTextContent('remote');
+    show(rows, false, 321);
+    expect(far.querySelector('table')).toBeNull();
+    expect(far.querySelector<HTMLElement>('[data-diff-scroll] .diff-chunk-gap')!.style.height).toBe('321px');
+  });
+
+  // Report: the Review in Safari jumped 8,960 pixels down. A file that the engine skipped measured 0 pixels high.
+  it('keeps no height of rows that the engine did not lay out', () => {
+    const show = stubViewport();
+    render(<DiffNodeView node={longDiff()} />);
+    const far = screen.getByRole('region', { name: 'far.txt' });
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    const rows = far.querySelector<HTMLElement>('[data-diff-scroll] [data-diff-chunk]')!;
+    rows.checkVisibility = (options) => !options?.contentVisibilityAuto;
+    show(rows, false, 0);
+    const gap = far.querySelector<HTMLElement>('[data-diff-scroll] .diff-chunk-gap')!;
+    expect(gap.style.height).toBe(`${gap.dataset.diffEstimate}px`);
+  });
+
+  // A thread that arrives in a far file makes its rows higher than they measured.
+  it('drops the measured height of rows that got a thread', () => {
+    const show = stubViewport();
+    const node = longDiff();
+    const view = render(<DiffNodeView node={node} />);
+    const far = screen.getByRole('region', { name: 'far.txt' });
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('[data-diff-scroll] [data-diff-chunk]')!, false, 321);
+    const thread = { ...DIFF.threads[0], anchor: { path: 'far.txt', side: 'new' as const, line: 1 } };
+    view.rerender(<DiffNodeView node={{ ...node, threads: [thread] }} />);
+    expect(far.querySelector<HTMLElement>('[data-diff-scroll] .diff-chunk-gap')!.style.height).not.toBe('321px');
+  });
+
+  // Report: after a resize, the scroll length kept the old width and the rows jumped by thousands of pixels.
+  it('drops the measured heights when the width changes', () => {
+    const show = stubViewport();
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          resize = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const width = (px: number) =>
+      act(() => resize([{ contentRect: { width: px } } as ResizeObserverEntry], {} as ResizeObserver));
+    render(<DiffNodeView node={longDiff()} />);
+    const far = screen.getByRole('region', { name: 'far.txt' });
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('[data-diff-scroll] [data-diff-chunk]')!, false, 321);
+    width(390);
+    const gap = () => far.querySelector<HTMLElement>('[data-diff-scroll] .diff-chunk-gap')!.style.height;
+    expect(gap()).toBe('321px');
+    width(700);
+    expect(gap()).not.toBe('321px');
+  });
+
+  // Report: a file of 7,000 lines took 4 seconds to paint and scrolled at 15 frames a second.
+  it('mounts only the rows of one long file that are near the viewport', () => {
+    const show = stubViewport();
+    render(<DiffNodeView node={longDiff(3000)} />);
+    const near = screen.getByRole('region', { name: 'near.txt' });
+    expect(screen.getByText('line 0')).toBeInTheDocument();
+    expect(screen.queryByText('line 2999')).toBeNull();
+    const gaps = near.querySelectorAll('.diff-chunk-gap');
+    show(gaps[gaps.length - 1], true);
+    expect(screen.getByText('line 2999')).toBeInTheDocument();
+    expect(screen.queryByText('line 1500')).toBeNull();
   });
 
   // Report: a review opened slowly on a phone. It mounted 600 lines, and the screen shows about 45.

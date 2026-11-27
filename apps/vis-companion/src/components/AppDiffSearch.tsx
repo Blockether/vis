@@ -8,6 +8,9 @@ import {
   type DiffSearchOptions,
 } from '../lib/app-diff';
 
+/** The time for the rows around a match to mount after the scroll to it. */
+const DIFF_SEARCH_SETTLE_MS = 150;
+
 /** One state owner for find-in-diff, occurrence navigation, and focus return. */
 export function useDiffSearch(
   files: readonly AppDiffFile[],
@@ -23,10 +26,16 @@ export function useDiffSearch(
   const currentMatch = currentResult?.line;
   const searchAnchor = currentMatch ? anchorKey(currentMatch.anchor) : undefined;
   useEffect(() => {
-    if (searchAnchor)
+    if (!searchAnchor) return;
+    const reveal = () =>
       container.current
         ?.querySelector('[data-search-current="true"]')
         ?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    reveal();
+    // The rows around the match mount after the scroll. WebKit moved the scroll as they did,
+    // by thousands of pixels near the end of a long file, so reveal the match again after them.
+    const settled = window.setTimeout(reveal, DIFF_SEARCH_SETTLE_MS);
+    return () => window.clearTimeout(settled);
   }, [searchAnchor, currentResult?.start]);
   const moveMatch = (delta: number) => {
     if (!matches.length) return;

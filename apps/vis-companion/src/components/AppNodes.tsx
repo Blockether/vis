@@ -4,7 +4,7 @@
  * `draft` action. Without an app the threads are read only.
  */
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 
 import {
   APP_ACTION_WORDS,
@@ -24,9 +24,11 @@ import {
   type DiffSearchMatch,
   fileStat,
   hiddenLinesBefore,
-  diffModel,
+  diffShape,
+  strayThreads,
   fileTree,
   splitRows,
+  wrappedLines,
   type AppDiffFile,
   type AppDiffHunk,
   type AppDiffLine,
@@ -597,6 +599,9 @@ function LineCode({ line, words, match, language }: LineCodeProps) {
 
 interface HunkProps {
   hunk: AppDiffHunk;
+  store: ChunkStore;
+  /** The anchor keys of the open editor, the current match and the selection: their chunks stay mounted. */
+  pinned: ReadonlySet<string>;
   file: AppDiffFile;
   at: number;
   digits: number;
@@ -663,11 +668,11 @@ function LineThreads({ lines, model }: LineThreadsProps) {
   );
 }
 
-/** Both modes use one table per hunk inside the file's shared scroller. */
+/**
+ * Both modes put the rows of a hunk inside the file's shared scroller, one table for
+ * each chunk. A chunk away from the viewport is a gap of its height.
+ */
 function HunkView(model: HunkProps) {
-  const rows: SplitRow[] = model.split
-    ? splitRows(model.hunk.lines)
-    : model.hunk.lines.map((line) => ({ new: line }));
   const cell = (line: AppDiffLine | undefined, side: 'old' | 'new') =>
     line ? (
       <>
@@ -698,51 +703,30 @@ function HunkView(model: HunkProps) {
         <td className="diff-empty" />
       </>
     );
+  const chunks = hunkChunks(model.file.path, model.at, model.hunk, model.split);
   return (
     <div className="diff-hunk-block min-w-0">
       <HunkSeparator hunks={model.file.hunks} at={model.at} />
-      <table className="diff-table" data-diff-lines>
-        <tbody>
-          {rows.map((row, i) => {
-            const old =
-              row.old?.kind === 'context'
-                ? {
-                    ...row.old,
-                    anchor: {
-                      ...row.old.anchor,
-                      side: 'old' as const,
-                      line: row.old.old_line!,
-                    },
-                  }
-                : row.old;
-            const contextOld =
-              row.new?.kind === 'context'
-                ? {
-                    ...row.new,
-                    anchor: {
-                      ...row.new.anchor,
-                      side: 'old' as const,
-                      line: row.new.old_line!,
-                    },
-                  }
-                : undefined;
-            const lines = [model.split ? old : contextOld, row.new].filter((line): line is AppDiffLine =>
-              Boolean(line),
-            );
-            return (
-              <DiffRow
-                key={i}
-                old={old}
-                next={row.new}
-                split={model.split}
-                lines={lines}
-                model={model}
-                cell={cell}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+      {chunks.map((chunk) => (
+        <NearChunk
+          key={chunk.key}
+          store={model.store}
+          chunk={chunk.key}
+          isPinned={chunk.anchors.some((key) => model.pinned.has(key))}
+          estimate={(columns) =>
+            chunk.rows.reduce((sum, { row }) => sum + rowLines([row.old, row.new], columns), 0) * DIFF_ROW_HEIGHT +
+            chunk.anchors.reduce((count, key) => count + (model.byAnchor.get(key)?.length ?? 0), 0) * DIFF_THREAD_HEIGHT
+          }
+        >
+          <table className="diff-table" data-diff-lines>
+            <tbody>
+              {chunk.rows.map(({ row, old, lines }, i) => (
+                <DiffRow key={i} old={old} next={row.new} split={model.split} lines={lines} model={model} cell={cell} />
+              ))}
+            </tbody>
+          </table>
+        </NearChunk>
+      ))}
     </div>
   );
 }
@@ -922,33 +906,101 @@ function ContextBand({ label, title, reach }: ContextBandProps) {
   );
 }
 
-/** The lines that a diff mounts at once. The files after them mount only near the viewport. */
-const DIFF_EAGER_LINES = 600;
+/**
+ * The lines that a diff mounts at once: more than a tall screen shows. The chunks after them mount
+ * only near the viewport, and the first report of the viewport unmounts the eager rows far from it.
+ */
+const DIFF_EAGER_LINES = 240;
 /** A phone shows about 45 rows and builds rows slower, so it mounts fewer lines at once. */
 const DIFF_EAGER_LINES_PHONE = 160;
 /** A tablet or a desk. A narrower screen is a phone. */
 const WIDE_SCREEN = '(min-width: 48rem)';
-/** How far outside its scroller a file mounts, so that a scroll meets rows and not a gap. */
+/** How far outside its scroller a chunk mounts, so that a scroll meets rows and not a gap. */
 const DIFF_NEAR_MARGIN = 1200;
 const DIFF_ROW_HEIGHT = 20;
 const DIFF_HUNK_HEIGHT = 28;
 const DIFF_FILE_HEADER_HEIGHT = 40;
 
 /** The height of a file whose rows are not mounted, before the browser measured it. */
-function estimatedFileHeight(file: AppDiffFile): number {
-  const lines = file.hunks.reduce((count, hunk) => count + hunk.lines.length, 0);
+function estimatedFileHeight(file: AppDiffFile, columns: number | null = null): number {
+  const lines = file.hunks.reduce(
+    (count, hunk) => count + hunk.lines.reduce((sum, line) => sum + rowLines([line], columns), 0),
+    0,
+  );
   return DIFF_FILE_HEADER_HEIGHT + lines * DIFF_ROW_HEIGHT + file.hunks.length * DIFF_HUNK_HEIGHT;
 }
 
-/** The files after the eager lines of a diff. A short diff has none. */
-function lazyFilePaths(files: readonly AppDiffFile[], eagerLines: number): ReadonlySet<string> {
-  const paths = new Set<string>();
+/** The lines on screen of a row: its longest side wrapped at `columns`, or one line without wrap. */
+function rowLines(sides: readonly (AppDiffLine | undefined)[], columns: number | null): number {
+  if (!columns) return 1;
+  return Math.max(1, ...sides.map((line) => (line ? wrappedLines(line.text, columns) : 1)));
+}
+
+/** The rows of a hunk that mount or wait as one. A chunk of a long file costs a few milliseconds. */
+const DIFF_CHUNK_ROWS = 64;
+/** The height that one thread under a row of an unpainted chunk stands in for. */
+const DIFF_THREAD_HEIGHT = 96;
+
+/** One row of a chunk: the row, its old line with an old anchor, and the lines that threads and the selection name. */
+interface ChunkRow {
+  row: SplitRow;
+  old?: AppDiffLine;
+  lines: AppDiffLine[];
+}
+
+interface DiffChunk {
+  key: string;
+  rows: ChunkRow[];
+  /** The anchor keys of the lines of the rows. */
+  anchors: string[];
+}
+
+function chunkKey(path: string, hunk: number, chunk: number): string {
+  return `${path}\u0000${hunk}\u0000${chunk}`;
+}
+
+/** The key of the rows of a whole file: a far file mounts none of its chunks. */
+function fileChunkKey(path: string): string {
+  return `${path}\u0000`;
+}
+
+function oldSide(line: AppDiffLine): AppDiffLine {
+  return { ...line, anchor: { ...line.anchor, side: 'old', line: line.old_line! } };
+}
+
+/** The rows of a hunk, cut into chunks. */
+function hunkChunks(path: string, at: number, hunk: AppDiffHunk, split: boolean): DiffChunk[] {
+  const rows: SplitRow[] = split ? splitRows(hunk.lines) : hunk.lines.map((line) => ({ new: line }));
+  const chunks: DiffChunk[] = [];
+  for (let start = 0; start < rows.length; start += DIFF_CHUNK_ROWS) {
+    const anchors: string[] = [];
+    const cut = rows.slice(start, start + DIFF_CHUNK_ROWS).map((row): ChunkRow => {
+      const old = row.old?.kind === 'context' ? oldSide(row.old) : row.old;
+      const contextOld = row.new?.kind === 'context' ? oldSide(row.new) : undefined;
+      const lines = [split ? old : contextOld, row.new].filter((line): line is AppDiffLine => Boolean(line));
+      for (const line of lines) anchors.push(anchorKey(line.anchor));
+      return { row, old, lines };
+    });
+    chunks.push({ key: chunkKey(path, at, start / DIFF_CHUNK_ROWS), rows: cut, anchors });
+  }
+  return chunks;
+}
+
+/** The first chunks of a diff, to the eager lines. They paint before the observer reports. */
+function eagerChunks(files: readonly AppDiffFile[], eagerLines: number): Set<string> {
+  const keys = new Set<string>();
   let lines = 0;
   for (const file of files) {
-    if (lines >= eagerLines) paths.add(file.path);
-    lines += file.hunks.reduce((count, hunk) => count + hunk.lines.length, 0);
+    for (const [at, hunk] of file.hunks.entries()) {
+      for (let start = 0; start < hunk.lines.length; start += DIFF_CHUNK_ROWS) {
+        if (lines >= eagerLines) return keys;
+        keys.add(fileChunkKey(file.path));
+        keys.add(chunkKey(file.path, at, start / DIFF_CHUNK_ROWS));
+        lines += Math.min(DIFF_CHUNK_ROWS, hunk.lines.length - start);
+      }
+    }
   }
-  return paths;
+  return keys;
 }
 
 function scrollerOf(el: Element | undefined): Element | null {
@@ -959,53 +1011,210 @@ function scrollerOf(el: Element | undefined): Element | null {
   return null;
 }
 
-interface NearFiles {
-  near: ReadonlySet<string>;
-  /** The measured height of a file that left, so that the scroll length stays. */
-  heights: ReadonlyMap<string, number>;
+function isSkipped(el: HTMLElement): boolean {
+  return typeof el.checkVisibility === 'function' && !el.checkVisibility({ contentVisibilityAuto: true });
 }
 
 /**
- * A long diff mounts the rows of a file only near the viewport. All rows at once
- * block the page: 19,000 lines are 139,000 elements.
- * An engine that cannot observe mounts every file.
+ * Which chunks of a diff are near the viewport, and the painted height of each chunk
+ * that left. One observer watches every chunk element, rows or gap. A report renders
+ * only the chunks that it changes, never the whole diff.
  */
-function useNearFiles(files: readonly AppDiffFile[], sections: { current: Map<string, HTMLElement> }) {
-  const eagerLines = useMediaMatch(WIDE_SCREEN) ? DIFF_EAGER_LINES : DIFF_EAGER_LINES_PHONE;
-  const lazy = useMemo(() => lazyFilePaths(files, eagerLines), [files, eagerLines]);
-  const [seen, setSeen] = useState<NearFiles>(() => ({ near: new Set(), heights: new Map() }));
-  const canObserve = typeof IntersectionObserver !== 'undefined';
-  useEffect(() => {
-    if (!canObserve || lazy.size === 0) return;
-    const paths = new Map<Element, string>();
-    for (const [path, el] of sections.current) if (lazy.has(path)) paths.set(el, path);
-    const observer = new IntersectionObserver(
-      (entries) =>
-        setSeen((held) => {
-          const near = new Set(held.near);
-          const heights = new Map(held.heights);
-          let isChanged = false;
-          for (const entry of entries) {
-            const path = paths.get(entry.target);
-            if (path === undefined || entry.isIntersecting === near.has(path)) continue;
-            isChanged = true;
-            if (entry.isIntersecting) near.add(path);
-            else {
-              near.delete(path);
-              heights.set(path, entry.boundingClientRect.height);
+class ChunkStore {
+  private observer: IntersectionObserver | null = null;
+  private readonly elements = new Set<HTMLElement>();
+  private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly near: Set<string>;
+  /** The painted height of each chunk, and the estimate of the rows that it measured. */
+  private readonly heights = new Map<string, { height: number; estimate: number }>();
+  private readonly layoutListeners = new Set<() => void>();
+  /** False in an engine that cannot observe: it mounts every chunk. */
+  readonly isObserved: boolean;
+  private readonly wrap: boolean;
+  private columns: number | null = null;
+  private resizer: ResizeObserver | null = null;
+  private width: number | null = null;
+
+  constructor(eager: ReadonlySet<string>, isObserved: boolean, wrap: boolean) {
+    this.near = new Set(eager);
+    this.isObserved = isObserved;
+    this.wrap = wrap;
+  }
+
+  /** The columns of one line of a wrapped code cell, once the first rows painted. Null without wrap. */
+  wrapColumns(): number | null {
+    return this.columns;
+  }
+
+  readonly subscribeLayout = (listener: () => void) => {
+    this.layoutListeners.add(listener);
+    return () => this.layoutListeners.delete(listener);
+  };
+
+  /** Wrapped rows are as many lines high as their text fills, so the gaps wait for the width of a code cell. */
+  private measureWrap(chunk: HTMLElement) {
+    if (!this.wrap || this.columns !== null) return;
+    const cell = chunk.querySelector<HTMLElement>('.diff-code');
+    if (!cell) return;
+    const probe = document.createElement('span');
+    probe.style.cssText = 'position:absolute;visibility:hidden;width:1ch';
+    cell.append(probe);
+    const ch = probe.getBoundingClientRect().width;
+    probe.remove();
+    const style = getComputedStyle(cell);
+    const width = cell.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+    if (!(ch > 0 && width > 0)) return;
+    this.columns = Math.max(1, Math.floor(width / ch));
+    queueMicrotask(() => {
+      for (const listener of this.layoutListeners) listener();
+    });
+  }
+
+  isNear(key: string): boolean {
+    return !this.isObserved || this.near.has(key);
+  }
+
+  /** The painted height of the chunk, unless its rows changed since: other threads or other columns. */
+  heightOf(key: string, estimate: number): number | undefined {
+    const held = this.heights.get(key);
+    return held?.estimate === estimate ? held.height : undefined;
+  }
+
+  subscribe(key: string, listener: () => void): () => void {
+    const held = this.listeners.get(key) ?? new Set();
+    held.add(listener);
+    this.listeners.set(key, held);
+    return () => {
+      held.delete(listener);
+      if (held.size === 0) this.listeners.delete(key);
+    };
+  }
+
+  readonly observe = (el: HTMLElement | null) => {
+    if (!el) return;
+    this.measureWrap(el);
+    this.elements.add(el);
+    this.observer?.observe(el);
+    return () => {
+      this.elements.delete(el);
+      this.observer?.unobserve(el);
+    };
+  };
+
+  start(root: Element | null) {
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        const changed = new Set<string>();
+        for (const entry of entries) {
+          const el = entry.target as HTMLElement;
+          const key = el.dataset.diffChunk ?? '';
+          // Rows that leave keep their height in the gap, so the scroll length stays. A file that
+          // the engine skips for `content-visibility` has no layout: WebKit gives its rows no height.
+          if (!entry.isIntersecting && !el.classList.contains('diff-chunk-gap') && !isSkipped(el)) {
+            const height = entry.boundingClientRect.height;
+            const estimate = Number(el.dataset.diffEstimate);
+            const held = this.heights.get(key);
+            if (held?.height !== height || held.estimate !== estimate) {
+              this.heights.set(key, { height, estimate });
+              changed.add(key);
             }
           }
-          return isChanged ? { near, heights } : held;
-        }),
-      { root: scrollerOf(paths.keys().next().value), rootMargin: `${DIFF_NEAR_MARGIN}px 0px` },
+          if (entry.isIntersecting) this.measureWrap(el);
+          if (entry.isIntersecting === this.near.has(key)) continue;
+          if (entry.isIntersecting) this.near.add(key);
+          else this.near.delete(key);
+          changed.add(key);
+        }
+        for (const key of changed) for (const listener of this.listeners.get(key) ?? []) listener();
+      },
+      { root, rootMargin: `${DIFF_NEAR_MARGIN}px 0px` },
     );
-    for (const el of paths.keys()) observer.observe(el);
-    return () => observer.disconnect();
-  }, [canObserve, lazy, sections]);
-  return {
-    isMounted: (path: string) => !canObserve || !lazy.has(path) || seen.near.has(path),
-    heights: seen.heights,
-  };
+    for (const el of this.elements) this.observer.observe(el);
+    if (typeof ResizeObserver === 'undefined') return;
+    this.resizer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (this.width !== null && width !== this.width) this.relayout();
+      this.width = width;
+    });
+    this.resizer.observe(root ?? document.documentElement);
+  }
+
+  /** Another width wraps the rows and the threads again, so the measured heights and columns are old. */
+  private relayout() {
+    this.heights.clear();
+    this.columns = null;
+    for (const el of this.elements) {
+      if (!el.classList.contains('diff-chunk-gap')) this.measureWrap(el);
+    }
+    for (const held of this.listeners.values()) for (const listener of held) listener();
+  }
+
+  stop() {
+    this.observer?.disconnect();
+    this.observer = null;
+    this.resizer?.disconnect();
+    this.resizer = null;
+    this.width = null;
+  }
+}
+
+/**
+ * The chunk store of a diff. A long diff mounts its rows only near the viewport, a
+ * chunk at a time: all rows at once block the page. 19,000 lines are 139,000 elements,
+ * and one file of 7,000 lines took 4 seconds to paint and scrolled at 15 frames a
+ * second in WebKit. Other files, another layout or another wrap start again from the eager lines.
+ */
+function useChunkStore(
+  files: readonly AppDiffFile[],
+  split: boolean,
+  wrap: boolean,
+  container: { current: HTMLElement | null },
+): ChunkStore {
+  const eagerLines = useMediaMatch(WIDE_SCREEN) ? DIFF_EAGER_LINES : DIFF_EAGER_LINES_PHONE;
+  const isObserved = typeof IntersectionObserver !== 'undefined';
+  // The layout cuts and measures the chunks, so a new layout starts a new store.
+  const store = useMemo(() => new ChunkStore(eagerChunks(files, eagerLines), isObserved, wrap), [files, split, wrap, eagerLines, isObserved]);
+  useEffect(() => {
+    if (!store.isObserved) return;
+    store.start(scrollerOf(container.current ?? undefined));
+    return () => store.stop();
+  }, [store, container]);
+  return store;
+}
+
+interface NearChunkProps {
+  store: ChunkStore;
+  chunk: string;
+  /** The chunk mounts wherever the scroll is: it has the open editor, the current match or the selection. */
+  isPinned: boolean;
+  /** The height of the gap before the browser measured the rows, for the columns of a wrapped line. */
+  estimate: (columns: number | null) => number;
+  /** The rows. */
+  children: ReactNode;
+}
+
+/** The rows of a chunk near the viewport, else a gap of their height. */
+function NearChunk({ store, chunk, isPinned, estimate, children }: NearChunkProps) {
+  const subscribe = (listener: () => void) => store.subscribe(chunk, listener);
+  const isNear = useSyncExternalStore(subscribe, () => store.isNear(chunk));
+  const columns = useSyncExternalStore(store.subscribeLayout, () => store.wrapColumns());
+  const estimated = estimate(columns);
+  const height = useSyncExternalStore(subscribe, () => store.heightOf(chunk, estimated));
+  const isShown = isNear || isPinned;
+  // One element holds the rows or the gap: WebKit moved the scroll by thousands of pixels when a
+  // node on the screen was replaced, even at the same height.
+  return (
+    <div
+      ref={(el) => store.observe(el)}
+      data-diff-chunk={chunk}
+      data-diff-estimate={estimated}
+      className={isShown ? undefined : 'diff-chunk-gap'}
+      aria-hidden={isShown ? undefined : true}
+      style={isShown ? undefined : { height: height ?? estimated }}
+    >
+      {isShown && children}
+    </div>
+  );
 }
 
 interface DiffNodeViewProps {
@@ -1019,14 +1228,10 @@ interface DiffNodeViewProps {
 
 /** Unified and split diffs share anchored comments, file controls and one scroller per file. */
 export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewProps) {
-  const {
-    files: sourceFiles,
-    words,
-    digits,
-    columns,
-    total,
-    elsewhere,
-  } = useMemo(() => diffModel(node.patch, node.threads), [node.patch, node.threads]);
+  // A new thread or a resent node with the same patch does not parse the patch again.
+  const shape = useMemo(() => diffShape(node.patch), [node.patch]);
+  const { files: sourceFiles, words, digits, columns, total } = shape;
+  const elsewhere = useMemo(() => strayThreads(shape, node.threads), [shape, node.threads]);
 
   const [opened, setOpened] = useReviewState<ViewAnchor | null>(`${node.id}:opened`, null);
   const [selected, setSelected] = useReviewState<ViewAnchor | null>(`${node.id}:selected`, null);
@@ -1114,11 +1319,6 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
   });
 
   const { searchAnchor, currentResult } = search;
-  const nearFiles = useNearFiles(files, refs);
-
-  // The open editor and the current match stay mounted wherever the scroll is.
-  const hasRows = (path: string) =>
-    nearFiles.isMounted(path) || opened?.path === path || currentResult?.line.anchor.path === path;
 
   const byAnchor = useMemo(() => {
     const map = new Map<string, LiveThread[]>();
@@ -1129,6 +1329,10 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
     }
     return map;
   }, [node.threads]);
+
+  const store = useChunkStore(files, split, wrap, container);
+  const pinnedAnchors = [opened, selected, currentResult?.line.anchor].filter((anchor) => anchor != null);
+  const pinned = new Set(pinnedAnchors.map(anchorKey));
 
   const toggle = (path: string) =>
     setFolded((held) => {
@@ -1269,10 +1473,6 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
                   '--diff-code-columns': columns.get(file.path) ?? 0,
                   // The height that an unpainted file stands in for until it is painted once.
                   '--diff-file-height': `${folded.has(file.path) ? DIFF_FILE_HEADER_HEIGHT : estimatedFileHeight(file)}px`,
-                  minHeight:
-                    folded.has(file.path) || hasRows(file.path)
-                      ? undefined
-                      : (nearFiles.heights.get(file.path) ?? estimatedFileHeight(file)),
                 } as CSSProperties
               }
               aria-label={file.path}
@@ -1283,12 +1483,20 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
                   {preview.type === 'image' ? <ImageNodeView node={preview} /> : <MediaNodeView node={preview} />}
                 </div>
               ))}
-              {!folded.has(file.path) && file.hunks.length > 0 && hasRows(file.path) && (
+              {!folded.has(file.path) && file.hunks.length > 0 && (
+                <NearChunk
+                  store={store}
+                  chunk={fileChunkKey(file.path)}
+                  isPinned={pinnedAnchors.some((anchor) => anchor.path === file.path)}
+                  estimate={(columns) => estimatedFileHeight(file, columns) - DIFF_FILE_HEADER_HEIGHT}
+                >
                 <div className="diff-file-scroll" data-diff-scroll>
                   {file.hunks.map((hunk, at) => (
                     <HunkView
                       key={`${hunk.header}:${at}`}
                       hunk={hunk}
+                      store={store}
+                      pinned={pinned}
                       file={file}
                       at={at}
                       digits={digits.get(file.path) ?? 1}
@@ -1338,6 +1546,7 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
                     />
                   )}
                 </div>
+                </NearChunk>
               )}
             </section>
           ))}
