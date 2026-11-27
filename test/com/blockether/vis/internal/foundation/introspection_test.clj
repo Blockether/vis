@@ -73,6 +73,76 @@
         (expect (= :patch-overlapping-edits (classify overlap-refusal)))
         (expect (= :patch-invalid-edit (classify shape-refusal))))))
 
+(defdescribe scoped-session-read-test
+  (it "pages saved stdout without loading it into the index"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Large output"})
+                turn (persistance/db-store-session-turn!
+                       db {:parent-session-id sid :user-request "Read output" :status :running})
+                stdout (str "a😀bc" (apply str (repeat 120000 "x")))
+                _ (h/store-iteration! db {:session-turn-id turn :code "print(text)"
+                                          :forms [{:src "print(text)" :stdout stdout}]})
+                env {:session-id sid :db-info db}
+                index (:result (introspection/read-session env))
+                scoped (:result (introspection/read-session
+                                  env {"view" "blocks" "turn" 1 "iteration" 1 "block" 1
+                                       "offset" 1 "limit" 2}))
+                block (get-in scoped ["transcript" "turns" 0 "iterations" 0 "blocks" 0])]
+            (expect (< (alength (.getBytes ^String (pr-str index) "UTF-8")) 2048))
+            (expect (= "Read output" (get-in index ["turns" 0 "request_preview"])))
+            (expect (= "😀b" (get block "stdout")))
+            (expect (= 3 (get block "stdout_next_offset"))))
+          (finally (persistance/db-dispose-connection! db)))))
+  (it "continues the index after the last ID without repeating rows"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (dotimes [n 3] (h/store-session! db {:channel :tui :title (str "Page " n)}))
+          (let [env {:db-info db}
+                all (:result (introspection/list-sessions env))
+                page (:result (introspection/list-sessions env {"limit" 2}))
+                next-page (:result (introspection/list-sessions
+                                     env {"limit" 2 "cursor" (str (get (peek page) "id"))}))]
+            (expect (= 2 (count page)))
+            (expect (= all (into page next-page))))
+          (finally (persistance/db-dispose-connection! db))))))
+
+(defdescribe session-event-window-test
+  (it "returns retained Task facts and detects a sequence gap"
+      (let [db (persistance/db-create-connection! :memory)
+            root (.toFile (Files/createTempDirectory "session-events" (make-array FileAttribute 0)))
+            sid (h/store-session! db {:channel :tui :title "Task journal"})
+            _ (persistance/db-store-session-turn! db {:parent-session-id sid :user-request "Check"})
+            _ (persistance/db-store-session-turn! db {:parent-session-id sid :user-request "Later"})
+            file (io/file root "gateway" "events" (str sid ".ndjson"))
+            row (fn [n type]
+                  (json/write-json-str
+                    {"type" type "seq" n "ts" 42 "session_id" (str sid)
+                     "task" {"id" "task-1" "kind" "shell" "name" "Check"
+                              "state" (if (= type "task.started") "running" "cancelled")
+                              "started_at" 40 "detached" true "view_ids" [] "session_id" (str sid)
+                              "origin" {"turn" 1 "iteration" 2}
+                              "cancel_reason" "user"}}))]
+        (try
+          (io/make-parents file)
+          (spit file (str (row 1 "task.started") "\n" (row 3 "task.ended") "\n"))
+          (with-redefs [paths/vis-home (constantly (str root))]
+            (let [data (:result (introspection/read-session
+                                  {:db-info db :session-id sid} {"view" "events" "turn" 1 "offset" 1 "limit" 1}))
+                  other (:result (introspection/read-session
+                                   {:db-info db :session-id sid} {"view" "events" "turn" 2}))]
+              (expect (= {"first_retained_seq" 1 "last_retained_seq" 3 "is_complete" false}
+                         (get data "coverage")))
+              (expect (= {"type" "task.ended" "seq" 3 "ts" 42 "session_id" (str sid)
+                          "id" "task-1" "kind" "shell" "name" "Check" "state" "cancelled"
+                          "cancel_reason" "user" "detached" true "started_at" 40
+                          "turn" 1 "iteration" 2}
+                         (first (get data "events"))))
+              (expect (empty? (get other "events")))))
+          (finally
+            (doseq [^java.io.File entry (reverse (file-seq root))] (.delete entry))
+            (persistance/db-dispose-connection! db))))))
+
 (defdescribe introspection-public-surface-test
              (it "defaults read_session to the current session when no id is passed"
                  (let [inspect-data
@@ -82,7 +152,7 @@
                        (inspect-data {:session-id "current-session" :db-info nil} nil)]
 
                    (expect (= "current-session" (:session-id data)))
-                   (expect (contains? data :usage)))))
+                   (expect (= [] (:turns data))))))
 
 (defdescribe
   session-usage-ledger-test
@@ -134,8 +204,11 @@
                              :to {:provider "openai" :model "gpt-5"}
                              :source :tui}})
               inspect @#'introspection/foundation-inspect
-              ledger (get (:result (inspect {:session-id sid :db-info s} sid)) "usage")
-              missing-ledger (get (:result (inspect {:session-id "missing" :db-info s} "missing"))
+              ledger (get (:result (inspect {:session-id sid :db-info s} sid {"view" "usage"})) "usage")
+              missing-ledger (get (:result (inspect {:session-id "missing" :db-info s} "missing" {"view" "usage"}))
+                                  "usage")
+              ;; A valid current session must not answer for an unknown explicit target.
+              foreign-ledger (get (:result (inspect {:session-id sid :db-info s} "missing" {"view" "usage"}))
                                   "usage")
               turn-row (first (get ledger "turns"))
               iteration-row (first (get turn-row "iterations"))
@@ -228,7 +301,10 @@
           (expect (= [] (get missing-ledger "turns")))
           (expect (= [] (get missing-ledger "tools")))
           (expect (= [] (get missing-ledger "tool_errors")))
-          (expect (false? (get missing-ledger "tool_errors_truncated"))))
+          (expect (false? (get missing-ledger "tool_errors_truncated")))
+          (expect (= "missing" (get foreign-ledger "session_id")))
+          (expect (= 0 (get-in foreign-ledger ["totals" "tokens" "input"])))
+          (expect (= [] (get foreign-ledger "turns"))))
         (finally (persistance/db-dispose-connection! s))))))
 
 (defdescribe session-usage-tool-error-cap-test
@@ -256,7 +332,7 @@
                        @#'introspection/foundation-inspect
 
                        result
-                       (inspect {:session-id nil :db-info nil})
+                       (inspect {:session-id nil :db-info nil} {"view" "usage"})
 
                        data
                        (:result result)]
@@ -352,7 +428,7 @@
                            (env-python/run-python-block
                              python-context
                              (str
-                               "s = await read_session()\n"
+                               "s = await read_session(view=\"full\")\n"
                                "assert s['current_turn']['cost'] == {'input_tokens': 1200, "
                                "'input_cache_read_tokens': 700, 'input_cache_write_tokens': 100, "
                                "'input_regular_tokens': 400, 'output_tokens': 90, "
@@ -406,7 +482,7 @@
             @#'introspection/foundation-inspect
 
             data
-            (:result (inspect {:session-id nil :db-info nil}))]
+            (:result (inspect {:session-id nil :db-info nil} {"view" "diagnosis"}))]
 
         ;; Top-level keys are snake_case strings (`:schema-version` -> "schema_version").
         (expect (every? string? (keys data)))
@@ -444,7 +520,7 @@
                    :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
                    :duration-ms 10})
               _ (persistance/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
+              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid {"view" "full"}))]
 
           ;; The whole model-facing surface survives the strings-only boundary
           ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
@@ -500,8 +576,8 @@
             core
             (var-get #'com.blockether.vis.internal.context.prompt/CORE_SYSTEM_PROMPT)]
 
-        (expect (str/includes? text "~/.vis/gateway/events/<id>.ndjson"))
-        (expect (str/includes? text "await read_session()"))
+        (expect (not (str/includes? text "~/.vis/gateway/events/<id>.ndjson")))
+        (expect (str/includes? text "view=\"blocks\""))
         (expect (str/includes? text "list_sessions(search="))
         (expect (nil? disabled))
         (expect (not (str/includes? core "gateway/events")))
@@ -531,7 +607,7 @@
                                        :forms [{:src "print(2)" :stdout "2\n"}]
                                        :duration-ms 1})
                 data (:result
-                       (@#'introspection/foundation-inspect {:session-id mine :db-info s} other))
+                       (@#'introspection/foundation-inspect {:session-id mine :db-info s} other {"view" "full"}))
                 current (get data "current_turn")]
 
             (expect (map? current))
@@ -555,7 +631,7 @@
                                      :forms [{:src "print(2)" :stdout "2\n"}]
                                      :duration-ms 1})
               env {:session-id cid :db-info s :turn-state-atom (atom {:iteration {:position 3}})}
-              current (get (:result (@#'introspection/foundation-inspect env cid)) "current_turn")]
+              current (get (:result (@#'introspection/foundation-inspect env cid {"view" "full"})) "current_turn")]
 
           (expect (= "my own live request" (get current "user_request")))
           (expect (= 3 (get-in current ["iteration" "current"]))))
@@ -582,9 +658,9 @@
                    env {:session-id cid
                         :db-info s
                         :turn-state-atom (atom {:session-turn-id turn :iteration {:position 3}})}
-                   data (:result (@#'introspection/foundation-inspect env cid))
+                   data (:result (@#'introspection/foundation-inspect env cid {"view" "full"}))
                    session (get data "session")
-                   summary-turn (first (get session "turns"))
+                   summary-turn (first (get (:result (introspection/read-session env)) "turns"))
                    transcript-turn (first (get-in data ["transcript" "turns"]))]
 
                (expect (= 1 (get session "turn_count")))
@@ -616,9 +692,9 @@
                                                    :error {:message "KeyError: 'palettes.ts'"}}]
                                           :duration-ms 5})
                    data (:result
-                          (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))
-                   failure (first (get data "failures"))
-                   attempt (first (get-in data ["current_turn" "attempts"]))]
+                          (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid {"view" "full"}))
+                   failure (first (get-in data ["diagnosis" "failures"]))
+                   attempt (first (get-in data ["transcript" "turns" 0 "iterations" 0 "blocks"]))]
 
                (expect (= 1 (get-in data ["diagnosis" "failure_count"])))
                (expect (= "code" (get failure "source")))
@@ -650,9 +726,9 @@
                         :code code
                         :forms [{:src code :vis/tool-name "py3" :error error}]
                         :duration-ms 0})
-                   data (:result (introspection/read-session {:session-id cid :db-info s} cid))
-                   failure (first (get data "failures"))
-                   attempt (first (get-in data ["current_turn" "attempts"]))]
+                   data (:result (introspection/read-session {:session-id cid :db-info s} cid {"view" "full"}))
+                   failure (first (get-in data ["diagnosis" "failures"]))
+                   attempt (first (get-in data ["transcript" "turns" 0 "iterations" 0 "blocks"]))]
 
                (expect (= 1 (get-in data ["diagnosis" "failure_count"])))
                (expect (= "runtime" (get failure "source")))
@@ -890,8 +966,8 @@
             (fn [cid]
               [(select-keys (@#'introspection/foundation-session-descriptor {:db-info s} cid)
                             [:provider :model :provider-model])
-               (select-keys (@#'introspection/session-snapshot s cid)
-                            [:provider :model :provider-model])])]
+               (select-keys (:session (@#'introspection/foundation-inspect-data {:db-info s} cid))
+                            [:provider :model])])]
 
         (try (let [root
                    {:channel :tui :provider :openai :model "gpt-4o"}
@@ -913,9 +989,9 @@
                (persistance/db-set-session-model-pref! s picked "github-copilot" "claude-opus-5.5")
                (introspection/install-default-route! (fn [_sid]
                                                        {:provider "zai" :model "glm-5"}))
-               (expect (= [pick pick] (routes picked)))
+               (expect (= [pick (dissoc pick :provider-model)] (routes picked)))
                ;; Without a pick, the turns use the default pair of the session.
-               (expect (= [default default] (routes plain))))
+               (expect (= [default (dissoc default :provider-model)] (routes plain))))
              (finally (introspection/install-default-route! before)
                       (persistance/db-dispose-connection! s)))))
   (it "defaults to the current session and answers nil for an unknown target"
@@ -1007,7 +1083,7 @@
                                                     :view-id "view-ci"
                                                     :base64 b64
                                                     :size (alength blob)}]})
-              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))
+              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid {"view" "full"}))
               iterations (mapcat #(get % "iterations") (get-in data ["transcript" "turns"]))
               blocks (vec (mapcat #(get % "blocks") iterations))
               attachments (vec (mapcat #(get % "attachments") iterations))
@@ -1073,7 +1149,7 @@
                            #'transcript/transcript (fn [& _]
                                                      (swap! transcript-reads inc)
                                                      source)}
-            #(:result (introspection/read-session {:session-id "fixture" :db-info nil})))
+            #(:result (introspection/read-session {:session-id "fixture" :db-info nil} {"view" "full"})))
 
           model
           (get data "transcript")
@@ -1087,8 +1163,8 @@
       (expect (zero? @index-reads))
       (expect (= 1 @transcript-reads))
       (expect (not (contains? data "session_index")))
-      (expect (= 2 (get data "schema_version")))
-      (expect (= #{"session" "totals" "turns"} (set (keys model))))
+      (expect (= 3 (get data "schema_version")))
+      (expect (= #{"turns"} (set (keys model))))
       (expect (not (contains? iteration "forms")))
       (expect (= "reasoning" (get iteration "thinking")))
       (expect (= "reply" (get iteration "assistant_prose")))
@@ -1141,7 +1217,7 @@
                                             :stdout "other block"}]})
 
               data
-              (:result (introspection/read-session {:session-id sid :db-info s}))
+              (:result (introspection/read-session {:session-id sid :db-info s} {"view" "blocks" "limit" 65536}))
 
               matches
               (for [t
@@ -1208,7 +1284,7 @@
                 (fn [env-session-id]
                   (get (:result (@#'introspection/foundation-inspect
                                  {:session-id env-session-id :db-info s}
-                                 cid))
+                                 cid {"view" "diagnosis"}))
                        "diagnosis"))
 
                 foreign
@@ -1290,7 +1366,7 @@
                        (mapv #(get % "user_request")
                              (get-in (:result (@#'introspection/foundation-inspect
                                                {:session-id "other-session" :db-info s}
-                                               cid))
+                                               cid {"view" "diagnosis"}))
                                      ["diagnosis" "hung_turns"]))))))
         (finally (introspection/install-block-clock! clock)
                  (persistance/db-dispose-connection! s)
@@ -1312,14 +1388,14 @@
                      {:parent-session-id cid :user-request "Q2" :status :running})
                 fork-id (h/fork-session-at-turn! s cid {:through-turn-id t2})
                 read-of (fn [sid]
-                          (:result (introspection/read-session {:session-id sid :db-info s} sid)))
+                          (:result (introspection/read-session {:session-id sid :db-info s} sid {"view" "full"})))
                 running (read-of fork-id)]
 
             (expect (= {"session_id" (str cid) "turn_id" (str t2) "outcome" "running"}
                        (update-vals (get-in running ["session" "forked_from"]) str)))
             ;; Nobody cancelled the copy: every read names it forked.
             (expect (= ["done" "forked"]
-                       (mapv #(get % "outcome") (get-in running ["session" "turns"]))))
+                       (mapv #(or (get % "prior_outcome") (get % "status")) (get-in running ["transcript" "turns"]))))
             (expect (= "forked" (get-in running ["transcript" "turns" 1 "prior_outcome"])))
             (expect (= "forked"
                        (get-in (:result (introspection/get-session {:session-id fork-id :db-info s}
@@ -1367,7 +1443,7 @@
                                 (read-turns db id)))
                         gateway-diagnostics/session-reports
                         (constantly [{:turn-id (str turn) :reason :turn-stall}])]
-            (let [result (:result (introspection/read-session env))
+            (let [result (:result (introspection/read-session env {"view" "full"}))
                   descriptor (:result (introspection/get-session env))
                   data (transcript/transcript s sid)
                   events [(second (:dialog data))
@@ -1377,9 +1453,7 @@
               (expect (= {:role :user :turn-id human :content "Human request"}
                          (first (:dialog data))))
               (doseq [view [(get-in result ["transcript" "turns" 1])
-                            (get-in result ["session" "turns" 1])
                             (get result "current_turn")
-                            (first (get result "failures"))
                             (first (get-in result ["diagnosis" "failures"]))
                             (first (get-in result ["diagnosis" "hung_turns"]))
                             (get descriptor "last_turn")]]

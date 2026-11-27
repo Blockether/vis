@@ -2217,7 +2217,8 @@
            ;; The limit feeds pressure hints and the pre-request budget gate;
            ;; canonical history itself is never trimmed.
            max-context-tokens hooks cancel-atom cancel-token reasoning-default routing extra-body
-           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides resume]
+           reasoning-effort preferred-reasoning-effort turn-features workspace-overrides resume
+           request-kind council-entry-id]
     trace-store ::trace-store}]
   (let [system-prompt
         (str (voice-system-prompt system-prompt turn-features)
@@ -2633,6 +2634,21 @@
      :canonical-messages canonical-messages
      :compact-trailer compact-trailer
      :current-turn-messages current-turn-messages
+     :trusted-task-id (when (and (= :council request-kind) council-entry-id)
+                        (let [db
+                              (:db-info environment)
+
+                              sid
+                              (str (:session-id environment))
+
+                              parent
+                              (:parent_id (agents/info db sid))]
+
+                          (when (and parent
+                                     (= (str parent)
+                                        (:author_session_id
+                                          (persistance/db-council-get db council-entry-id))))
+                            council-entry-id)))
      :emergency-summaries-atom emergency-summaries-atom
      :emit-hook! emit-hook!
      :environment environment
@@ -2712,6 +2728,19 @@
         (when resume
           (transcript/resumed-turn-steps environment session-turn-id position (:clean? resume)))]
 
+    (when (and resumed (council/enabled? environment))
+      (let [db
+            (:db-info environment)
+
+            sid
+            (str (:session-id environment))]
+
+        (when-let [{:keys [group-id input-state]} (get (council/runtime db sid) sid)]
+          (council/restore-input! db
+                                  sid
+                                  group-id
+                                  input-state
+                                  (keep (comp :council-input second) (:steps resumed))))))
     (merge {:iteration (:iteration resumed 0) :messages initial-messages :trace []}
            FRESH_ITER_CARRY
            {:trailer-iters (into (conj (vec prior-turns)
@@ -2962,7 +2991,7 @@
            iteration-extra-body loop-state message-base-atom pre-resolved-model
            preferred-reasoning-effort raw-reasoning-level reasoning-effort reasoning-level
            replay-target routing session-turn-id take-user-input trailer-iters turn-position
-           user-request]
+           trusted-task-id user-request]
     :as state}]
   (let [summaries
         (perf/timed :context/summaries (transcript/current-session-summaries environment))
@@ -3052,7 +3081,9 @@
                                                   (or (:name pre-resolved-model)
                                                       (:model pre-resolved-model))
                                                   provider-base))
-                                          256))))
+                                          256))
+                                  {:trusted-task-id trusted-task-id
+                                   :visible-due-ids (council/visible-due-ids provider-base)}))
 
         ;; Queued messages the user marked `→ Send now`: taken once for this
         ;; step and delivered as user messages after the Council input.
@@ -3079,8 +3110,12 @@
                   :user-input user-input}]))
 
         append-live-input
-        (fn [provider-messages]
-          (cond-> (vec (council/append-input provider-messages council-input))
+        (fn [provider-messages folded?]
+          (cond-> (vec (council/append-input
+                         provider-messages
+                         council-input
+                         (when (and folded? council-active)
+                           (mapv :entry_id (council/session-pending-replies environment)))))
             (seq user-input-messages)
             (into user-input-messages)
 
@@ -3088,7 +3123,7 @@
             (conj {:role "user" :content (:provider-error-feedback loop-state)})))
 
         provider-messages
-        (append-live-input provider-base)
+        (append-live-input provider-base false)
 
         effective-messages-atom
         (atom provider-messages)
@@ -3099,7 +3134,7 @@
             (reset! message-base-atom {:messages base :summaries summaries :resumed? false}))
           (when-let [summary (:summary projection)]
             (swap! emergency-summaries-atom conj summary))
-          (reset! effective-messages-atom (append-live-input (:messages projection))))
+          (reset! effective-messages-atom (append-live-input (:messages projection) true)))
 
         context-estimator
         (perf/timed :context/estimator

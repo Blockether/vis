@@ -21,7 +21,12 @@ def test_answers_the_host_read_as_one_string_keyed_dict(monkeypatch):
     monkeypatch.setattr(vis._host, "read_session", read_session)
     assert vis.read_session() == data
     assert vis.read_session("vis_session_id#6fccb4a2") == data
-    assert targets == [None, "vis_session_id#6fccb4a2"]
+    vis.read_session(view="blocks", turn=2, iteration=4, block=1, offset=2, limit=3)
+    assert [options["target"] for options in targets[:2]] == [None, "vis_session_id#6fccb4a2"]
+    assert targets[2] == {
+        "target": None, "view": "blocks", "turn": 2, "iteration": 4,
+        "block": 1, "offset": 2, "limit": 3,
+    }
 
 
 def test_answers_the_host_search_rows_in_their_rank_order(monkeypatch):
@@ -38,7 +43,12 @@ def test_answers_the_host_search_rows_in_their_rank_order(monkeypatch):
     monkeypatch.setattr(vis._host, "list_sessions", list_sessions)
     assert vis.list_sessions() == rows
     assert vis.list_sessions(search="typo") == rows
-    assert searches == [None, "typo"]
+    vis.list_sessions("typo", limit=1, cursor="b")
+    assert searches == [
+        {"search": None, "limit": 50, "cursor": None},
+        {"search": "typo", "limit": 50, "cursor": None},
+        {"search": "typo", "limit": 1, "cursor": "b"},
+    ]
 
 
 @pytest.mark.parametrize(

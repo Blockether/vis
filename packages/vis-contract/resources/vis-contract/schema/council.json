@@ -398,6 +398,9 @@
           "type": "integer",
           "minimum": 0
         },
+        "trusted_task": {
+          "const": true
+        },
         "truncated": {
           "type": "boolean"
         },
@@ -424,10 +427,13 @@
         "entry_id",
         "thread_id",
         "group_id",
-        "content",
         "author_session_id",
         "created_at",
         "truncated"
+      ],
+      "oneOf": [
+        {"required": ["content"], "not": {"required": ["trusted_task"]}},
+        {"required": ["trusted_task"], "not": {"required": ["content"]}}
       ],
       "additionalProperties": false
     },
@@ -540,6 +546,14 @@
         },
         "has_more": {
           "type": "boolean"
+        },
+        "due_reply_ids": {
+          "$comment": "Current due reply IDs when the set changes. Empty means the set is clear.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/entry_id"
+          }
         },
         "pending_replies": {
           "type": "array",

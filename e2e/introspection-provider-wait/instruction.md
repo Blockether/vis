@@ -1,0 +1,2 @@
+For 10200000-0000-4000-8000-000000000001 at t2/i2, what was the last recorded provider connection state and silent time before the turn ended? Return JSON with keys connection and silent_ms. If session diagnostics do not show it, the saved journal is at diagnostics/10200000-0000-4000-8000-000000000001.ndjson.
+Check saved session evidence first. Respond only with the JSON object. Do not change the workspace.

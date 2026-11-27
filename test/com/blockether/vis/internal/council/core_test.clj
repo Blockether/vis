@@ -1303,38 +1303,36 @@
                                    (expect (rejected? :invalid-request #(publish w opts))))
                                  (expect (= "😀" (:content (publish w {:content "😀"}))))))))
 
-(defdescribe
-  injected-header-counts-toward-budget-test
-  (it "injected header counts toward budget"
-      ;; C12: the byte limit covers the entire attributed model message, not only its JSON.
-      (with-council
-        (let [{:keys [db fleet ids gid] :as w}
-              (world)
+(defdescribe injected-header-counts-toward-budget-test
+             (it "fits the full model message without passing a row that does not fit"
+                 (with-council
+                   (let [{:keys [db fleet ids gid] :as w}
+                         (world)
 
-              sid
-              (second ids)
+                         sid
+                         (second ids)
 
-              activation
-              (get-in @fleet [sid :activation-id])
+                         activation
+                         (get-in @fleet [sid :activation-id])
 
-              _
-              (publish w {:content (apply str (repeat 1024 "x")) :ping [sid]})
+                         state
+                         (atom {})
 
-              batch
-              (council 'prepare-input! db sid activation gid (atom {}) ["t" 1] 8192)
+                         entry
+                         (publish w {:content (apply str (repeat 1024 "x")) :ping [sid]})]
 
-              json-size
-              (council 'utf8-size (wire/json-str batch))
+                     (expect (nil?
+                               (council 'prepare-input! db sid activation gid state ["t" 1] 32)))
+                     (expect (nil? (:cursors @state)))
+                     (let [batch
+                           (council 'prepare-input! db sid activation gid state ["t" 2] 512)
 
-              state
-              (atom {})]
+                           message
+                           (council 'input-message batch)]
 
-          (expect (nil? (council 'prepare-input! db sid activation gid state ["t" 1] json-size)))
-          (expect (nil? (:cursors @state)))
-          (let [message (council
-                          'input-message
-                          (council 'prepare-input! db sid activation gid state ["t" 2] 8192))]
-            (expect (<= (council 'utf8-size (:content message)) 8192)))))))
+                       (expect (= [(:entry_id entry)] (mapv :entry_id (:entries batch))))
+                       (expect (:truncated (first (:entries batch))))
+                       (expect (<= (council 'utf8-size (:content message)) 512)))))))
 
 (defn- latency-samples
   [n f]
@@ -1719,7 +1717,7 @@
                   (expect (true? (:wake? active)))
                   (let [wake-request (nth (first @launched) 2)]
                     ;; 42ab268: a parent's ping gives its child the task as the instruction.
-                    (expect (str/includes? wake-request (str "Council entry #" (:entry_id entry))))
+                    (expect (str/includes? wake-request (str "#" (:entry_id entry))))
                     (expect (str/includes? wake-request "What did you learn about the parser?")))
                   (expect (= (:content entry) (:display-request (nth (first @launched) 3))))
                   (expect (= [(:entry_id entry)]
@@ -2259,13 +2257,221 @@
         (let [later
               (council 'prepare-input! db b (:activation-id active) gid state ["turn" 1] 8192)]
           (expect (empty? (:entries later)))
-          (expect (= (:pending_replies batch) (:pending_replies later)))
-          (expect (some? (council 'input-message later))))
+          (expect (= (:pending_replies batch) (council 'pending-replies db b gid state)))
+          (expect (nil? (council 'input-message later))))
         (council 'retire-input! b state)
         (expect (= {:closed? true} @state))
         (expect (= "interrupted"
                    (get-in (council 'get-entry db a {:entry_id (:entry_id request)})
                            [:replies 0 :state])))))))
+
+(defdescribe
+  council-delivery-progress-test
+  (it
+    "delivers new pings without repeating an open reply notice"
+    (with-council
+      (let [{:keys [db gid ids fleet] :as w}
+            (team-world)
+
+            [_ b]
+            ids
+
+            activation
+            (get-in @fleet [b :activation-id])
+
+            state
+            (atom {})
+
+            active
+            {:group-id gid :input-state state}
+
+            task
+            (publish w
+                     {:content "Trusted task body with unique text" :ping [b] :reply_required true})
+
+            peer
+            (publish w {:content "Other peer data" :ping [b]})
+
+            prepare
+            #(council 'prepare-input! db b activation gid state ["turn" %] 8192)
+
+            batches
+            (mapv prepare (range 20))
+
+            messages
+            (vec (keep #(council 'input-message %) batches))]
+
+        (expect (= [(:entry_id task) (:entry_id peer)] (mapv :entry_id (:entries (first batches)))))
+        (expect (= 1 (count messages)))
+        (expect (str/includes? (:content (first messages))
+                               (str "Council replies due: #" (:entry_id task))))
+        (council 'acknowledge-input! db b active ["turn" 19])
+        (let [another
+              (publish w {:content "New question" :ping [b] :reply_required true})
+
+              next-batch
+              (prepare 20)
+
+              output
+              (:content (council 'input-message next-batch))]
+
+          (expect (= [(:entry_id another)] (mapv :entry_id (:entries next-batch))))
+          (expect (false? (:has_more next-batch)))
+          (expect (= [(:entry_id task) (:entry_id another)]
+                     (mapv :entry_id (council 'pending-replies db b gid state))))
+          (expect (str/includes? output "New question"))
+          (expect (= (:entry_id another) (:after next-batch)))
+          (expect (not (str/includes? output "source_ref")))))))
+  (it
+    "does not echo the trusted task and does not lose its batch neighbors"
+    (with-council
+      (let [{:keys [db gid ids fleet] :as w}
+            (team-world)
+
+            [_ b]
+            ids
+
+            activation
+            (get-in @fleet [b :activation-id])
+
+            state
+            (atom {})
+
+            task
+            (publish w
+                     {:content "Trusted task body with unique text" :ping [b] :reply_required true})
+
+            peer
+            (publish w {:content "Other peer data" :ping [b]})
+
+            batch
+            (council 'prepare-input!
+                     db
+                     b
+                     activation
+                     gid
+                     state
+                     ["turn" 0]
+                     8192
+                     {:trusted-task-id (:entry_id task)})
+
+            output
+            (:content (council 'input-message batch))]
+
+        (expect (document/valid? "council" "input_batch" batch))
+        (expect (= [(:entry_id task) (:entry_id peer)] (mapv :entry_id (:entries batch))))
+        (expect (not (str/includes? output (:content task))))
+        (expect (str/includes? output (:content peer)))
+        (expect (str/includes? output (:author_session_id task)))
+        (expect (= [(:entry_id task)]
+                   (mapv :entry_id (council 'pending-replies db b gid state))))))))
+
+(defdescribe
+  council-delivery-recovery-test
+  (it
+    "shows a still-open reply after its visible notice is lost and after a restart"
+    (with-council
+      (let [{:keys [db gid ids fleet] :as w}
+            (world)
+
+            [_ b]
+            ids
+
+            activation
+            (get-in @fleet [b :activation-id])
+
+            state
+            (atom {})
+
+            active
+            {:group-id gid :input-state state}
+
+            request
+            (publish w {:content "Question body" :ping [b] :reply_required true})
+
+            ids
+            [(:entry_id request)]
+
+            prepare
+            (fn [state activation n opts]
+              (council 'prepare-input! db b activation gid state ["turn" n] 8192 opts))
+
+            initial
+            (prepare state activation 0 {})
+
+            original
+            (council 'input-message initial)]
+
+        (council 'acknowledge-input! db b active ["turn" 0])
+        (expect
+          (nil?
+            (prepare state activation 1 {:visible-due-ids (council 'visible-due-ids [original])})))
+        (let [after-fold (prepare state activation 2 {:visible-due-ids nil})]
+          (expect (= ids (:due_reply_ids after-fold)))
+          (expect (empty? (:entries after-fold)))
+          (expect (empty? (:pending_replies after-fold)))
+          (expect (nil? (prepare state activation 3 {:visible-due-ids ids}))))
+        (council 'retire-input! b state)
+        (let [resumed
+              (atom {})
+
+              receiver
+              (assoc w :actor {:session-id b :activation-id "new" :source "host"})]
+
+          (swap! fleet assoc-in [b :activation-id] "new")
+          (council 'restore-input! db b gid resumed [initial])
+          (let [notice (prepare resumed "new" 4 {:visible-due-ids nil})]
+            (expect (= ids (:due_reply_ids notice)))
+            (expect (= ids (mapv :entry_id (council 'pending-replies db b gid resumed))))
+            (expect (empty? (:entries notice)))
+            (expect (nil? (prepare resumed "new" 5 {:visible-due-ids ids}))))
+          (publish receiver {:content "Recovered answer" :reply_to (:entry_id request)})
+          (expect (empty? (council 'pending-replies db b gid resumed)))
+          (expect (= [] (:due_reply_ids (prepare resumed "new" 6 {:visible-due-ids ids}))))))))
+  (it
+    "keeps a true continuation and does not advance the cursor past a deferred row"
+    (with-council
+      (let [{:keys [db gid ids fleet] :as w}
+            (world)
+
+            [_ b]
+            ids
+
+            activation
+            (get-in @fleet [b :activation-id])
+
+            state
+            (atom {})
+
+            request
+            (publish w {:content "Question" :ping [b] :reply_required true})
+
+            first-page
+            (council 'prepare-input! db b activation gid state ["turn" 0] 8192)
+
+            peer
+            (publish w {:content (apply str (repeat 1024 "x")) :ping [b]})
+
+            pending
+            (council 'prepare-input!
+                     db
+                     b
+                     activation
+                     gid
+                     state
+                     ["turn" 1]
+                     120
+                     {:visible-due-ids nil})
+
+            following
+            (council 'prepare-input! db b activation gid state ["turn" 2] 8192)]
+
+        (expect (= (:entry_id request) (:after first-page) (:after pending)))
+        (expect (true? (:has_more pending)))
+        (expect (empty? (:entries pending)))
+        (expect (= [(:entry_id request)] (:due_reply_ids pending)))
+        (expect (= [(:entry_id peer)] (mapv :entry_id (:entries following))))
+        (expect (false? (:has_more following)))))))
 
 (defdescribe
   required-reply-idle-return-and-acknowledgement-test

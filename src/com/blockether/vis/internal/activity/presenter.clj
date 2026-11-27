@@ -825,7 +825,9 @@
         (field current "cost")
 
         turns
-        (vec (field session "turns"))
+        (vec (or (some-> (field value "turns") reverse)
+                 (field session "turns")
+                 (field (field value "transcript") "turns")))
 
         turns
         (cond-> turns
@@ -834,7 +836,8 @@
           (conj (assoc current "outcome" (field current "status"))))
 
         numbered
-        (mapv vector (range 1 (inc (count turns))) turns)
+        (mapv (fn [n turn] [(or (field turn "position") n) turn])
+              (range 1 (inc (count turns))) turns)
 
         turn-numbers
         (into {}
@@ -882,7 +885,7 @@
 
         status
         (fn [turn]
-          (label (or (field turn "outcome") (field turn "status") "unknown")))
+          (label (or (field turn "outcome") (field turn "prior_outcome") (field turn "status") "unknown")))
 
         diagnosis-summary
         (str (counted-label (count failures) "failure")
@@ -922,7 +925,7 @@
                                          " · uncached input " (metric "uncached")
                                          " · reasoning " (metric "reasoning"))
                                     "Open Session details for current-turn usage."))])
-                         (when present? [(heading "Diagnosis") (text diagnosis-summary)])
+                         (when diagnosis [(heading "Diagnosis") (text diagnosis-summary)])
                          (when (seq turns)
                            (concat [(heading "Turns")]
                                    (when (> (count turns) 6)
@@ -933,7 +936,7 @@
                                      "columns" ["Turn" "Outcome" "Request"]
                                      "rows" (mapv (fn [[n turn]]
                                                     [(str "Turn " n) (status turn)
-                                                     (session-preview (field turn "user_request")
+                                                     (session-preview (or (field turn "user_request") (field turn "request_preview"))
                                                                       48)])
                                                   (take-last 6 numbered))}]))))
      "sections"

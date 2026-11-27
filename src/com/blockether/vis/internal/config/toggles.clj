@@ -971,6 +971,19 @@
        :group :council
        :parent "subagents"
        :persist? true})
+    (register-toggle!
+      {:id "subagent_handoff"
+       :label "Subagent handoff"
+       :description "Choose the full parent conversation or a short text tail for new subagents."
+       :type :enum
+       :choices ["full" "bounded"]
+       :default "full"
+       :scopes ["global" "project"]
+       :owner :vis
+       :group :council
+       :parent "subagents"
+       :experimental? true
+       :persist? true})
     ;; Live apps declare where they show; these two turn a surface off for every app.
     ;; Each app with a key adds its own settings under them (`view.app-surfaces`).
     (register-toggle! {:id "apps_inline"

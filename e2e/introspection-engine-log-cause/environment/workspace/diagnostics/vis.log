@@ -1,0 +1,3 @@
+2025-05-02T01:20:00Z INFO speech.worker reason=VOICE_READY turn=1
+2025-05-02T01:21:00Z WARN speech.worker session=10200000-0000-4000-8000-000000000001 turn=2 reason=VOICE_QUEUE_FULL
+2025-05-02T01:22:00Z INFO speech.worker reason=VOICE_READY turn=3

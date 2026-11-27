@@ -167,7 +167,7 @@
    [:read-session
     "s = await settle(read_session())\nout = [type(s).__name__, 'op' in s, s['session']['title'], s['scope']]"]
    [:read-session-unknown
-    "s = await settle(read_session('00000000-0000-4000-8000-000000000000'))\nout = [type(s).__name__, s['session'], s['transcript']]"]
+    "s = await settle(read_session('00000000-0000-4000-8000-000000000000'))\nout = [type(s).__name__, s['session'], s['turns']]"]
    [:list-sessions
     "rows = await settle(list_sessions())\nout = [type(rows).__name__, [row['title'] for row in rows]]"]
    ;; -- a typed result of a tool --

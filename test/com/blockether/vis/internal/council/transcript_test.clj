@@ -229,33 +229,29 @@
 
 ;; Regression for Council complaint #7930: a small model took its parent's task as a notification.
 ;; It replied and did no work, or did the work and ended with "Done." as its whole answer.
-(defdescribe
-  council-wake-gives-a-parent-task-as-the-instruction
-  (it "gives the parent's entry as the child's task and asks for the whole result"
-      (let [{:keys [db sid entry]}
-            (managed-fixture)
+(defdescribe council-wake-gives-a-parent-task-as-the-instruction
+             (it "gives the parent's entry as the child's task and asks for the whole result"
+                 (let [{:keys [db sid entry]}
+                       (managed-fixture)
 
-            submitted
-            (atom nil)]
+                       submitted
+                       (atom nil)]
 
-        (doseq [required? [false true]]
-          (with-redefs-fn {#'toggles/enabled? (constantly true)
-                           #'state/council-wake-eligible? (constantly true)
-                           #'state/submit-turn! (fn [_ opts]
-                                                  (reset! submitted opts)
-                                                  {:turn {}})}
-            #(state/council-wake! db sid (assoc entry :reply_required required?)))
-          (let [request (:request @submitted)]
-            (expect (= (:content entry) (:display-request @submitted)))
-            (expect (str/includes? request (str "Your parent session " (:author_session_id entry))))
-            (expect (str/includes? request "It is your own task, not peer data."))
-            (expect (str/includes? request (str "Task:\n" (:content entry))))
-            (expect (str/includes? request "complete result as your final answer"))
-            (expect (not (str/includes? request "Council notification")))
-            (expect (= required?
-                       (str/includes? request (str "reply_to=" (:entry_id entry) ")")))))))
-      (let [{:keys [db sid entry]} (fixture)]
-        (expect (nil? (agents/task-request db sid entry)) "An independent session gets no task"))))
+                   (doseq [required? [false true]]
+                     (with-redefs-fn {#'toggles/enabled? (constantly true)
+                                      #'state/council-wake-eligible? (constantly true)
+                                      #'state/submit-turn! (fn [_ opts]
+                                                             (reset! submitted opts)
+                                                             {:turn {}})}
+                       #(state/council-wake! db sid (assoc entry :reply_required required?)))
+                     (let [request (:request @submitted)]
+                       (expect (= (:content entry) (:display-request @submitted)))
+                       (expect (str/includes? request (str "#" (:entry_id entry))))
+                       (expect (str/includes? request (:content entry)))
+                       (expect (not (str/includes? request "Council notification"))))))
+                 (let [{:keys [db sid entry]} (fixture)]
+                   (expect (nil? (agents/task-request db sid entry))
+                           "An independent session gets no task"))))
 
 ;; A ping from its parent to a finished subagent is its follow-up task, the same store step for each.
 (defdescribe

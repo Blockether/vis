@@ -2137,9 +2137,13 @@
                          [])))))]
 
      (mapv (fn [[pos iter-rec :as entry]]
-             (let [render #(vec (concat (when (and (not (:collapsed? iter-rec))
-                                                   (:council-input iter-rec))
-                                          [(council/input-message (:council-input iter-rec))])
+             (let [render #(vec (concat (when-not (:collapsed? iter-rec)
+                                          (when-let [message (council/input-message
+                                                               (:council-input iter-rec)
+                                                               (not (false?
+                                                                      (:preserved-thinking/replay?
+                                                                        iter-rec))))]
+                                            [message]))
                                         (when-not (:collapsed? iter-rec)
                                           (user-input-messages (:user-input iter-rec) vision?))
                                         (group-of entry)))]

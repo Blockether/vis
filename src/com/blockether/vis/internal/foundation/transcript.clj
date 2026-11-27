@@ -195,12 +195,8 @@
 (defn- build-turn
   "Pure projection: one session_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
-  [db-info turn]
-  (let [raw-iters
-        (try (persistance/db-list-session-turn-iterations db-info (:id turn))
-             (catch Throwable _ []))
-
-        iters
+  [db-info turn raw-iters]
+  (let [iters
         (mapv (partial enrich-iteration db-info) raw-iters)
 
         totals
@@ -237,6 +233,20 @@
       model
       (assoc :model model))))
 
+(defn- turn-iterations [db-info turn]
+  (try (persistance/db-list-session-turn-iterations db-info (:id turn))
+       (catch Throwable _ [])))
+
+(defn build-model-turn
+  "Build block and attachment data only for the requested iteration."
+  [db-info position turn]
+  (let [tid (:id turn)
+        metadata (get (persistance/db-list-session-turns-iterations-meta db-info [tid]) (str tid))
+        ids (into [] (comp (filter #(or (nil? position) (= position (:position %)))) (map :id)) metadata)
+        iterations (persistance/db-list-iterations db-info ids {:request-health? false})]
+    (assoc (build-turn db-info turn (keep #(get iterations (str %)) ids))
+      :iteration-count (count metadata))))
+
 (defn- session-totals
   "Sum tokens + cost + iteration counts across every turn."
   [turns]
@@ -262,7 +272,7 @@
   ;; to nothing — e.g. `:api` (the gateway channel) must be included.
   [:tui :cli :api])
 
-(defn- resolve-session-ref
+(defn resolve-session-ref
   "Resolve one transcript/session reference to the canonical UUID.
 
    Accepted shapes:
@@ -379,7 +389,7 @@
                             (catch Throwable _ nil))]
       (let [turn-rows (try (persistance/db-list-session-turns db-info resolved-id)
                            (catch Throwable _ []))
-            turns (mapv (partial build-turn db-info) turn-rows)
+            turns (mapv #(build-turn db-info % (turn-iterations db-info %)) turn-rows)
             totals (session-totals turns)]
 
         {:session (cond-> {:id resolved-id

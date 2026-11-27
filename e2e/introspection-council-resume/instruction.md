@@ -1,0 +1,2 @@
+Use one verifier child to check a release in two attempts. First ask it to report the marker in initial.txt. Check its report before asking that same child in a follow-up attempt to report the marker in revised.txt. The child must read the files, not you. Return JSON with keys initial and revised.
+Tell the child to finish each attempt with only the requested marker. Respond only with the JSON object. Do not change the workspace.

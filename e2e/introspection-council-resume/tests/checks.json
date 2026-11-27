@@ -1,0 +1,8 @@
+{
+  "want_answer_json": {
+    "initial": "READY-71",
+    "revised": "RECHECK-56"
+  },
+  "want_requested_route": true,
+  "verify": "verify.py"
+}

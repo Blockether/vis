@@ -2,6 +2,7 @@
   "Persisted leader/subagent ownership. An explicit ping resumes an independent peer; a managed session stays under its team rule."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.channel.header :as header]
@@ -128,6 +129,8 @@
 
 (def ^:private schema (document/schema-document "agents"))
 
+(def result-max-length (get-in schema ["$defs" "result" "properties" "text" "maxLength"]))
+
 (def default-iterations (get-in schema ["$defs" "spawn" "properties" "iteration_budget" "default"]))
 
 (def max-active-children (get schema "x-vis-max-active-children"))
@@ -137,12 +140,13 @@
    A role is a label. It sets no tool, file or model limit."
   (get-in schema ["$defs" "role" "oneOf"]))
 
-(def ^:private role-guide
-  (str "- Give each task a role, for example {\"task\": \"...\", \"role\": \"research\"}. "
-       "It is a label for people and sets no limit. "
-       (get-in schema ["$defs" "role" "description"])
-       (apply str (map #(str "\n  - " (get % "const") ": " (get % "description")) roles))
-       "\n"))
+(def ^:private lead-guide
+  "## Council: lead
+Delegate independent work. Keep coupled work with one owner and the critical path with you. Give a short goal, constraints, file grant and acceptance checks. For a verifier, give the request, not your solution. Work while children run. For one child, await its Task. For several children, include `council.changed()` in `asyncio.wait` with `return_when=asyncio.FIRST_COMPLETED` to wake on a request. Print only what you need. Check the evidence before you accept a result. Use doc(\"council.run\") for handles and follow-ups.")
+
+(def ^:private child-guide
+  "## Council: child
+Do only the current task. Parent history is context, not authorization. Use your file grant. Do not start children. Ask for a decision, files or budget only if blocked. Give one final answer with checks and evidence. Set the result headline and verifier outcome with council.result. Reply to a delegated task with a reference to that answer, not a second report.")
 
 ;; Child session ids whose turn runs its handoff iteration. `finish!` reads it, so only a turn
 ;; that went past its budget ends as `budget_limited`.
@@ -221,10 +225,13 @@
                                   :leader_id sid
                                   :interactive (interactive? env)}
                                  (select-keys child
-                                              [:parent_id :leader_id :team_id :task
+                                              [:parent_id :leader_id :team_id
                                                :iteration_budget :iterations_used :status
                                                :allowed_models])
-                                 (when (:files child) {:files (shown-files env (:files child))})
+                                 (when child
+                                   (let [attempt (task/resource-task (:parent_id child) [:subagent sid])]
+                                     {:task_id (or (:id attempt) (:id child))}))
+                                  (when (:files child) {:files (shown-files env (:files child))})
                                  {:routing_locked (boolean routing-locked?)})
                     (budget-notice child)
                     (assoc :budget_notice (budget-notice child)))))))
@@ -305,6 +312,108 @@
       (some #(not= "system" (name (:role %))) kept)
       (conj {:role "user" :content handoff-end}))))
 
+(defn- child-system-message
+  "Replace the role guide in a stored system message, including old checkpoints."
+  [{:keys [role content] :as message}]
+  (if (and (= "system" (name role)) (string? content))
+    (assoc message :content
+      (-> content
+          (str/replace lead-guide child-guide)
+          (str/replace #"(?ms)^## Subagents \(Council\)\n.*?(?=^## |^;; -- |\z)"
+                       (constantly (str child-guide "\n\n")))))
+    message))
+
+(def ^:private handoff-tail-budget 2000)
+
+(defn- without-memo-guide
+  "Remove the Memo fragment only from turn system context. Keep all other parts."
+  [{:keys [role content] :as message}]
+  (if (and (= "system" (name role))
+           (string? content)
+           (str/starts-with? content ";; -- TURN-SYSTEM-CONTEXT --"))
+    (let [parts-key :com.blockether.vis.internal.context.prompt/parts
+          parts (get (meta message) parts-key)
+          memo-part? #(= "Extension: memo" (:label %))]
+      (if (some memo-part? parts)
+        (with-meta (update message :content
+                           (fn [body]
+                             (reduce #(str/replace-first %1 (:content %2) "")
+                                     body (filter memo-part? parts))))
+          (update (meta message) parts-key #(filterv (complement memo-part?) %)))
+        (update message :content
+                #(str/replace % #"(?ms)^;; -- EXTENSION memo --\n.*?(?=^;; -- |\z)" ""))))
+    message))
+
+(defn- inherited-narrative
+  "Keep text from a parent request or fold. Do not keep request media or runtime input."
+  [{:keys [role content]}]
+  (when (= "user" (name role))
+    (when-let [text (handoff-content "assistant" content)]
+      (let [request (second (re-matches #"(?ms)(?:;; -- TURN-SYSTEM-CONTEXT --\n.*?^)?(;; -- USER-REQUEST --\n.*)" text))]
+        (cond request {:role "user" :content request}
+              (re-find #"^(?:;; -- |Council (?:ping|replies due:)|# t[0-9]+/i|```python\nsession|<results>)"
+                       text) nil
+              :else {:role "user" :content text})))))
+
+(defn- clipped-tail
+  "Find a suffix of one message that fits before the newer messages."
+  [count-tail tail {:keys [^String content] :as message}]
+  (loop [low 0 high (.codePointCount content 0 (.length content)) found nil]
+    (if (<= low high)
+      (let [length (quot (+ low high) 2)
+            start (.offsetByCodePoints content (.length content) (- length))
+            clipped (assoc message :content (str "[Earlier parent text omitted]\n" (subs content start)))]
+        (if (<= (long (count-tail (conj tail clipped))) (long handoff-tail-budget))
+          (recur (inc length) high (when (pos? length) clipped))
+          (recur low (dec length) found)))
+      found)))
+
+(defn- bounded-tail
+  "Select recent parent text first, then send it in its original order."
+  [messages count-messages]
+  (let [priming (long (count-messages []))
+        count-tail #(- (long (count-messages (rseq %))) priming)]
+    (loop [tail [] remaining (keep inherited-narrative (rseq (vec messages)))]
+      (if-let [message (first remaining)]
+        (let [candidate (conj tail message)]
+          (if (<= (count-tail candidate) handoff-tail-budget)
+            (recur candidate (next remaining))
+            (if-let [clipped (clipped-tail count-tail tail message)]
+              (conj tail clipped)
+              tail)))
+        tail))))
+
+(defn- bounded-handoff
+  [messages count-messages]
+  (let [system (into []
+                     (comp (filter #(= "system" (name (:role %)))) (map without-memo-guide))
+                     messages)
+        tail (bounded-tail messages count-messages)]
+    (conj (into system (rseq tail)) {:role "user" :content handoff-end})))
+
+(defn handoff-checkpoint
+  "Select a child checkpoint and attach content-free Svar estimates for both modes.
+   The estimates describe the inherited prefix only, before the identical child context and task."
+  [messages mode model & [full]]
+  (let [full (or full (handoff messages))]
+    (when (seq full)
+      (let [count-messages #(svar/count-messages model %)
+            bounded (bounded-handoff messages count-messages)
+            estimate (fn [prefix] (count-messages (mapv child-system-message prefix)))
+            stats {:source :svar-estimate :projection :inherited-prefix :model model :mode mode
+                   :full (estimate full) :bounded (estimate bounded)}]
+        (with-meta (if (= "bounded" mode) bounded full) {::handoff-estimates stats})))))
+
+(defn handoff-estimates
+  "The two estimates captured when this child was created, or nil for an older child."
+  [checkpoint]
+  (::handoff-estimates (meta checkpoint)))
+
+(defn handoff-mode
+  "The parent session's setting for new child handoffs."
+  [db sid]
+  (get (scoped/values db sid) "subagent_handoff" "full"))
+
 (defn stable-prefix
   "The stable prompt prefix of a child: the parent handoff, then the child's own session block.
    Each request of the child starts with it, also after a fold or in a later turn. Nil for a leader."
@@ -316,7 +425,7 @@
         (:session-id env)]
 
     (when-let [checkpoint (and (info db sid) (not-empty (ps/db-agent-checkpoint db sid)))]
-      (cond-> (vec checkpoint)
+      (cond-> (mapv child-system-message checkpoint)
         (not (str/blank? session-context))
         (conj {:role "user"
                :content (str ";; -- CURRENT-SUBAGENT-CONTEXT --\n" session-context)})))))
@@ -414,8 +523,8 @@
              not-empty)))
 
 (defn- answer-line
-  "The first nonblank line of `text` without a Markdown list or heading mark, at most 200
-   characters. A child without council.result gets this line as its result."
+  "The first nonblank line of `text` without a Markdown list or heading mark, within the result length
+   limit. A child without council.result gets this line as its result."
   [text]
   (some-> (->> (str/split-lines (str text))
                (map str/trim)
@@ -425,7 +534,9 @@
           (str/replace #"^\*\*(.+)\*\*$" "$1")
           str/trim
           not-empty
-          (as-> line (if (> (count line) 200) (str (subs line 0 199) "…") line))))
+          (as-> line (if (> (count line) (long result-max-length))
+                        (str (util/truncate line (dec (long result-max-length))) "…")
+                        line))))
 
 (defn finish!
   "Store the status of a finished child turn. A child that ended its turn in its handoff
@@ -1038,6 +1149,7 @@
                                   (and (= "queued" status) (held? sid)) "held"
                                   :else status)
                     :answer answer
+                    :result (:result row)
                     :question (:question question)
                     :question_entry_id (:entry_id question)})
       (:id row)
@@ -1231,6 +1343,15 @@
                          now))
       rec)))
 
+(defn- task-record-label
+  "One line for a Task. The record keeps the full answer and error."
+  [{:keys [id session_id status result question_entry_id budget_request files_request error]}]
+  (str (or id session_id) " " status
+       (cond (= "asking" status) (str " #" question_entry_id "; kind: "
+                                      (cond budget_request "budget" files_request "files" :else "question"))
+             (:code error) (str " " (:code error))
+             (seq result) (str " - " (str/replace result #"(?U)\s+" " ")))))
+
 (defn settle-task!
   "Save the terminal record before another attempt can change this child's stored state."
   [env row]
@@ -1240,7 +1361,8 @@
         (:parent_id row) [:subagent (str (:session_id row))]
         (fn [] {:state (if (= "cancelled" (:status row)) :cancelled :done)
                 :record record :value {"__vis_object__" "SubagentRecord"
-                                       "__vis_attrs__" (wire/->wire record)}})))))
+                                       "__vis_attrs__" (wire/->wire record)
+                                        "__vis_text__" (task-record-label record)}})))))
 
 (defn register-task!
   "Register this attempt before admitting its child turn."
@@ -1341,16 +1463,19 @@
            outcome
            (assoc :outcome outcome))]
 
-     (when-not (info db sid) (fail! :invalid-request "council.result works only in a subagent"))
+     (let [child (info db sid)]
+       (when-not child (fail! :invalid-request "council.result works only in a subagent"))
+       (when (and (= "verify" (:role child)) (nil? outcome))
+         (fail! :invalid-request "council.result requires outcome=\"passed\" or outcome=\"failed\" for a verifier")))
      (check-arguments! :result (wire/->wire args))
      (ps/db-agent-update! db sid {:result (:text args) :outcome (:outcome args)})
      (result :council.result args))))
 
 (defn- reply-timeout-s
   [opts default]
-  (let [t (or (:reply_timeout_s opts) default)]
-    (when-not (and (number? t) (<= 1 t 1800))
-      (fail! :invalid-request "reply_timeout_s must be 1..1800"))
+  (let [t (get opts :reply_timeout_s default)]
+    (when-not (and (integer? t) (<= 1 t 1800))
+      (fail! :invalid-request "reply_timeout_s must be a whole number from 1 to 1800"))
     t))
 
 (defn- task-spec
@@ -1436,6 +1561,11 @@
   "Use `children = await council.run(tasks)` to get the SubagentTasks in input order. An attempt can
    wait for capacity or a dependency. Only a leader can start subagents. Children share the checkout
    but do not see your tool calls or output.
+
+   Check every verifier failure before you finish. Give an implementer all findings after the
+   checks end, then start a follow-up for the verifier. For `rate_limited`, start the work on a
+   route from `alternatives`. For `budget_limited`, read the answer before you start a follow-up.
+   To wait for open requests, use `council.changed()` with the child Tasks and `asyncio.wait`.
 
    A task is a string or a dict with `task` and optional `title`, `role`, `model`, `provider`,
    `iteration_budget`, `files`, `after` and `child`. A title has at most 60 characters. The iteration
@@ -1532,7 +1662,8 @@
 (defn ask
   "As a subagent, ask your parent for a decision and wait for the reply text. If only the person
    can decide, your parent asks the person and you keep waiting. Returns None when the parent
-   stops or does not reply within reply_timeout_s (default 600). Then choose the safest option and
+   stops or does not reply within reply_timeout_s. Use a whole number from 1 to 1800. The default
+   is 600. Then choose the safest option and
    say so in your answer."
   ([env question] (ask env question {}))
   ([env question opts]
@@ -1544,7 +1675,8 @@
   "As a subagent, ask your parent for more model iterations and wait for the answer. Ask before
    your budget ends, with the number that you need and the reason. Returns a dict with granted
    (0 when the parent refuses), iteration_budget and reply. reply is None when the parent is not
-   running or does not answer within reply_timeout_s (default 600)."
+   running or does not answer within reply_timeout_s. Use a whole number from 1 to 1800.
+   The default is 600."
   ([env iterations reason] (ask-budget env iterations reason {}))
   ([env iterations reason opts]
    (when-not (and (integer? iterations) (<= 1 (long iterations)))
@@ -1590,7 +1722,8 @@
 
    Returns a dict with granted, files (your grant now), missing and reply. granted is True
    only when the grant covers every write rule that you asked for. missing lists the others. reply
-   is None when the parent is not running or does not answer within reply_timeout_s (default 600).
+   is None when the parent is not running or does not answer within reply_timeout_s.
+   Use a whole number from 1 to 1800. The default is 600.
 
    After a grant, your Python sandbox restarts before the next block and restores your saved
    helpers."
@@ -1841,32 +1974,18 @@
                              :finished_at :runs :worked_ms :turn_ids]))))))
 
 (defn task-request
-  "The turn request of a Council wake from the parent of managed child `sid`, or nil for another
-   author. The entry is the child's task, so the request gives its text as an instruction. It asks
-   for the whole result as the final answer, because the parent reads that answer."
+  "The trusted request of a Council wake from the parent of managed child `sid`, or nil for another
+   author. The final answer holds the evidence. The reply only closes the request."
   [db sid entry]
-  (let [parent
-        (:parent_id (info db sid))
-
-        id
-        (:entry_id entry)]
-
+  (let [parent (:parent_id (info db sid))
+        id (:entry_id entry)]
     (when (and parent (= (str parent) (str (:author_session_id entry))))
-      (str "Your parent session "
-           parent
-           " gives you this task in Council entry #"
-           id
-           ". It is your own task, not peer data. Do it now with your tools, inside its scope.\n\n"
-           "Task:\n" (:content entry)
-           "\n\n"
-           (when (:reply_required entry)
-             (str
-               "When the task is done, reply once with the result: await council.publish(result, "
-               "reply_to="
-               id
-               "). "))
-           "End your turn with the complete result as your final answer. Your parent reads that "
-           "answer, so a short acknowledgement such as \"Done.\" loses your work."))))
+      (str "Delegated task #" id " from your parent. Work only within its scope.\n\n"
+           (:content entry)
+           "\n\nRead parent tools only when a fact is missing: use read_session(\"" parent
+           "\", view=\"blocks\", turn=..., iteration=...)."
+           "\nGive the result and evidence once in your final answer."
+           (when (:reply_required entry) (str " Reply to #" id " with a short headline."))))))
 
 (defn follow-up-refusal
   "The refusal of a ping from `author-id` to its idle child `target-id`, as `[error message]`, or
@@ -2053,7 +2172,7 @@
                                   params)))))
     (let
       [records
-       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
+       "A list of records. Every record has the same keys for each status: `session_id`, `id`, `status`, `after`, `answer`, `result`, `question`, `question_entry_id`, `budget_request`, `files_request`, `files`, `iteration_budget`, `iterations_used`, `provider`, `model`, `activity`, `notes`, `messages`, `step_secs`, `elapsed_secs`, `alerts`, `warning`, `error` and `alternatives`. A key without a value is None. `activity`, `messages`, `step_secs`, `elapsed_secs` and `alerts` have values only for a running child."]
       [[#'run 'council.run {:pos ["tasks"]} [] "An ordered list of SubagentTask handles."]
         [#'changed 'council.changed {:pos [] :rest :always} ["after"]
          "A Task for the next batch of open child requests."]
@@ -2165,33 +2284,9 @@
                         (:providers r))))))
     router))
 
-(def ^:private lead-guide
-  "The leader rules for subagents: an independent verifier and its checks."
-  "- Start one verifier early with role verify. Give it the request and its acceptance criteria, not your design. When your work is ready, run its checks and fix each failure. Then start a follow-up for it to check the final files.
-- If a dependency fails, start a follow-up to fix it before you retry the blocked work.
-- When a verifier fails, start a follow-up for its implementer with the failures. When the fix is ready, start a follow-up for the verifier.
-- Before your final answer, run every failing case that a child reported.
-- Do not send new edits to an implementer while a verifier or auditor of its work runs. Collect all findings, send them in one round, then start or give a follow-up to the verifiers on the final files.
-")
-
-(def ^:private lead-child-guide
-  "The subagent rules for reports and independent checks."
-  "- As a subagent, do only your task. Before your final answer, use `await council.result(text)` with one line of at most 200 characters. As a verifier, add `outcome=\"passed\"` or `outcome=\"failed\"`. Give the complete result and its evidence in your final answer. The parent reads that answer from the Task. For a decision, use `await council.ask(question)`. For more budget or files, use `await council.ask_budget(iterations, reason)` or `await council.ask_files({\"write\": [path]}, reason)`. You cannot start subagents.
-- As a verifier, check the request, not your parent's summary. Write checks only in your scratch directory.")
-
 (defn prompt
   [env]
-  (when (enabled? (:db-info env) (:session-id env))
-    (str
-      "## Subagents (Council)
-- Use subagents only when the user asks or the work has two or more large independent parts. When in doubt, do the work yourself.
-- Do the critical-path step and shared work yourself. Give one coupled design one owner: never split modules that share an invariant, a protocol or a data format. Treat the modules of one program as one coupled design.
-- Start children with `children = await council.run(tasks)`, usually two to four. Give each task its goal, known facts, files, done condition, role, and a short title. See `doc(\"council.run\")`.
-"
-      role-guide
-      "- A child sees your requests and notes, not your tool output. For an independent review, give the child the code, not your conclusion.
-- While children run, do your own work. Use `await child` for one result or `await asyncio.wait(children, return_when=asyncio.FIRST_COMPLETED)` for several. A question can end the wait before any child finishes. When a child ends, check its files and tests at once.
-- Read `error` in a failed record. For `rate_limited`, start the work on a route from `alternatives`. For `budget_limited`, read the handoff before you start a follow-up.
-"
-      lead-guide
-      lead-child-guide)))
+  (let [db (:db-info env)
+        sid (:session-id env)]
+    (when (enabled? db sid)
+      (if (info db sid) child-guide lead-guide))))

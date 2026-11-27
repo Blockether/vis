@@ -227,11 +227,11 @@ class Host(Protocol):
         """Run one active session tool by the name `py3` calls."""
         ...
 
-    def read_session(self, target: str | None) -> Mapping[str, Any]:
-        """Read one whole session as the sandbox `read_session` does."""
+    def read_session(self, target: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Read one session view as the sandbox `read_session` does."""
         ...
 
-    def list_sessions(self, search: str | None) -> Sequence[Mapping[str, Any]]:
+    def list_sessions(self, search: Mapping[str, Any]) -> Sequence[Mapping[str, Any]]:
         """List sessions as the sandbox `list_sessions` does."""
         ...
 
@@ -6047,30 +6047,34 @@ attach, list_attachments, get_attachment, read_attachment, show_attachment = (
 )
 
 
-def read_session(target=None):
-    """Read one whole session, exactly as the sandbox `read_session` does.
+def read_session(
+    target=None, *, view="index", turn=None, iteration=None, block=None, offset=0, limit=None
+):
+    """Read one session view, as in the sandbox.
 
-    Without `target`, it reads the session that runs the extension. `target` takes a
-    bare id, an unambiguous prefix or the copied `vis_session_id#<uuid>` marker. The
-    `introspection` toggle does not apply, because an extension is trusted code.
-
-    Returns the same string-keyed dict: session, current_turn, failures, diagnosis,
-    session_forks, turn_retries, usage and transcript.
+    Pass a bare id, a unique prefix or a copied `vis_session_id#<uuid>` marker.
+    With no target, read the current session. Select `index`, `blocks`,
+    `diagnosis`, `usage`, `council`, `events` or `full`. Positions start at 1.
+    For block stdout, `offset` and `limit` count Unicode characters. Use
+    `stdout_next_offset` for the next slice or `next_offset` for the next page.
     """
-    return _host.read_session(None if target is None else str(target))
+    return _host.read_session({
+        "target": None if target is None else str(target),
+        "view": view, "turn": turn, "iteration": iteration, "block": block,
+        "offset": offset, "limit": limit,
+    })
 
 
-def list_sessions(search=None):
-    """List sessions newest first, exactly as the sandbox `list_sessions` does.
+def list_sessions(search=None, *, limit=50, cursor=None):
+    """Read one page of sessions, as in the sandbox.
 
-    With `search`, it runs the session search of the TUI and the Companion app. The
-    rows come in rank order: title, request, reply, then thinking, newest first in
-    each rank. Keep that order. The `introspection` toggle does not apply.
-
-    Returns string-keyed rows: id, channel, title, goal, turn_count, created_at and
-    modified_at. A match adds rank, the is_in_* flags and optional snippets.
+    Use `search` for the TUI and app search order. Pass the last row's `id`
+    as `cursor` to continue with the same search.
     """
-    return _host.list_sessions(None if search is None else str(search))
+    return _host.list_sessions({
+        "search": None if search is None else str(search),
+        "limit": limit, "cursor": None if cursor is None else str(cursor),
+    })
 
 
 # -- Live views ---------------------------------------------------------------

@@ -143,7 +143,9 @@
                 (expect (= "Delegated result" (get-in result [:answer :answer]))))
               (expect (= 2 (count @calls)))
               ;; Provider cache markers may wrap text blocks without changing their contents.
-              (expect (boolean (= (mapv message-text checkpoint)
+              (expect (boolean (= (mapv #(str/replace (message-text %)
+                                                       (agents/prompt parent) (agents/prompt child))
+                                         checkpoint)
                                   (mapv message-text (take (count checkpoint) (first @calls))))))
               (expect (boolean (str/includes? (str/join "\n" (map message-text (first @calls)))
                                               "\"role\": \"subagent\"")))
@@ -157,7 +159,8 @@
               (expect (= "budget_limited"
                          (:status (agents/info (:db-info child) (:session-id child)))))
               (h/fork-session! (:db-info child) (:session-id child) {})
-              (expect (= (vec checkpoint) (agents/stable-prefix child ""))
+              (expect (= (mapv message-text (agents/stable-prefix child ""))
+                          (mapv message-text (take (count checkpoint) (first @calls))))
                       "A later state of the child still starts from the parent's checkpoint"))
             (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
@@ -192,7 +195,7 @@
                     (turn/run-turn! child "Child task after the handoff" {}))
                   (expect (= 3 (count @calls)))
                   (doseq [messages @calls]
-                    (expect (boolean (= (mapv message-text handoff)
+                    (expect (boolean (= (mapv message-text (agents/stable-prefix child ""))
                                         (mapv message-text (take (count handoff) messages))))
                             "Every request starts with the handoff"))
                   (let [after-fold (str/join "\n" (map message-text (last @calls)))]

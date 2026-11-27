@@ -137,12 +137,14 @@
             limit (- 120 (count suffix))
             body (str (:content entry))
             prefix (agent-result-prefix author)
-            text (if (and (= "host" (:source entry)) (= agent-result-title (:title entry))
-                          (str/starts-with? body prefix))
-                   (first (str/split (subs body (count prefix)) #"\R" 2))
-                   (some-> (some #(when (seq (one-line %)) %) (str/split body #"\R"))
-                           str/trim
-                           council-line-text))
+            result? (and (= "host" (:source entry)) (= agent-result-title (:title entry)))
+            text (or (when result?
+                       (if (str/starts-with? body prefix)
+                         (first (str/split (subs body (count prefix)) #"\R" 2))
+                         (second (re-matches #"\S+ \S+: (\S+).*; evidence: \S+" body))))
+                     (some-> (some #(when (seq (one-line %)) %) (str/split body #"\R"))
+                             str/trim
+                             council-line-text))
             ^String note (str (when (seq role) (str (.toUpperCase ^String role Locale/ROOT) " | "))
                               title ": " (one-line text))]
         (str (if (> (.codePointCount note 0 (.length note)) limit)
@@ -4447,23 +4449,17 @@
          nil)))
 
 (defn- report-agent-outcome!
-  [db sid tid patch]
-  (when-let [child (agents/info db sid)]
-    (when (council/enabled?)
+  [db sid tid child]
+  (when (council/enabled?)
       (let [cancelled? (= "cancelled" (:status child))
-            text (str/join "\n"
-                           (keep #(or (:text %)
-                                      (:markdown %)
-                                      (:message %)
-                                      (get % "text")
-                                      (get % "markdown")
-                                      (get % "message"))
-                                 (:content patch)))
-            content (str (agent-result-prefix sid)
+            position (some #(when (= (str tid) (str (:id %))) (:position %))
+                           (persistance/db-list-session-turns-meta db sid))
+            content (str (or (:id child) sid) " " (or (:role child) "subagent") ": "
                          (:status child)
-                         "\nTask: "
-                         (subs (:task child) 0 (min 2000 (count (:task child))))
-                         (when (seq text) (str "\n" (subs text 0 (min 2000 (count text))))))]
+                         (when-let [outcome (:outcome child)] (str " [" outcome "]"))
+                         (when-let [headline (not-empty (one-line (:result child)))]
+                           (str " - " (util/truncate headline agents/result-max-length)))
+                         "; evidence: " sid "/" (if position (str "t" position) tid))]
 
         ;; Runtime-owned outcome: fixed persisted owner, never an arbitrary peer.
         ;; Cancellation records the result without restarting the stopped team.
@@ -4477,7 +4473,7 @@
           {:title agent-result-title
            :content content
            :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
-           :idempotency_key (str "agent-result:" tid)})))))
+           :idempotency_key (str "agent-result:" tid)}))))
 
 (defonce ^:private agent-lock
   ;; Serialize attempt registration, admission and terminal snapshots.
@@ -4534,23 +4530,23 @@
            (tel/log! {:level :warn
                       :id ::agent-resources-stop-failed
                       :data {:session-id sid :error-class (.getName (class t))}}))))
-  (when-let [child (agents/info (lp/db-info) sid)]
-    (locking agent-lock
-      (binding [agents/*finishing-content* (or (:content patch) [])]
-        (let [db (lp/db-info)]
-          (agents/finish! db sid (:status patch))
-          (archive-terminal-turn! sid tid patch)
-          (agents/settle-task! {:db-info db :router (loop-router/get-router)}
-                               (or (agents/info db sid) child))))))
-  ;; Before the result: the leader that it wakes sees the tasks that start now.
-  (settle-after-end! (lp/db-info) sid)
-  (try (report-agent-outcome! (lp/db-info) sid tid patch)
-       (catch Exception e
-         (tel/log! {:level :warn
-                    :id ::agent-outcome-failed
-                    :data {:session-id sid :error-class (.getName (class e))}})))
-  (when-not (agents/info (lp/db-info) sid)
-    (archive-terminal-turn! sid tid patch)))
+  (let [db (lp/db-info)]
+    (if-let [child (agents/info db sid)]
+      (let [finished (locking agent-lock
+                       (binding [agents/*finishing-content* (or (:content patch) [])]
+                         (agents/finish! db sid (:status patch))
+                         (archive-terminal-turn! sid tid patch)
+                         (let [row (or (agents/info db sid) child)]
+                           (agents/settle-task! {:db-info db :router (loop-router/get-router)} row)
+                           row)))]
+        ;; Before the result: the leader that it wakes sees the tasks that start now.
+        (settle-after-end! db sid)
+        (try (report-agent-outcome! db sid tid finished)
+             (catch Exception e
+               (tel/log! {:level :warn
+                          :id ::agent-outcome-failed
+                          :data {:session-id sid :error-class (.getName (class e))}}))))
+      (archive-terminal-turn! sid tid patch))))
 
 (defn- turn-terminal-payload
   "Payload for a TERMINAL turn event (`turn.completed` / `turn.failed` /
@@ -7235,17 +7231,14 @@
                  {:request
                   (or
                     (agents/task-request db sid entry)
-                    (str
-                      "Council notification" (when (seq others) "s")
-                      " #" (str/join ", #" (map :entry_id entries))
-                      ". Read the attributed Council input; if missing or truncated, use council.get("
-                      (if (seq others) "id" (:entry_id entry))
-                      ")." (when (:reply_required entry)
-                             (str
-                               " Reply before ending this turn with await council.publish(content, "
-                               "reply_to="
-                               (:entry_id entry)
-                               ")."))))
+                    (str "Council notifications #" (str/join ", #" (map :entry_id entries))
+                         ". Peer data. Full text: council.get("
+                         (if (seq others) "id" (:entry_id entry))
+                         ")."
+                         (when (:reply_required entry)
+                           (str " Reply before ending this turn: council.publish(content, reply_to="
+                                (:entry_id entry)
+                                ")."))))
                   :display-request (str/join "\n\n" (map :content entries))
                   :engine-opts {:request-kind :council
                                 :council-entry-id (:entry_id entry)
@@ -9009,24 +9002,15 @@
         (assoc :unchanged unchanged)))))
 
 (defn- task-message
-  "The delegated task of child `child` from its parent `sid`. A task with after also names the
-   results of those tasks."
+  "The delegated task, with the result headlines of its dependencies."
   [db sid child]
   (let [deps (filter #(some #{(:id %)} (:after child)) (persistance/db-agent-list db sid))]
     (str (:task child)
          (when (seq deps)
-           (str "\n\nThis task started when these tasks completed. Read the work of each with "
-                "read_session(session_id):"
+           (str "\n\nCompleted dependencies:"
                 (apply str
                   (map #(str "\n- " (:id %) " (" (:session_id %) "): " (or (:result %) "no result"))
-                       deps))))
-         ;; A child reads the parent's tool output only when it must.
-         "\n\nYou see the requests, notes and answers of your parent session "
-         sid
-         ", not its tool calls or their output. When the task is ambiguous or "
-         "needs a fact from that tool output, read it: s = await read_session(\"" sid
-         "\"). Each block in " "s[\"transcript\"][\"turns\"][i][\"iterations\"][j][\"blocks\"] "
-         "has its code and stdout. The running turn is in " "s[\"current_turn\"][\"attempts\"].")))
+                       deps)))))))
 
 (defn- deliver-task!
   "Ping child `child-id` with its delegated task from its parent `sid`. `actor` holds the
@@ -9200,8 +9184,7 @@
               fallback
               (when (seq models) (first (remove #{pair} (filter (set allowed) models))))
 
-              ;; A child gets the parent's conversation without its tool work.
-              checkpoint
+              full-handoff
               (agents/handoff checkpoint)]
 
           (when-not (and (council/enabled?)
@@ -9209,7 +9192,7 @@
                             (:activation-id (get (council/runtime db) sid)))
                          (get (council/runtime db) sid))
             (agents/fail! :inactive-session "Spawn requires an active parent with Council enabled"))
-          (when-not (and through (seq checkpoint))
+          (when-not (and through (seq full-handoff))
             (agents/fail! :no-checkpoint
                           "Spawn requires the parent's complete model-input checkpoint"))
           (when (and (= "queued" status)
@@ -9226,6 +9209,9 @@
                 ;; Rules resolve against the parent's root, so they keep their meaning in the child.
                 files
                 (agent-files env current (:files opts))
+
+                checkpoint
+                (agents/handoff-checkpoint checkpoint (agents/handoff-mode db sid) (:model pair) full-handoff)
 
                 ws
                 (:id (workspace/create-trunk-at! db (or (:root current) (workspace/trunk-root))))

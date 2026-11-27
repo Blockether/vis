@@ -1017,6 +1017,7 @@ class AgentsRecord(TypedDict):
         "unknown",
     ]
     after: NotRequired[list[dict[str, JSONValue]] | None]
+    result: NotRequired[str | None]
     answer: NotRequired[str | None]
     question: NotRequired[str | None]
     question_entry_id: NotRequired[int | None]

@@ -1,0 +1,7 @@
+{
+  "want_answer_json": {
+    "provider": "anthropic",
+    "model": "demo-mini"
+  },
+  "want_requested_route": true
+}

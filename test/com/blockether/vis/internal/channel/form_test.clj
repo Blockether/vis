@@ -71,7 +71,7 @@
 
         (expect (str/starts-with? projected "source"))
         (expect (str/ends-with? projected "LAST"))
-        (expect (str/includes? projected "r = await read_session()"))
+        (expect (str/includes? projected "r = await read_session(view=\"blocks\""))
         (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
         (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
   (it "uses the persisted iteration scope for a live /fN result"
@@ -104,7 +104,7 @@
         (expect (str/includes? off "slice or filter the result"))
         (expect (str/includes? (with-redefs [toggles/enabled? #(= "introspection" %)]
                                  (form/clip-to-wire body f))
-                               "r = await read_session()"))))
+                               "r = await read_session(view=\"blocks\""))))
   (it "does not let an oversized call id exceed the whole token ceiling"
       (let [body
             (apply str (repeat 6000 "printed token "))
@@ -117,7 +117,7 @@
                                {:scope "t1/i2" :svar/tool-call-id call-id :llm-model "glm-5.3"})]
 
         (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
-        (expect (not (str/includes? projected "read_session()")))))
+        (expect (not (str/includes? projected "read_session(")))))
   (it "bounds oversized artifact fences before rendering them as a card"
       (let [f
             {:scope "t1/i2"

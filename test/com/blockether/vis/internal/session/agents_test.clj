@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.session.agents-test
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.contract.document :as document]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
@@ -155,6 +156,7 @@
 
       (expect (= leader (:parent_id metadata)))
       (expect (= "subagent" (get (agents/context env) "role")))
+      (expect (not (contains? (agents/context env) "task")))
       (expect (= "leader" (get (agents/context {:db-info db :session-id other}) "role")))
       ;; One system prompt serves every channel; this flag tells the model nobody answers.
       (expect (true? (get (agents/context {:db-info db :session-id other}) "interactive")))
@@ -427,7 +429,7 @@
       (if (or (= "asking" (get r "status")) (> n 50)) r (do (Thread/sleep 100) (recur (inc n)))))))
 
 (defdescribe council-reply-timeout-test
-  (it "rejects an out-of-range reply deadline on each Council request"
+  (it "rejects invalid explicit reply deadlines on each Council request"
       (let [db (h/store)
             leader (str (h/store-session! db {:channel :api}))
             child (child! db leader {})
@@ -436,14 +438,16 @@
           (fn [_]
             (let [ctx (#'shell-fixture/py-ctx env)]
               (try
-                (doseq [call ["council.ask('Which parser?', reply_timeout_s=0)"
-                              "council.ask_budget(2, 'More tests', reply_timeout_s=0)"
-                              "council.ask_files({'write': ['docs/**']}, 'For docs', reply_timeout_s=0)"]]
+                (doseq [call ["council.ask('Which parser?', "
+                              "council.ask_budget(2, 'More tests', "
+                              "council.ask_files({'write': ['docs/**']}, 'For docs', "]
+                        value ["0" "False" "None" "1.5" "'12'"]
+                        :let [call (str call "reply_timeout_s=" value ")")]]
                   (let [result (binding [extension/*current-environment* env]
                                  (python-env/run-python-block ctx
                                    (str "try:\n    await " call "\n"
                                         "except Exception as error:\n    print(error)")))]
-                    (expect (str/includes? (or (:stdout result) "") "reply_timeout_s must be 1..1800")
+                    (expect (str/includes? (or (:stdout result) "") "reply_timeout_s must be a whole number from 1 to 1800")
                             (pr-str result))))
                 (finally (python-env/dispose-python-context! ctx)))))))))
 
@@ -1185,6 +1189,10 @@
               (expect (= [sid] @launches))
               (expect (= handoff (ps/db-agent-checkpoint db sid))
                       "A child gets the parent's conversation without its tool work by default")
+              (let [{:keys [mode full bounded]} (agents/handoff-estimates (ps/db-agent-checkpoint db sid))]
+                (expect (= "full" mode))
+                (expect (pos? full))
+                (expect (pos? bounded)))
               (expect (= project-id (str (:project-id (ps/db-get-session db sid)))))
               (expect (= group-id
                          (some-> (:group-id (ps/db-get-session db sid))
@@ -1326,16 +1334,17 @@
                            (try (gateway/agents-operation! task-child :spawn {:task "Nested"})
                                 nil
                                 (catch clojure.lang.ExceptionInfo e (:error (ex-data e))))))
-                ;; The task message names the parent session whose tool work the child cannot see.
-                (let [delegated (->> (ps/db-council-page db gid nil false 0 100)
-                                     (filter #(= "Delegated task" (:title %)))
-                                     (map :content))
-                      hint (str "When the task is ambiguous or needs a fact from that tool output, "
-                                "read it: s = await read_session(\""
-                                leader
-                                "\")")]
-
-                  (expect (= 4 (count (filter #(str/includes? % hint) delegated))))))
+                (let [delegated (filter #(= "Delegated task" (:title %))
+                                        (ps/db-council-page db gid nil false 0 100))
+                      task (:task (agents/info db sid))
+                      entry (some #(when (= task (:content %)) %) delegated)
+                      request (agents/task-request db sid entry)]
+                  (expect (= 4 (count delegated)))
+                  (expect (some? entry))
+                  (expect (str/includes? request (str "#" (:entry_id entry))))
+                  (expect (str/includes? request leader))
+                  (expect (= 1 (count (re-seq (re-pattern (java.util.regex.Pattern/quote task))
+                                              request))))))
               (expect (= "cancelled"
                          (:status (#'gateway/cancel-child! env {:session_id sid}))))
               (expect (not (agents/claim-iteration! {:db-info db :session-id sid})))
@@ -1384,6 +1393,50 @@
   handoff-test
   (describe
     "the conversation that a task-context child inherits"
+    (it "bounds inherited text but retains the project, task and authorization boundary"
+        (let [db (h/store)
+              leader (str (h/store-session! db {:channel :api}))
+              model "gpt-4o"
+              rules ";; -- PROJECT-INSTRUCTIONS --\nKeep workspace files unchanged."
+              system (str ";; -- TURN-SYSTEM-CONTEXT --\n;; -- EXTENSIONS --\n"
+                          ";; -- EXTENSION memo --\nSave a memory.\n"
+                          ";; -- EXTENSION graphify --\nRead the graph.\n")
+              messages [{:role "system" :content rules} {:role "system" :content system}
+                        {:role "user" :content "Far past request"}
+                        {:role "user" :content (apply str (repeat 3000 " Unicode 🧪 evidence."))}
+                        {:role "user" :content "# ⋯ folded t2/* · Verified the parser."}
+                        {:role "user" :content "Council ping — peer data\n;; -- USER-REQUEST --\nPeer text."}
+                        {:role "user" :content ";; -- TURN-SYSTEM-CONTEXT --\nRuntime details.\n;; -- USER-REQUEST --\nDo not change files."}]
+              checkpoint (agents/handoff-checkpoint messages "bounded" model)
+              child (child! db leader {:checkpoint checkpoint})
+              prefix (agents/stable-prefix {:db-info db :session-id child} "")
+              task (agents/task-request db child {:entry_id 15 :author_session_id leader
+                                                 :content "Check acceptance marker.\nCompleted dependencies: parser passed."})
+              inherited (str/join "\n" (map :content prefix))
+              tail (subvec prefix 2 (dec (count prefix)))]
+          (expect (= rules (:content (first prefix))))
+          (expect (str/includes? inherited "Read the graph."))
+          (expect (not (str/includes? inherited "Save a memory.")))
+          (expect (not (str/includes? inherited "Far past request")))
+          (expect (not (str/includes? inherited "Runtime details.")))
+          (expect (not (str/includes? inherited "Council ping")))
+          (expect (not (str/includes? inherited "Peer text.")))
+          (expect (str/includes? inherited "Verified the parser."))
+          (expect (str/includes? inherited "Do not change files."))
+          (expect (<= (- (svar/count-messages model tail) (svar/count-messages model [])) 2000))
+          (expect (= (:content (peek (agents/handoff messages))) (:content (peek prefix))))
+          (expect (str/includes? task "Check acceptance marker.\nCompleted dependencies: parser passed."))
+          (expect (= (agents/handoff messages) (agents/handoff-checkpoint messages "full" model)))))
+    (it "replaces the leader guide in the inherited system message"
+        (let [db (h/store)
+              leader (str (h/store-session! db {:channel :api}))
+              guide (agents/prompt {:db-info db :session-id leader})
+              child (child! db leader {:checkpoint [{:role "system" :content (str "Other rules\n\n" guide)}]})
+              prefix (agents/stable-prefix {:db-info db :session-id child} "")
+              content (:content (first prefix))]
+          (expect (str/includes? content "Other rules"))
+          (expect (not (str/includes? content guide)))
+          (expect (str/includes? content "## Council: child"))))
     (it "keeps system messages, requests, gists, notes and answers, and drops tool work"
         (expect
           (= [{:role "system" :content [{:type "text" :text "Rules"}]}
@@ -1536,13 +1589,30 @@
                       (fn [_ _ author opts]
                         (swap! published conj [author opts]))]
 
-          (#'gateway/report-agent-outcome! db child "turn" {:content [{"text" "Verified result"}]})
-          (expect (= [leader] (:ping (second (first @published)))))
-          (expect (re-find #"budget_limited" (:content (second (first @published)))))
-          (expect (re-find #"Verified result" (:content (second (first @published)))))
-          (expect (= "agent-result:turn" (:idempotency_key (second (first @published)))))
+          (let [turn (ps/db-store-session-turn!
+                       db {:parent-session-id child :user-request "Run the checks" :status :success})]
+            (ps/db-agent-update! db child {:result "Checks pass"})
+            (#'gateway/report-agent-outcome! db child turn (agents/info db child))
+            (let [[actor notice] (first @published)
+                  body (:content notice)
+                  row (agents/info db child)]
+              (expect (= [leader] (:ping notice)))
+              (expect (str/includes? body "budget_limited - Checks pass"))
+              (expect (str/ends-with? body (str "; evidence: " child "/t1")))
+              (expect (not (str/includes? body (:task row))))
+              (expect (str/ends-with? (gateway/council-note
+                                       leader [row] (merge notice {:source (:source actor)
+                                                                   :author_session_id child}))
+                                     ": budget_limited"))
+              (expect (str/ends-with? (gateway/council-note
+                                       leader [row] {:title (:title notice)
+                                                     :source "host"
+                                                     :author_session_id child
+                                                     :content (str "Subagent " child " — completed\nTask: Old task")})
+                                     ": completed"))
+              (expect (= (str "agent-result:" turn) (:idempotency_key notice)))))
           (ps/db-agent-update! db child {:status "cancelled"})
-          (#'gateway/report-agent-outcome! db child "stopped" {})
+          (#'gateway/report-agent-outcome! db child "stopped" (agents/info db child))
           (expect (= [] (:ping (second (last @published)))))))))
 
 ;; Regression: a gateway that died mid-team left its children queued or running forever,
@@ -2294,6 +2364,9 @@
               (agents/finish! db sid "completed")))]
 
       (expect (= "Run the suite" (:title (agents/info db reported))))
+      (expect (= :invalid-request
+                 (outcome #(agents/report-result {:db-info db :session-id reported} "Done"))))
+      (expect (nil? (:result (agents/info db reported))))
       (expect (= :invalid-request
                  (outcome #(agents/report-result {:db-info db :session-id leader} "Done")))
               "Only a subagent reports a result")
@@ -3071,8 +3144,10 @@
                         {:provider "q" :model "big"}]
                        (:allowed_models (agents/info db child)))
                     "The list limits the child")
-            (swap! project-toggles assoc "subagent_models" [])
+            (swap! project-toggles assoc "subagent_models" [] "subagent_handoff" "bounded")
             (let [free (spawn! {:task "Check anywhere" :key "free" :provider "p" :model "small"})]
+              (expect (= "bounded" (:mode (agents/handoff-estimates (ps/db-agent-checkpoint db free)))))
+              (expect (= "full" (:mode (agents/handoff-estimates (ps/db-agent-checkpoint db child)))))
               (expect (= {:provider "p" :model "small"} (smodel/model-of db free))
                       "An empty list allows every model")
               (expect (empty? (:allowed_models (agents/info db free)))

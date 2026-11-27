@@ -115,7 +115,8 @@
                   "Only an unanswered final answer is rejected, not read/research/tool iterations"))
               (expect (= [(:entry_id request)]
                          (mapv :entry_id (:pending_replies (:council-input (first iterations))))))
-              (expect (str/includes? (pr-str (first @prompts)) "pending_replies"))
+              (expect (some #(str/includes? (str (:content %)) "Council replies due:")
+                            (first @prompts)))
               (expect (= "replied" (get-in request-now [:replies 0 :state])))
               (expect (pos-int? reply-id))
               (expect (= [aid] (:ping (council/get-entry db bid {:entry_id reply-id}))))
@@ -230,7 +231,7 @@
                                                         (atom {})
                                                         ["next" 0]
                                                         8192))]
-                    (expect (= [entry-id] (mapv :entry_id (:pending_replies batch)))
+                    (expect (= [entry-id] (:due_reply_ids batch))
                             "The next turn of the leader still has to answer the question")))
                 (do (expect (= 3 @calls) "A :cli leader must reply before it ends its turn")
                     (expect (= {:answer "done"} (:answer result)))

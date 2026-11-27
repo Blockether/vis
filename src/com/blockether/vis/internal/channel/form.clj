@@ -260,14 +260,16 @@
 
         recovery
         (if addressable?
-          (str "# Recover exact stdout: r = await read_session(); "
+          (str "# Recover exact stdout: r = await read_session(view=\"blocks\", turn="
+                (subs scope 1 (str/index-of scope "/"))
+                ", iteration=" (subs scope (+ 2 (str/index-of scope "/"))) "); "
                "b = next(b for t in r[\"transcript\"][\"turns\"] "
                "for i in t[\"iterations\"] for b in i[\"blocks\"] "
                "if b.get(\"scope\") == "
                (pr-str scope)
                " and b.get(\"svar_tool_call_id\") == "
                (pr-str call-id)
-               "); print(b[\"stdout\"][0:4096]) # adjust the slice as needed")
+               "); print(b[\"stdout\"]) # use offset= for more")
           "# To see more, slice or filter the result in the sandbox and print less.")
 
         preview

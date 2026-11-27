@@ -62,38 +62,22 @@ def _shell(result):
 
 def _session(result):
     session = result.get("session") or {}
-    transcript = result.get("transcript")
     ident = result.get("session_id") or session.get("id") or "?"
-    if not session and not transcript:
-        return f"read_session {ident}: not found or unavailable\n" + "\n".join(
-            _details(result)
-        )
-    turns = (transcript or {}).get("turns") or []
-    failures = result.get("failures") or []
+    view = result.get("view") or "full"
+    if not session and not result.get("transcript"):
+        return f"read_session {ident}: not found or unavailable"
     title = _bounded(session.get("title") or "untitled", "['session']['title']", 160)
-    lines = [
-        f"read_session {ident}: {title}",
-        f"{len(turns)} transcript turns; {len(failures)} failures",
-    ]
+    lines = [f"read_session {ident} ({view}): {title}"]
     current = result.get("current_turn") or {}
     if current.get("status"):
         lines.append(f"Current turn: {current['status']}")
-    if transcript is None:
-        lines.append("Transcript unavailable.")
-    if result.get("diagnosis"):
-        lines.append(
-            "Diagnosis: " + _bounded(result["diagnosis"], "['diagnosis']", 600)
-        )
+    diagnosis = result.get("diagnosis") or {}
+    if diagnosis.get("failure_count") or diagnosis.get("hung_turns"):
+        lines.append(f"Failures: {diagnosis.get('failure_count', 0)}")
     lines.extend(_details(result))
-    lines.append(
-        "History: ['transcript']['turns'] → iterations → blocks "
-        "(code/stdout/error) on this result."
-    )
-    lines.append(
-        "Full data: "
-        + ", ".join(result.keys())
-        + "; field paths are relative to this result; use the variable holding it."
-    )
+    if result.get("next_offset") is not None:
+        lines.append(f"Next offset: {result['next_offset']}")
+    lines.append("Fields: " + ", ".join(result.keys()))
     return "\n".join(lines)
 
 

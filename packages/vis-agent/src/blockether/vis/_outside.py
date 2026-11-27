@@ -94,7 +94,7 @@ def call_tool(tool, args, kwargs):
     )
 
 
-def read_session(target):
+def read_session(options):
     """Refuse a session read without a bound Vis session and its database."""
     raise Refused(
         "vis.read_session needs a bound Vis session. Outside an extension, read the "
@@ -102,7 +102,7 @@ def read_session(target):
     )
 
 
-def list_sessions(search):
+def list_sessions(options):
     """Refuse a session search without a bound Vis session and its database."""
     raise Refused(
         "vis.list_sessions needs a bound Vis session. Outside an extension, list the "

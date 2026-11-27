@@ -345,6 +345,43 @@ def _result(handle):
     return handle.result()
 
 
+def test_task_observer_settles_cancellation_when_the_receipt_is_gone():
+    from urllib.parse import parse_qs, urlsplit
+
+    running = task_status("t1", "running", CHILD)["task"]
+    cancelled = {**running, "state": "cancelled", "cancel_reason": "worker_death"}
+
+    def respond(method, path, body):
+        if result := council_compatible(method, path, body):
+            return result
+        route = urlsplit(path)
+        if route.path.endswith("/agents/run"):
+            return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        if route.path.endswith("/events-since"):
+            if parse_qs(route.query)["cursor"] == ["-1"]:
+                return 200, {
+                    "events": [
+                        {
+                            "type": "subscription.ready",
+                            "session_id": "leader",
+                            "cursor": 7,
+                            "tasks": [running],
+                            "tasks_seq": 7,
+                        }
+                    ],
+                    "cursor": 7,
+                }
+            return _task_page([cancelled], after=7)
+        if route.path.endswith("/tasks/t1"):
+            return 404, {"error": {"type": "task-not-found"}}
+        raise AssertionError(route.path)
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        (child,) = client.session("leader").council().run(["work"])
+        with pytest.raises(CancelledError):
+            _result(child)
+
+
 def test_child_controls_answer_records_without_settling_the_task():
     asking = {
         "session_id": "child",
@@ -657,6 +694,20 @@ def test_foreign_task_status_is_not_accepted_as_a_child_result():
 def test_child_record_response_is_validated(record):
     with pytest.raises(ValueError):
         SubagentRecord.from_wire(record)
+
+
+def test_task_record_display_does_not_repeat_the_answer():
+    record = SubagentRecord.from_wire(
+        {
+            "session_id": "child",
+            "id": "a2",
+            "status": "completed",
+            "result": "Checks pass",
+            "answer": "Evidence from the checks.\n" * 50,
+        }
+    )
+    assert repr(record) == str(record) == "a2 completed - Checks pass"
+    assert record.answer == "Evidence from the checks.\n" * 50
 
 
 def test_rate_limited_child_record_names_working_routes():

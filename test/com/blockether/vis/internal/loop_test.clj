@@ -7878,8 +7878,8 @@
             (expect (str/includes? display projected))
             (expect (str/starts-with? projected "HEAD"))
             (expect (str/ends-with? projected "TAIL-ONLY"))
-            (expect (str/includes? projected "read_session()"))
-            (expect (str/includes? projected "r = await read_session()"))
+            (expect (str/includes? projected "read_session("))
+            (expect (str/includes? projected "r = await read_session(view=\"blocks\""))
             (expect (str/includes? projected "b.get(\"svar_tool_call_id\") == \"call_A|fc_123\""))
             (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))
             (expect (< (count projected) (count stdout)))
@@ -7920,7 +7920,7 @@
           (expect (= out (String. (.getBytes ^String out "UTF-8") "UTF-8")))
           (expect (:is_error error))
           (expect (str/ends-with? (:content error) "✗ error: ValueError: last failure"))
-          (expect (not (str/includes? anonymous "read_session()")))))))
+          (expect (not (str/includes? anonymous "read_session(")))))))
 
 (defdescribe
   repeated-actions-continue-test
@@ -14003,7 +14003,7 @@
                 [b "receive"
                  [:error :empty
                   "page = await council.threads()\nentries = await council.read(thread_id=page['entries'][0]['thread_id'], limit=1)\nentry = await council.get(entry_id=entries['entries'][0]['entry_id'])\nprint(len(entry['content']))"
-                  "before = await read_session()\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session()\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
+                  "before = await read_session(view=\"blocks\", turn=1, iteration=1)\nping = before['transcript']['turns'][0]['iterations'][0]['council_input']\nfold_session('-t1/i1', 'Council reviewed')\nafter = await read_session(view=\"blocks\", turn=1, iteration=1)\nassert ping == after['transcript']['turns'][0]['iterations'][0]['council_input']"]]]]
               (let [idx (atom -1)
                     loop-result (atom nil)
                     tid (persistance/db-store-session-turn!
