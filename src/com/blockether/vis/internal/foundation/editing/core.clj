@@ -1141,7 +1141,13 @@
    "context_lines" "context"
    "regex" "is_regex"
    "hidden" "is_hidden"
-   "files_only" "is_files_only"})
+   "files_only" "is_files_only"
+   "before_context" "before"
+   "after_context" "after"})
+
+(def ^:private find-spec-hidden-keys
+  "Asymmetric context windows. The search reads them; `doc(\"grep\")` does not name them."
+  #{"before" "after"})
 
 (defn- fold-find-aliases
   "Normalizes aliases and rejects multiple keys for one option.
@@ -1184,7 +1190,7 @@
         (fold-find-aliases spec)
 
         unknown-keys
-        (seq (remove find-spec-canonical-keys (keys spec)))]
+        (seq (remove #(or (find-spec-canonical-keys %) (find-spec-hidden-keys %)) (keys spec)))]
 
     (when unknown-keys
       (throw (ex-info (str "grep: unknown keys: "
@@ -1239,6 +1245,15 @@
                               {:type :ext.foundation.editing/invalid-find-args :context c})))
             (long c))
 
+          [before after]
+          (mapv (fn [k]
+                  (let [c (get spec k context)]
+                    (when-not (and (integer? c) (not (neg? (long c))))
+                      (throw (ex-info (str "grep: \"" k "\" must be a non-negative integer.")
+                                      {:type :ext.foundation.editing/invalid-find-args k c})))
+                    (long c)))
+                ["before" "after"])
+
           limit
           (get spec "limit" default-find-limit)
 
@@ -1260,6 +1275,8 @@
       {:query query
        :paths paths
        :context context
+       :before before
+       :after after
        :limit limit
        :offset offset
        :is_hidden (boolean (get spec "is_hidden"))
@@ -1618,13 +1635,15 @@
                                  (= 1 (count args)) {"query" a}
                                  :else {}))
 
-        {:keys [paths context offset limit]}
+        {:keys [paths context before after offset limit]}
         (coerce-find-spec args)]
 
     (cond-> {"query" (get spec "query")
              "paths" paths
              "offset" offset
              "context" context
+             "before" before
+             "after" after
              "limit" limit}
       (contains? spec "include")
       (assoc "include" (get spec "include"))
@@ -2663,6 +2682,8 @@
 
         _
         (do (nonneg-int! ":context" (get spec "context"))
+            (nonneg-int! ":before" (get spec "before"))
+            (nonneg-int! ":after" (get spec "after"))
             (nonneg-int! ":offset" (get spec "offset")))
 
         is_files_only
@@ -2692,6 +2713,8 @@
      :offset (let [o (get spec "offset")]
                (if (integer? o) (long o) 0))
      :context context
+     :before (if is_files_only 0 (or (get spec "before") context))
+     :after (if is_files_only 0 (or (get spec "after") context))
      :is_files_only is_files_only}))
 
 (defn- make-line-matcher
@@ -2870,15 +2893,15 @@
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let [{:keys [needles paths include exclude is_hidden is_ignored is_regex limit offset context
+  (let [{:keys [needles paths include exclude is_hidden is_ignored is_regex limit offset before after
                 is_files_only]}
         (coerce-rg-spec spec)
 
         before-ctx
-        context
+        before
 
         after-ctx
-        context
+        after
 
         glob-matcher
         (fn [pattern]

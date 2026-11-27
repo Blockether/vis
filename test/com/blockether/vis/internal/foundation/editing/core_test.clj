@@ -1690,7 +1690,19 @@
     (it "refuses include and glob together, naming the canonical key"
         (let [e (caught coerce-find [{"query" "needle" "include" ["*.clj"] "glob" ["*.clj"]}])]
           (expect (some? e))
-          (expect (= "grep: use only one key for \"include\"." (ex-message e)))))))
+          (expect (= "grep: use only one key for \"include\"." (ex-message e)))))
+    (it "before_context and after_context give separate context windows"
+        (write-temp! "aliasctx/a.txt" "l1\nl2\nl3\nNEEDLE\nl5\nl6\nl7\n")
+        (let [hit
+              (-> (:result (grep {"query" "NEEDLE" "paths" [(temp-dir-path "aliasctx")]
+                                  "before_context" 1 "after_context" 3}))
+                  (get "matches")
+                  vals
+                  first
+                  vals
+                  first)]
+          (expect (= ["l3"] (mapv #(get % "text") (get hit "before"))))
+          (expect (= ["l5" "l6" "l7"] (mapv #(get % "text") (get hit "after"))))))))
 
  ;; Regression: `grep(["a", "b"], ["src", "tools"])` — needles, then scopes, the
 ;; obvious reading of a two-argument search — died on ARGUMENT SHAPE instead of
