@@ -7329,6 +7329,21 @@
                   ;; The server's `subscription.ready` verdict: it names the turn the
                   ;; DAEMON is running for this session right now, before any replay.
                   ;; Disagreement with the turn painted here is proof of a gap.
+                  :gateway-elided
+                  (do (read-human-input! session-id)
+                      (read-app-states! session-id)
+                      (replay-live-views! session-id)
+                      (vis/refresh-session-model! session-id)
+                      (when-let [ready (vis/session-events-snapshot session-id)]
+                        (let [chunk (chat/gateway-event->chunk ready)]
+                          (state/dispatch [:sync-background-tasks session-id chunk])
+                          (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
+                          (state/dispatch [:sync-agent-name tab-id chunk])
+                          (state/dispatch [:sync-gateway-ready tab-id (assoc chunk :is-repair true)])))
+                      (let [page (chat/history-page session-id {:limit chat/resume-tail-turns})]
+                        (when-not (:failed page)
+                          (state/dispatch [:repair-transcript tab-id session-id (:messages page)]))))
+
                   :gateway-ready
                   (do (state/dispatch [:sync-background-tasks session-id chunk])
                       (agent-team/stream-ready! session-id (:agents chunk) (:team-clocks chunk))
@@ -8121,6 +8136,9 @@
   [event]
   (let [sid (str (get event "session_id"))]
     (case (get event "type")
+      "event.elided"
+      (do (apply-global-app-frame! event) :resync)
+
       "session.created"
       :created
 
@@ -8171,6 +8189,9 @@
         stop
         (try (vis/gateway-fleet-subscribe! (fn [event]
                                              (case (apply-fleet-frame! event)
+                                               :resync
+                                               (do (refresh-projects! true) (warm-picker-cache! (current-session-id)))
+
                                                :created
                                                (swap! created conj event)
 

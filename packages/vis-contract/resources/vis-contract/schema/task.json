@@ -98,18 +98,18 @@
           ]
         }
       },
-      "cancel": {
-        "type": "object",
-        "required": [
-          "requested"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "requested": {
-            "type": "boolean"
-          }
-        }
+    "cancel": {
+      "type": "object",
+      "required": ["requested"],
+      "additionalProperties": false,
+      "properties": {
+        "requested": {"type": "boolean"},
+        "reason": {"enum": ["already_ended", "already_requested"]}
       },
+      "if": {"properties": {"requested": {"const": false}}},
+      "then": {"required": ["reason"]},
+      "else": {"not": {"required": ["reason"]}}
+    },
     "kind": {
       "enum": [
         "tool",

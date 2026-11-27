@@ -661,9 +661,14 @@
       (let [[next-forms event] (activity-contract/encode-stream-event
                                  @forms
                                  (app-frames (without-settled-picture event))
-                                 gateway-contract/turn-terminal-event-types)]
-        (vreset! forms next-forms)
-        event))))
+                                 gateway-contract/turn-terminal-event-types)
+            {:keys [bytes elided?]} (sse/encode-frame event)]
+        (vreset! forms (if elided? {} next-forms))
+        bytes))))
+
+(defn- write-sse! [^OutputStream out ^bytes bytes]
+  (.write out bytes)
+  (.flush out))
 
 (def ^:private sse-wake
   "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
@@ -867,37 +872,9 @@
             replay)
     0))
 
-(defn- sse-ready!
-  "Write the `subscription.ready` control frame for one subscribed session,
-   echoing the cursor the server actually resumed from so a client that asked
-   for the live-only sentinel learns its concrete resume point and can reconnect
-   losslessly after its first connection.
-
-   It also carries the daemon's OWN turn state — `current_turn_id` and `is_live`,
-   read from the registry AFTER `state/subscribe!` so it describes the same
-   instant the replay was captured at. That inverts the control: a reconnecting
-   client no longer has to poll to find out whether the bubble it is painting is
-   still real. Agreement costs zero round trips; disagreement is a definitive
-   verdict that the socket missed a terminal frame, so the client reconciles at
-   once instead of waiting out a grace + probe interval.
-
-   `latest_iteration` is the replay's high-water position. It rides this first,
-   flushed frame so a client paints iteration 420 immediately, then fills its
-   details from the chronological replay without visibly counting 1…420.
-
-   `agents` is the team of the session ([[state/agent-rows]]) and `team_clocks` the stored clock
-   of each of its teams ([[state/team-clocks]]). They are read after the sink is registered, so
-   each later change reaches the client as `session.team_updated` after this frame. This frame is
-   the only team read of a client.
-
-   `is_live` is the required canonical verdict; protocol negotiation rejects a client
-   or daemon that cannot exchange it.
-
-   EVERY SSE endpoint emits it for EVERY session it serves — single-session and
-   multiplexed alike — so no client has to special-case which endpoint it is
-   attached to. Like every other frame it rides `sse/sse-frame`, i.e. it is an
-   ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
-  [^OutputStream out sid cursor replay session]
+(defn- ready-event
+  "Build the current session state for a subscription or snapshot read."
+  [sid cursor replay session]
   (let [{:keys [tasks tasks-seq]}
         (task/at-publication-cursor sid #(state/current-seq sid))
 
@@ -905,10 +882,8 @@
         (state/current-turn-id sid)
 
         latest-iteration
-        (latest-replay-iteration replay tid)
-
-        payload
-        (gateway-contract/subscription-ready-event {:session-id sid
+        (latest-replay-iteration replay tid)]
+    (gateway-contract/subscription-ready-event {:session-id sid
                                                     :cursor cursor
                                                     :current-turn-id tid
                                                     :is-live (some? tid)
@@ -920,10 +895,13 @@
                                                     :agents (state/agent-rows sid)
                                                     :team-clocks (state/team-clocks sid)
                                                     :latest-iteration (when (pos? latest-iteration)
-                                                                        latest-iteration)})]
+                                                                        latest-iteration)})))
 
-    (.write out (.getBytes (sse/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
-    (.flush out)))
+(defn- sse-ready!
+  ([^OutputStream out sid cursor replay session]
+   (sse-ready! out sid cursor replay session (comp :bytes sse/encode-frame)))
+  ([^OutputStream out sid cursor replay session outbound]
+   (write-sse! out (outbound (ready-event sid cursor replay session)))))
 
 (defn- parse-multi-sids
   "Parse the `sids` query param of the multiplexed events endpoint: a comma
@@ -1022,15 +1000,12 @@
               write!
               (fn [event]
                 (if (= "fleet" (get event "scope"))
-                  (do (.write out
-                              (.getBytes (sse/sse-frame (app-frames event)) StandardCharsets/UTF_8))
-                      (.flush out))
-                  (let [esid (str (get event "session_id"))]
-                    (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
-                      (.write out
-                              (.getBytes (sse/sse-frame (outbound event)) StandardCharsets/UTF_8))
-                      (.flush out)
-                      (swap! last-seqs assoc esid (long (get event "seq")))))))]
+                  (write-sse! out (outbound event))
+                  (let [esid (str (get event "session_id"))
+                        seq (long (get event "seq"))]
+                    (when (> seq (long (get @last-seqs esid Long/MIN_VALUE)))
+                      (write-sse! out (outbound event))
+                      (swap! last-seqs assoc esid seq)))))]
 
           (swap! instance/server-state (fn [st]
                                          (-> st
@@ -1044,14 +1019,33 @@
                        replay (when (some? cursor)
                                 ;; Seed the guard before atomic registration.
                                 (swap! last-seqs assoc (str sid) cursor)
-                                (state/subscribe! sid sub-id sink cursor (or replay :settled)))
+                                (state/subscribe-replay! sid sub-id sink cursor (or replay :settled)))
                        ;; Deletion may win between the first read and registration.
                        session (when (some? cursor) (state/soul sid))]
 
                    (if session
-                     (do (sse-ready! out sid cursor replay session)
-                         (doseq [event replay]
-                           (write! event)))
+                     (do (sse-ready! out sid cursor (:descriptors replay) session outbound)
+                         (when-some [floor (:floor replay)]
+                           (when (or (< cursor floor) (<= 0 requested-cursor (dec floor)))
+                             (let [gap-seq (max cursor floor)
+                                   gap (gateway-contract/elided-event
+                                         (gateway-contract/stamp-session-event
+                                           {} sid gap-seq (util/now-ms) "replay")
+                                         "replay_unavailable")]
+                               (write-sse! out (outbound gap))
+                               (swap! last-seqs assoc (str sid) gap-seq))))
+                         (try (loop [descriptors (:descriptors replay)]
+                                (when (seq descriptors)
+                                  (let [{:keys [events remaining]} (state/read-replay-page! sid descriptors)]
+                                    (run! write! events)
+                                    (recur remaining))))
+                              (catch clojure.lang.ExceptionInfo e
+                                (if (= ::state/replay-unavailable (:type (ex-data e)))
+                                  (write! (gateway-contract/elided-event
+                                            (gateway-contract/stamp-session-event
+                                              {} sid (:through replay) (util/now-ms) "replay")
+                                            "replay_unavailable"))
+                                  (throw e)))))
                      ;; There is no ring left to replay. Advance past either cursor
                      ;; so a disconnected client cannot deduplicate the verdict away.
                      (write! (gateway-contract/stamp-session-event
@@ -1117,8 +1111,7 @@
               write!
               (fn [event]
                 (.write out
-                        (.getBytes (sse/sse-frame ((or app-frames identity) event))
-                                   StandardCharsets/UTF_8))
+                        (:bytes (sse/encode-frame ((or app-frames identity) event))))
                 (.flush out))]
 
           (swap! instance/server-state (fn [st]
@@ -1131,7 +1124,7 @@
             ;; Attach before ready: the client's resync must overlap an active
             ;; subscription, otherwise a transition between its read and this
             ;; registration disappears. The queue keeps ready first on the wire.
-            (state/subscribe-fleet! sub-id sink)
+            (state/subscribe-fleet! sub-id #(sink (assoc % "scope" "fleet")))
             (write!
               {"schema" 1 "type" "subscription.ready" "scope" "fleet" "seq" 0 "ts" (util/now-ms)})
             (pump-sse! out queue dead? write!)
@@ -1449,14 +1442,24 @@
   [request]
   (if-let [sid (http/path-sid request)]
     (let [cursor (sse-cursor request)]
-      (if (= "true" (http/query-str request "tasks"))
+      (cond
+        (= "true" (http/query-str request "snapshot"))
+        (if-let [session (state/soul sid)]
+          (let [through (state/current-seq sid)]
+            (http/json-response {:events [(ready-event sid through [] session)] :cursor through}))
+          (http/session-404 (get-in request [:path-params :sid])))
+
+        (= "true" (http/query-str request "tasks"))
         (if (state/session-exists? sid)
           (http/json-response (task-events-page sid cursor))
           (http/session-404 (get-in request [:path-params :sid])))
+
+        :else
         {:status 200
          :headers {"Content-Type" "application/json"}
          :body (wire/canonical-json-str
-                 {"events" (state/events-since sid cursor (sse-replay request))})}))
+                 (let [{:keys [events cursor]} (state/events-page sid cursor (sse-replay request))]
+                   {"events" events "cursor" cursor}))}))
     (http/session-404 (get-in request [:path-params :sid]))))
 
 ;; Router and middleware

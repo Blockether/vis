@@ -26,7 +26,7 @@ export function isGlobalAppFrame(event: SseEvent): boolean {
 
 /** The fleet stream is ready again. It carries no replay, so the apps must be read again. */
 function isFleetReady(event: SseEvent): boolean {
-  return event.type === 'subscription.ready' && event.scope === 'fleet';
+  return (event.type === 'subscription.ready' || event.type === 'event.elided') && event.scope === 'fleet';
 }
 
 /** What one fleet frame does to the global apps list. */

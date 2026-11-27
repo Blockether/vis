@@ -109,7 +109,8 @@
    `[:close view-id]` or nil."
   [event]
   (let [type (get event "type")]
-    (cond (= "gateway.connected" type) [:refetch]
+    (cond (or (= "gateway.connected" type)
+              (and (= "event.elided" type) (= "fleet" (get event "scope")))) [:refetch]
           (not (str/blank? (str (get event "session_id")))) nil
           (not= "live" (get event "kind")) nil
           (= "view.open" type) (when-let [view (get event "view")]

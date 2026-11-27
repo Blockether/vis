@@ -809,6 +809,146 @@ def test_turn_wait_follows_the_event_stream_instead_of_polling():
     assert len(reads) == 2
 
 
+@pytest.mark.parametrize(
+    "restarted, settlement_page", [(False, 1), (False, 2), (True, 1)]
+)
+def test_turn_wait_repairs_an_unproven_poll_page(restarted, settlement_page):
+    from blockether.vis.engine import Turn
+
+    pages = reads = 0
+
+    def respond(method, path, body):
+        nonlocal pages, reads
+        if result := compatible(method, path, body):
+            return result
+        route = urlsplit(path).path
+        if route.endswith("/seq"):
+            return 200, {"seq": 41}
+        if route.endswith("/turns/t"):
+            reads += 1
+            return 200, {"status": "sent" if pages >= settlement_page else "queued"}
+        if route.endswith("/events-since"):
+            pages += 1
+            if restarted:
+                return 200, {
+                    "events": [
+                        {
+                            "type": "event.elided",
+                            "session_id": "s",
+                            "seq": 3,
+                            "cursor": 3,
+                            "event_type": "replay",
+                            "reason": "replay_unavailable",
+                        }
+                    ],
+                    "cursor": 3,
+                }
+            return 200, {"events": []}
+        raise AssertionError(route)
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        session = client.session("s")
+        client._pump_client_extensions = lambda _: None
+        client._client_extensions[session.id] = SimpleNamespace(manifest=True)
+        try:
+            assert Turn(session, "t").wait(timeout=3)["status"] == "sent"
+        finally:
+            del client._client_extensions[session.id]
+    assert pages >= settlement_page
+    assert reads == (2 if settlement_page == 1 else 3)
+
+
+@pytest.mark.parametrize("code", [503, 403])
+def test_task_observer_retries_only_transient_pages_from_its_cursor(code):
+    from concurrent.futures import wait
+
+    from test_agents import _task_page, council_compatible, task_status
+
+    cursors = []
+    detail = task_status("t1", "done", {"session_id": "child", "status": "completed"})
+    running = task_status("t1", "running", {"session_id": "child", "status": "running"})
+
+    def respond(method, path, body):
+        if result := council_compatible(method, path, body):
+            return result
+        parsed = urlsplit(path)
+        if parsed.path.endswith("/agents/run"):
+            return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        if parsed.path.endswith("/events-since"):
+            cursors.append(parse_qs(parsed.query)["cursor"][0])
+            if len(cursors) == 1:
+                return 200, {
+                    "events": [
+                        {
+                            "type": "subscription.ready",
+                            "session_id": "leader",
+                            "cursor": 7,
+                            "tasks": [running["task"]],
+                            "tasks_seq": 7,
+                        }
+                    ],
+                    "cursor": 7,
+                }
+            if len(cursors) == 2:
+                return code, {
+                    "error": {"type": "unavailable", "message": "unavailable"}
+                }
+            return _task_page([detail["task"]], after=8)
+        if parsed.path.endswith("/tasks/t1"):
+            return 200, detail
+        raise AssertionError(parsed.path)
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        (child,) = client.session("leader").council().run(["work"])
+        assert child in wait([child], timeout=3).done
+        if code == 403:
+            with pytest.raises(GatewayError) as raised:
+                child.result()
+            assert raised.value.status == code
+        else:
+            assert child.result().status == "completed"
+    assert cursors == (["-1", "7"] if code == 403 else ["-1", "7", "7"])
+
+
+def test_turn_wait_repairs_an_elided_terminal_frame():
+    from blockether.vis.engine import Turn
+
+    reads = []
+    streams = []
+
+    def respond(method, path, body):
+        if result := compatible(method, path, body):
+            return result
+        if path == "/v1/sessions/s/seq":
+            return 200, {"seq": 4}
+        if path == "/v1/sessions/s/turns/t":
+            reads.append(path)
+            return 200, {"status": "completed" if len(reads) > 1 else "running"}
+        if path.startswith("/v1/events?"):
+            streams.append(path)
+            events = [
+                {"type": "subscription.ready", "session_id": "s", "cursor": 4},
+                {
+                    "type": "event.elided",
+                    "session_id": "s",
+                    "seq": 5,
+                    "turn_id": "t",
+                    "event_type": "turn.completed",
+                    "reason": "frame_size",
+                },
+            ]
+            data = "".join(
+                f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events
+            )
+            return 200, data.encode(), "text/event-stream"
+        return 404, {"error": {"message": path}}
+
+    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+        assert Turn(client.session("s"), "t").wait(timeout=2)["status"] == "completed"
+    assert len(reads) == 2
+    assert len(streams) == 1
+
+
 def test_turn_wait_continues_when_a_proxy_ends_streams_that_made_progress():
     # A proxy with a stream time limit ends each connection. The wait failed after
     # 4 connections with "event reconnect budget exhausted" while the turn ran on.
@@ -1189,8 +1329,17 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
             }
         if route.endswith("/agents/run"):
             return 200, [{"id": "a1", "session_id": "child", "task_id": "t1"}]
+        if route.endswith("/council/changed"):
+            return 200, {
+                "id": "t1",
+                "name": "council.changed()",
+                "kind": "tool",
+                "value": {"cursor": "next", "requests": []},
+            }
+        if route.endswith("/tasks/t1/acknowledge"):
+            return 200, {"acknowledged": True}
         if route.endswith("/tasks/t1/cancel"):
-            return 200, {"requested": False}
+            return 200, {"requested": False, "reason": "already_requested"}
         if route.endswith("/tasks/t1"):
             return 200, task_status("t1", "running", record, owner="example")
         if "/agents" in route:
@@ -1215,6 +1364,7 @@ def test_dedicated_methods_cover_every_public_nonstreaming_operation():
         (task,) = council.run(["Check the contract"])
         assert not task.cancel()
         assert task.record().session_id == "child"
+        assert council.changed().result()["cursor"] == "next"
         council.publish(
             "Check again",
             ping=["child"],
@@ -1504,6 +1654,28 @@ def test_all_job_streams_preserve_event_name_and_stop_on_terminal(
         assert values[-1].id == "job-one"
         assert values[-1].is_done
         assert len([c for c in calls if c[1] == route]) == 1
+
+
+def test_job_stream_repairs_without_a_marker_id():
+    resource = "/v1/speech/jobs/job-one"
+
+    def respond(verb, path, body):
+        if result := compatible(verb, path, body):
+            return result
+        if path == resource + "/events":
+            return (
+                200,
+                b'event: speech.job\ndata: {"is_elided":true}\n\n',
+                "text/event-stream",
+            )
+        assert path == resource
+        return 200, {"id": "job-one", "phase": "done", "is_done": True}
+
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
+        with client.speech_events("job-one", reconnects=0) as events:
+            jobs = list(events)
+        assert len(jobs) == 1 and jobs[0].is_done
+        assert sum(path == resource for _, path, _, _ in calls) == 1
 
 
 @pytest.mark.parametrize("incomplete", [False, True])
@@ -1981,7 +2153,9 @@ def test_close_from_another_thread_stops_a_polling_stream_at_once(monkeypatch):
 
     with endpoint(compatible) as (url, _), GatewayClient(url, timeout=30) as client:
         monkeypatch.setattr(
-            client.routes, "get_session_events_since", lambda *a, **k: {"events": []}
+            client.routes,
+            "get_session_events_since",
+            lambda *a, **k: {"events": [], "cursor": k["query"]["cursor"]},
         )
         events = _SessionPollingEvents(client.session("s"))
         closed = []

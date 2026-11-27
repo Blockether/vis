@@ -1555,9 +1555,13 @@
       ;; gap (the mux resubscribes at this client's cursor, so the ordinary
       ;; reconnect replays what it owes), and acting on it was a guess. The frame
       ;; below carries the daemon's actual turn state, which is what the UI acts on.
+      "event.elided"
+      {:phase :gateway-elided :turn-id (event-get event :turn-id)}
+
       "subscription.ready"
       (cond-> {:phase :gateway-ready
                :gateway-turn-id (event-get event :current-turn-id)
+                :is-repair (get event "is_repair")
                :is-state-known (some? (event-get event :is-live))
                 :tasks (event-get event :tasks)
                 :task-seq (or (event-get event :tasks-seq) (event-get event :cursor))}
@@ -1578,7 +1582,7 @@
 
       nil)))
 
-(defn- gateway-event->chunk
+(defn gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
   gateway remains the only producer of live turn events. Preserve gateway op

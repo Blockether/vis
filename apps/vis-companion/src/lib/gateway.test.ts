@@ -156,6 +156,92 @@ describe('GatewayClient event-stream hard deadline', () => {
       stop();
     }
   });
+  it('repairs an elision without skipping the next session event', async () => {
+    vi.useFakeTimers();
+    const frames = [
+      { type: 'event.elided', session_id: 's1', seq: 7, event_type: 'turn.completed', reason: 'frame_size' },
+      { type: 'turn.started', session_id: 's1', seq: 8 },
+    ];
+    const fetches = vi.fn(async (input: string) => {
+      if (input.includes('/events-since?')) {
+        return Response.json({ events: [{ type: 'subscription.ready', session_id: 's1', cursor: 9 }] });
+      }
+      return new Response(frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''));
+    });
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const cursors = new Map([['s1', 6]]);
+    const seen: [string, boolean | undefined][] = [];
+    const stop = new GatewayClient(conn).streamSessionEvents(cursors, (event) => {
+      seen.push([event.type, event.is_repair]);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([
+        ['event.elided', undefined], ['subscription.ready', true], ['turn.started', undefined],
+      ]);
+      expect(cursors.get('s1')).toBe(8);
+      expect(fetches.mock.calls[1]?.[0]).toContain('/v1/sessions/s1/events-since?snapshot=true');
+    } finally {
+      stop();
+    }
+  });
+
+  it('retries a failed snapshot after advancing past the elision', async () => {
+    vi.useFakeTimers();
+    let streams = 0;
+    let snapshots = 0;
+    const fetches = vi.fn(async (input: string) => {
+      if (input.includes('/events-since?')) {
+        if (++snapshots === 1) return new Response('', { status: 500 });
+        return Response.json({ events: [{ type: 'subscription.ready', session_id: 's1', cursor: 8 }] });
+      }
+      const frame = ++streams === 1
+        ? { type: 'event.elided', session_id: 's1', seq: 7, event_type: 'turn.completed', reason: 'frame_size' }
+        : { type: 'turn.started', session_id: 's1', seq: 8 };
+      return new Response(`data: ${JSON.stringify(frame)}\n\n`);
+    });
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const cursors = new Map([['s1', 6]]);
+    const seen: string[] = [];
+    const stop = new GatewayClient(conn).streamSessionEvents(cursors, (event) => seen.push(event.type));
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cursors.get('s1')).toBe(7);
+      await vi.advanceTimersByTimeAsync(700);
+      expect(seen).toEqual(['event.elided', 'subscription.ready', 'turn.started']);
+      expect(new URL(fetches.mock.calls[3]![0]).searchParams.get('sids')).toBe('s1:7');
+    } finally {
+      stop();
+    }
+  });
+
+  it('resets a stale cursor when subscription.ready was elided', async () => {
+    vi.useFakeTimers();
+    const frames = [
+      { type: 'event.elided', session_id: 's1', seq: 3, cursor: 3, event_type: 'subscription.ready', reason: 'frame_size' },
+      { type: 'turn.started', session_id: 's1', seq: 4 },
+    ];
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      if (input.includes('/events-since?')) {
+        return Response.json({ events: [{ type: 'subscription.ready', session_id: 's1', cursor: 4 }] });
+      }
+      return new Response(frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join(''));
+    }));
+    const { GatewayClient } = await import('./gateway');
+    const cursors = new Map([['s1', 900]]);
+    const seen: string[] = [];
+    const stop = new GatewayClient(conn).streamSessionEvents(cursors, (event) => seen.push(event.type));
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cursors.get('s1')).toBe(4);
+      expect(seen).toEqual(['event.elided', 'subscription.ready', 'turn.started']);
+    } finally {
+      stop();
+    }
+  });
+
   it('keeps fleet frame numbers out of watched-session replay cursors', async () => {
     vi.useFakeTimers();
     const frames = [

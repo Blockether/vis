@@ -147,6 +147,10 @@ import {
 } from './diagnostics';
 import { checkForegroundClock } from './wake';
 
+export type TurnCancelOutcome =
+  | { accepted?: true; status: 'cancelling'; turn_id?: string; also_cancelled?: string[] }
+  | { accepted: false; reason: 'no_running_turn' | 'not_running'; turn_id?: string; turn_status?: string };
+
 export class GatewayError extends Error {
   status: number;
   body: unknown;
@@ -723,7 +727,7 @@ const TURN_TERMINAL_EVENT_TYPES: ReadonlySet<string> = new Set(
  */
 async function readSseFrames(
   body: ReadableStream<Uint8Array>,
-  onData: (json: string, event: string | null) => void,
+  onData: (json: string, event: string | null) => void | Promise<void>,
   onChunk?: () => void,
   signal?: AbortSignal,
   onHeartbeat?: () => void,
@@ -759,7 +763,10 @@ async function readSseFrames(
       for (const line of lines) {
         if (!line.startsWith('data:')) continue;
         const json = line.slice(5).trim();
-        if (json) onData(json, event);
+        if (json) {
+          const pending = onData(json, event);
+          if (pending) await pending;
+        }
       }
     }
   }
@@ -2737,7 +2744,8 @@ export class GatewayClient {
     if (!latest.is_done) {
       try {
         latest = await this.followJobStream<SpeechJob>(
-          `${path}/events`,
+          path,
+          job.id,
           { event: SPEECH_JOB_EVENT, stream: 'speech_job', label: 'speech', end: 'the audio' },
           () => undefined,
           signal,
@@ -2860,7 +2868,8 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<VoiceJob> {
     return this.followJobStream<VoiceJob>(
-      `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`,
+      `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}`,
+      jobId,
       { event: VOICE_JOB_EVENT, stream: 'voice_job', label: 'transcription', end: 'the transcript' },
       onJob,
       signal,
@@ -2869,11 +2878,13 @@ export class GatewayClient {
 
   /** Read one job's event stream to its terminal frame; `voiceJobStream` explains why. */
   private async followJobStream<J extends { id: string; is_done: boolean }>(
-    path: string,
+    resource: string,
+    jobId: string,
     kind: { event: string; stream: 'voice_job' | 'speech_job'; label: string; end: string },
     onJob: (job: J) => void,
     signal?: AbortSignal,
   ): Promise<J> {
+    const path = `${resource}/events`;
     const diagnostic = startRequestDiagnostic(this.base, 'GET', path, {
       transport: 'sse',
       stream: kind.stream,
@@ -2915,7 +2926,7 @@ export class GatewayClient {
       await raceAbort(
         readSseFrames(
           response.body,
-          (json, event) => {
+          async (json, event) => {
             // This stream carries frames of one name and nothing else. Any other
             // name is not this job's progress and must never be reported as it.
             if (event !== kind.event) return;
@@ -2925,7 +2936,14 @@ export class GatewayClient {
             } catch {
               return;
             }
-            if (!job || typeof job !== 'object' || !job.id) return;
+            if (!job || typeof job !== 'object') return;
+            if ('is_elided' in job && job.is_elided === true) {
+              if (job.id !== undefined && job.id !== jobId) return;
+              job = await this.request<J>('GET', resource, undefined, streamSignal);
+              if (job.id !== jobId) throw new GatewayError(0, 'Unexpected job snapshot');
+            } else if (job.id !== jobId) {
+              return;
+            }
             seen.job = job;
             onJob(job);
           },
@@ -6355,7 +6373,7 @@ export class GatewayClient {
   }
 
   /** Stop a turn we know the id of — the addressed route, open to every channel. */
-  cancelTurn(sid: string, tid: string): Promise<unknown> {
+  cancelTurn(sid: string, tid: string): Promise<TurnCancelOutcome> {
     return this.request(
       'POST',
       `/v1/sessions/${encodeURIComponent(sid)}/turns/${encodeURIComponent(tid)}/cancel`,
@@ -6367,7 +6385,7 @@ export class GatewayClient {
    * `turn.started` landed). It names itself with the submission's correlation id;
    * without one the gateway would have to guess, and refuses.
    */
-  cancelCurrentTurn(sid: string): Promise<unknown> {
+  cancelCurrentTurn(sid: string): Promise<TurnCancelOutcome> {
     return this.request('POST', `/v1/sessions/${encodeURIComponent(sid)}/cancel-current`, {
       idempotency_key: this.submissionKeys.get(sid),
     });
@@ -6764,6 +6782,16 @@ export class GatewayClient {
   // response body as a stream and parse SSE frames by hand so it works in every
   // Capacitor webview (native EventSource can't attach the bearer header).
 
+  private async repairSessionEvents(sid: string, signal: AbortSignal): Promise<SseEvent> {
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/events-since?snapshot=true`;
+    const page = await this.request<{ events: SseEvent[] }>('GET', path, undefined, signal);
+    const ready = page.events?.[0];
+    if (ready?.type !== 'subscription.ready' || ready.session_id !== sid) {
+      throw new GatewayError(0, 'Unexpected session event snapshot');
+    }
+    return { ...ready, is_repair: true };
+  }
+
   /**
    * Multiplex many watched sessions over one SSE connection. Reconnects resume
    * each session independently from the cursor it carries.
@@ -6792,6 +6820,22 @@ export class GatewayClient {
     const signal = opts.signal
       ? linkSignals([opts.signal, controller.signal]).signal
       : controller.signal;
+
+    // A failed snapshot must survive an SSE reconnect after the marker's cursor advanced.
+    const pendingRepairs = new Set<string>();
+    const repair = async (sid: string, signal: AbortSignal) => {
+      if (cursors.has(sid)) {
+        try {
+          const snapshot = await this.repairSessionEvents(sid, signal);
+          if (signal.aborted) return;
+          if (cursors.has(sid)) onEvent(snapshot);
+        } catch (error) {
+          // Reconnect will deliver session.deleted if the session is gone.
+          if (!(error instanceof GatewayError) || error.status !== 404) throw error;
+        }
+      }
+      pendingRepairs.delete(sid);
+    };
 
     void (async () => {
       let retryMs = 400;
@@ -6830,6 +6874,7 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
+          for (const sid of pendingRepairs) await repair(sid, attemptSignal);
           const spec = Array.from(
             cursors,
             ([sid, cursor]) => `${sid}:${this.resumeCursor(sid, cursor)}`,
@@ -6858,7 +6903,7 @@ export class GatewayClient {
           // the outer loop reconnects with the up-to-date cursor.
           armStall(SSE_STALL_TIMEOUT_MS);
           // Each connection decodes compact Activity receipts with its own state.
-          const decodeActivity = activityStreamDecoder(TURN_TERMINAL_EVENT_TYPES);
+          let decodeActivity = activityStreamDecoder(TURN_TERMINAL_EVENT_TYPES);
           await raceAbort(
             readSseFrames(
               response.body,
@@ -6869,6 +6914,9 @@ export class GatewayClient {
                 if (frameName === VOICE_JOB_EVENT) return;
                 try {
                   const event = decodeActivity(JSON.parse(json)) as SseEvent;
+                  if (event.type === 'event.elided') {
+                    decodeActivity = activityStreamDecoder(TURN_TERMINAL_EVENT_TYPES);
+                  }
                   const sid =
                     typeof event.session_id === 'string'
                       ? event.session_id
@@ -6879,12 +6927,13 @@ export class GatewayClient {
                   // handler failed must replay on reconnect, never be skipped.
                   // Fleet frames use an independent sequence, even when they name
                   // a watched session. Only session frames own replay cursors.
-                  onEvent(event);
+                  if (event.type !== 'event.elided') onEvent(event);
                   if (event.scope !== 'fleet') {
                     if (
                       sid &&
                       cursors.has(sid) &&
-                      event.type === 'subscription.ready' &&
+                      (event.type === 'subscription.ready' ||
+                        (event.type === 'event.elided' && event.event_type === 'subscription.ready')) &&
                       typeof event.cursor === 'number'
                     ) {
                       cursors.set(sid, event.cursor);
@@ -6894,6 +6943,11 @@ export class GatewayClient {
                       cursors.set(sid, advanced);
                       this.rememberSessionCursor(sid, advanced);
                     }
+                  }
+                  if (event.type === 'event.elided') {
+                    if (sid && event.scope !== 'fleet') pendingRepairs.add(sid);
+                    onEvent(event);
+                    if (pendingRepairs.has(sid)) return repair(sid, attemptSignal);
                   }
                 } catch {
                   // Ignore one malformed frame without ending sibling sessions.

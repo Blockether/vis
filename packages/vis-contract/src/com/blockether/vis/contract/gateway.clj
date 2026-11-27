@@ -387,6 +387,17 @@
     "session_id" (str session-id)
     "type" type))
 
+(defn elided-event
+  "Keep the sequence and resource identity, never the omitted body."
+  [event reason]
+  (assoc (select-keys event ["session_id" "turn_id" "view_id" "scope" "cursor"])
+    "schema" (get event "schema" 1)
+    "seq" (or (get event "seq") (get event "cursor"))
+    "ts" (or (get event "ts") (get event "server_time_ms") 0)
+    "type" "event.elided"
+    "event_type" (get event "type")
+    "reason" reason))
+
 (defn stamp-journal-line
   "Add private producer metadata to one already-stamped session event."
   [event producer pid store?]

@@ -547,7 +547,7 @@
 
               write!
               (fn [job]
-                (.write out (.getBytes (sse/job-sse-frame event-name job) StandardCharsets/UTF_8))
+                (.write out (sse/encode-job-frame event-name job))
                 (.flush out))]
 
           (try (let [current (speech/job job-id)]

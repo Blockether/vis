@@ -130,7 +130,7 @@ function HumanInputQueue({ client, subscriptions, sid, sessionKey }: InputPrompt
         });
     };
     const stop = subscriptions.subscribeSession(sid, (event) => {
-      if (event.type === 'subscription.ready') reload();
+      if (event.type === 'subscription.ready' || event.type === 'event.elided') reload();
       else if (isInputViewEvent(event)) apply(event);
     }, { replay: false });
     if (!read.current) reload();

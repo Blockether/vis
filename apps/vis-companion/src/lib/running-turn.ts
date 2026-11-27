@@ -308,6 +308,38 @@ export function withStoredSteps(turn: RunningTurn, row: TranscriptTurn | undefin
   };
 }
 
+/** Restore full iteration text and its offset bases together. */
+export function repairRunningTrace(
+  current: RunningTurn,
+  before: RunningTurn,
+  restored: TranscriptIteration[],
+): RunningTurn {
+  const key = (iteration: TranscriptIteration) => iteration.position ?? iteration.id;
+  const beforeByKey = new Map(before.iterations.map((iteration) => [key(iteration), iteration]));
+  const snapshotKeys = new Set(restored.map(key));
+  // Keep rows that arrived during the read or that the trace does not cover.
+  const live = current.iterations.filter(
+    (iteration) => !snapshotKeys.has(key(iteration)) || beforeByKey.get(key(iteration)) !== iteration,
+  );
+  const liveKeys = new Set(live.map(key));
+  const repaired = restored.filter((iteration) => !liveKeys.has(key(iteration)));
+  const streamBases = current.streamBases && { ...current.streamBases };
+  if (streamBases) {
+    for (const { position } of repaired) {
+      // Gateway iteration blocks are named <turn>:<phase>:<position>.
+      // The snapshot text starts at zero. Keep the bases for untouched live blocks.
+      delete streamBases[`${current.id}:reasoning:${position}`];
+      delete streamBases[`${current.id}:assistant-prose:${position}`];
+    }
+  }
+  return {
+    ...current,
+    iterations: [...repaired, ...live].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+    iterationsOffset: undefined,
+    streamBases,
+  };
+}
+
 /** Fold one running-turn SSE frame into the transient turn snapshot. */
 export function reduceRunningTurnEvent(
   turn: RunningTurn | null,

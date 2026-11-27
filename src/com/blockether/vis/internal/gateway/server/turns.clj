@@ -321,6 +321,12 @@
                          :subagent-stop "stop the leader session; it also stops its subagents"
                          :session_id (str sid))))
 
+(defn- turn-cancel-refusal [reason tid status]
+  (http/json-response
+    (cond-> {:accepted false :reason reason}
+      tid (assoc :turn_id tid)
+      status (assoc :turn_status status))))
+
 (defn- cancel-turn-handler
   [request]
   (let [sid
@@ -331,13 +337,10 @@
 
     (or (subagent-stop-refusal sid)
         (let [result (if sid (state/cancel-turn! sid tid) {:error :turn-not-found})]
-          (cond (:status result) (http/json-response 202 result)
+          (cond (nil? (:error result)) (http/json-response 202 result)
                 (= :turn-not-found (:error result))
                 (http/error-response 404 :turn-not-found "unknown turn" :turn_id tid)
-                :else (http/error-response 409
-                                           :not-running "turn is not running"
-                                           :turn_id tid
-                                           :turn_status (:status result)))))))
+                :else (turn-cancel-refusal "not_running" tid (:status result)))))))
 
 (defn- cancel-current-turn-handler
   "POST /sessions/:sid/cancel-current {idempotency_key} — tid-less cancel: fire
@@ -347,8 +350,8 @@
    the id-addressed `/turns/:tid/cancel` is useless to them and the still-running
    ghost queues every next submit. A session is shared, so the correlation id is
    what keeps this route from killing another channel's work. 202 + `{:status
-   \"cancelling\" :turn_id tid}`, 409 `:not-owner` for someone else's turn, 409
-   `:no-running-turn` when idle, 409 `:subagent-stop` in a subagent session."
+   \"cancelling\" :turn_id tid}`, 200 with `accepted: false` when idle or not
+   running, 409 `:not-owner` for someone else's turn, or 409 `:subagent-stop`."
   [request]
   (let [sid
         (http/path-sid request)
@@ -360,18 +363,16 @@
       (http/session-404 (get-in request [:path-params :sid]))
       (or (subagent-stop-refusal sid)
           (let [result (state/cancel-current-turn! sid owner-key)]
-            (cond (:status result) (http/json-response 202 result)
+            (cond (nil? (:error result)) (http/json-response 202 result)
                   (= :no-running-turn (:error result))
-                  (http/error-response 409 :no-running-turn "session has no running turn")
+                  (turn-cancel-refusal "no_running_turn" nil nil)
                   (= :not-owner (:error result))
                   (http/error-response 409
                                        :not-owner "the running turn was submitted by another client"
                                        :turn_id (:turn_id result))
                   (= :turn-not-found (:error result))
                   (http/error-response 404 :turn-not-found "unknown turn")
-                  :else (http/error-response 409
-                                             :not-running "turn is not running"
-                                             :turn_status (:status result))))))))
+                  :else (turn-cancel-refusal "not_running" (:turn_id result) (:status result))))))))
 
 (defn- drain-idle-handler
   "POST /sessions/:sid/drain-queue — start the session's oldest queued turn iff

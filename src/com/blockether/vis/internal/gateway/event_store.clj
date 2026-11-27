@@ -4,8 +4,7 @@
   (:require [com.blockether.vis.internal.gateway.turn-archive :as archive]
             [taoensso.nippy :as nippy]
             [taoensso.telemere :as tel])
-  (:import [java.nio.file Files Path]
-           [java.util.concurrent.atomic AtomicLong]))
+  (:import [java.util.concurrent.atomic AtomicLong]))
 
 (defonce ^:private locks (vec (repeatedly 64 #(Object.))))
 
@@ -47,12 +46,12 @@
         (or (get event "block_id") (get-in event ["block" "id"]))
 
         descriptor
-        (cond-> (select-keys event ["seq" "type" "turn_id" "iteration" "form_index"])
+        (cond-> (select-keys event ["schema" "seq" "ts" "type" "session_id" "turn_id" "view_id" "iteration" "form_index"])
           block-id
           (assoc "block_id" block-id))]
 
     (try (let [^bytes frozen
-               (nippy/freeze event)
+               (nippy/freeze event {:compressor nil})
 
                size
                (alength frozen)]
@@ -61,10 +60,9 @@
              (assoc descriptor
                ::frozen frozen
                ::bytes size)
-             (let [file (archive/write! event)]
-               (assoc descriptor
-                 ::file file
-                 ::bytes (Files/size (Path/of ^String file (make-array String 0)))))))
+             (assoc descriptor
+               ::file (archive/write-frozen! frozen)
+               ::bytes size)))
          (catch Exception e
            (tel/log! {:level :error :id ::write-failed :data {:error-class (.getName (class e))}})
            (assoc descriptor ::missing? true)))))

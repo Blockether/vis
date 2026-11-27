@@ -71,6 +71,39 @@ An error answer has a JSON body with `error.type` and `error.message`:
 | `426` | The type is `incompatible_protocol`. The client and the gateway have no common protocol. Update the client or the gateway to compatible versions. |
 | Other `4xx` and `5xx` | The feature page of the route explains the `type`. |
 
+## Repair an event stream gap
+
+An event stream frame has a limit of 1 MiB, including its headers and delimiters. If the gateway
+cannot send an event, it sends `event.elided` and gives the sequence number of the omitted event.
+The `event_type` field names that event. The `reason` is `frame_size` or `replay_unavailable`.
+If the frame has a `cursor`, use it to reset the stream position.
+The `turn_id` and `view_id` fields identify the affected record if they fit. If the frame does not
+identify a record, read the session snapshot.
+
+Save the sequence number before you read the affected state again. Do not reconnect to request the
+omitted body. Read the affected turn, view, or session from its HTTP resource. For current
+subscription state, read the following resource. Do not use its cursor to skip later stream events.
+
+```http
+GET /v1/sessions/<session-id>/events-since?snapshot=true
+```
+
+A poll of stored events returns one page and its `cursor`. Use that cursor for the next poll, even
+when the page has no events. If a gateway does not return a cursor, read the state again before
+assuming that no events are missing. A fleet marker has `scope: fleet`. Read the list again without
+changing any session cursor. For a speech job frame with `is_elided: true`, read the job at the resource URL
+for the stream.
+
+## Stop work and acknowledge results
+
+A turn cancellation can return HTTP `200` with `accepted: false` and a reason of `no_running_turn`
+or `not_running`. The gateway does not cancel queued work in this case.
+
+A Task cancellation can return `requested: false` with a reason of `already_ended` or
+`already_requested`. After you read the result of a Council watch Task, send `POST` to
+`/v1/sessions/<session-id>/tasks/<task-id>/acknowledge`. The gateway removes the Task from the list
+and keeps its result for a limited number of recent Tasks.
+
 ## See also
 
 - For the same gateway with typed Python calls, read [Python SDK](python-sdk.md).

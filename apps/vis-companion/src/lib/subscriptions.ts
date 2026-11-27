@@ -663,10 +663,20 @@ export class SessionSubscriptionHub {
     // listeners directly and never buffered, never counted as lifecycle — a
     // screen uses it to decide whether the turn it paints is still the daemon's,
     // which is the one thing a reconnect cannot infer from its own cursor.
+    if (event.type === 'event.elided') {
+      this.buffers.delete(sid);
+      this.forgetCoverage(sid);
+      if (typeof event.cursor === 'number') this.delivered.set(sid, event.cursor);
+      else if (typeof event.seq === 'number') {
+        this.delivered.set(sid, Math.max(event.seq, this.delivered.get(sid) ?? -1));
+      }
+      for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);
+      return;
+    }
     if (event.type === 'subscription.ready') {
       if (event.is_live === false) this.idle.add(sid);
       else this.idle.delete(sid);
-      if (typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
+      if (!event.is_repair && typeof event.cursor === 'number') this.noteCovered(sid, event.cursor);
       this.noteTeam(sid, event);
       this.noteTasks(sid, event);
       for (const listener of this.sessionListeners.get(sid) ?? []) listener(event);

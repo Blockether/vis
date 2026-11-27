@@ -443,8 +443,11 @@ class _LocalSession(Session):
 
 class _LocalJobEvents(_PollingEvents, JobEvents):
     def __init__(self, client, route, job_id, event_name, snapshot, **options):
-        self._snapshot = snapshot
-        super().__init__(client, route, job_id, event_name, **options)
+        super().__init__(
+            client, route, job_id, event_name, snapshot=snapshot, **options
+        )
 
     def _page(self):
-        return [(self._event_name, self._snapshot())]
+        snapshot = self._snapshot
+        assert snapshot is not None  # Local job streams always supply a reader.
+        return [(self._event_name, snapshot())]

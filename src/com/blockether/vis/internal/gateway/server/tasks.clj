@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.server.tasks
-  "List, read and request cancellation of session Tasks."
+  "List, read, cancel and acknowledge session Tasks."
   (:require [com.blockether.vis.internal.gateway.server.http :as http]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.task :as task]))
@@ -27,11 +27,21 @@
           :list (http/json-response {:tasks (task/wire-tasks session)})
           :read (task-read session task-id request)
           :cancel (if (task/wire-state session task-id)
-                    (http/json-response {:requested (task/cancel! session task-id :person)})
-                    (task-404)))))))
+                    (http/json-response
+                      (if (task/cancel! session task-id :person)
+                        {:requested true}
+                        {:requested false
+                         :reason (if (= :running (:state (task/wire-state session task-id)))
+                                   "already_requested"
+                                   "already_ended")}))
+                    (task-404))
+          :acknowledge (if (task/wire-state session task-id)
+                         (http/json-response {:acknowledged (boolean (task/acknowledge! session task-id))})
+                         (task-404)))))))
 
 (def handlers
   "Handlers for the session Task routes."
   {[:get "/v1/sessions/:sid/tasks"] (task-handler :list)
    [:get "/v1/sessions/:sid/tasks/:task-id"] (task-handler :read)
-   [:post "/v1/sessions/:sid/tasks/:task-id/cancel"] (task-handler :cancel)})
+   [:post "/v1/sessions/:sid/tasks/:task-id/cancel"] (task-handler :cancel)
+   [:post "/v1/sessions/:sid/tasks/:task-id/acknowledge"] (task-handler :acknowledge)})

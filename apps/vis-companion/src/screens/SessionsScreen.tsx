@@ -1147,7 +1147,7 @@ export function SessionsScreen({
     const unsubscribe = subscriptions.subscribeFleet((event) => {
       // Ready is sent after the server registered this subscriber. An HTTP open
       // alone can precede registration, and reconnects carry no replay.
-      if (event.type === 'subscription.ready' && event.scope === 'fleet') {
+      if ((event.type === 'subscription.ready' || event.type === 'event.elided') && event.scope === 'fleet') {
         readWindow();
         return;
       }

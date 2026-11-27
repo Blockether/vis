@@ -93,7 +93,7 @@ import {
   insertCommentReferences,
   type ComposerComment,
 } from '../lib/composer-comments';
-import { reduceRunningTurnEvent, withStoredSteps, type RunningTurn } from '../lib/running-turn';
+import { reduceRunningTurnEvent, repairRunningTrace, withStoredSteps, type RunningTurn } from '../lib/running-turn';
 import { eventString, sessionEventBatch } from '../lib/session-stream';
 import { speechOutput } from '../lib/speech';
 import { splitScreen } from '../lib/split-screen';
@@ -2454,7 +2454,7 @@ export function SessionScreen({
         try {
           iterations = await client.turnTrace(sid, tid, signal);
         } catch {
-          return;
+          return false;
         }
       }
       if (signal?.aborted || turnEnded()) return;
@@ -2545,9 +2545,11 @@ export function SessionScreen({
     // tick for the life of the app — the "restart it before I see anything"
     // bug. Stamp the start instead and treat an older one as lost.
     const STALE_RECONCILE_MS = 20_000;
-    let inflightSince: number | null = null;
-    const reconcileOnce = async () => {
-      if (document.visibilityState === 'hidden') return;
+    let inflight: { since: number } | null = null;
+    let repairRevision = 0;
+    let repairedRevision = 0;
+    let repairTimer: number | null = null;
+    const reconcileOnce = async (repair: boolean) => {
       // Reconciliation uses the running-turn snapshot taken before later transcript and
       // queue reads, so a newly started turn cannot be cleared by an older verdict.
       const runningTurnBefore = runningTurnRef.current;
@@ -2562,9 +2564,9 @@ export function SessionScreen({
       try {
         next = await client.session(sid, undefined, true);
       } catch {
-        return;
+        return false;
       }
-      if (cancelled) return;
+      if (cancelled) return false;
       setSession(next);
       acceptQueueBacklog(client.cachedQueuedTurns(sid) ?? [], backlogReadAt);
       if (queuePausedRevisionRef.current === queuePausedRevision) {
@@ -2578,11 +2580,13 @@ export function SessionScreen({
       try {
         // Gated on the row this tick just read: an idle session costs one tiny
         // request per tick instead of re-reading its whole transcript.
-        nextTurns = await client.transcriptIfMoved(sid, next);
+        nextTurns = repair
+          ? await client.transcript(sid, undefined, undefined, true)
+          : await client.transcriptIfMoved(sid, next);
       } catch {
-        nextTurns = null;
+        if (repair) return false;
       }
-      if (cancelled) return;
+      if (cancelled) return false;
       // A warm read can already have moved the cache while the screen held old rows.
       const rowsNow = nextTurns ?? client.cachedTranscript(sid) ?? turnsRef.current;
       const landedRow = settledTurnRow(rowsNow, runningTurnId);
@@ -2631,27 +2635,53 @@ export function SessionScreen({
           return settledTurn;
         });
       }
-      if (cancelled) return;
+      if (cancelled) return false;
       // Last, against the canonical gateway claim this tick read: adopt a turn we are
       // not painting. That covers a webview the OS reloaded while backgrounded, a turn
       // another client started, or a stream that reconnected past `turn.started`.
       // A matching transcript row supplies an inline trace; otherwise the canonical
       // turn id addresses the gateway trace directly.
-      await adoptRunningTurn(next, undefined, rowsNow);
+      const tid = next.live ? next.current_turn_id : undefined;
+      if (repair && tid && runningTurnRef.current?.id === tid) {
+        const before = runningTurnRef.current;
+        try {
+          const restored = await client.turnTrace(sid, tid);
+          const current = runningTurnRef.current;
+          if (!cancelled && current?.id === tid && current.status === 'running' && restored.length) {
+            const repaired = repairRunningTrace(current, before, restored);
+            runningTurnRef.current = repaired;
+            setRunningTurn(repaired);
+          }
+        } catch {
+          return false;
+        }
+      }
+      if ((await adoptRunningTurn(next, undefined, rowsNow)) === false && repair) return false;
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
+      return true;
     };
-    // Never stack: each reconcile is two sequential round-trips (session +
-    // transcript), so on a slow gateway a fixed 5s tick would overlap and pile
-    // requests up. One in flight at a time — a skipped tick self-heals 5s later.
+    // A repair stays pending after a failed read or a newer marker during the read.
     const reconcile = async () => {
-      if (inflightSince !== null && Date.now() - inflightSince < STALE_RECONCILE_MS) return;
-      inflightSince = Date.now();
-      lastReconcileAt = inflightSince;
+      if (cancelled || document.visibilityState === 'hidden') return;
+      const since = Date.now();
+      if (inflight !== null && since - inflight.since < STALE_RECONCILE_MS) return;
+      const attempt = { since };
+      inflight = attempt;
+      lastReconcileAt = since;
+      const revision = repairRevision;
       try {
-        await reconcileOnce();
+        if (await reconcileOnce(revision > repairedRevision)) {
+          repairedRevision = Math.max(repairedRevision, revision);
+        }
       } finally {
-        inflightSince = null;
+        if (inflight === attempt) inflight = null;
+        if (!cancelled && repairedRevision < repairRevision && repairTimer === null) {
+          repairTimer = window.setTimeout(() => {
+            repairTimer = null;
+            void reconcile();
+          }, 500);
+        }
       }
     };
     // A safety net, not the feed: a live session stream carries every turn and status
@@ -2693,7 +2723,7 @@ export function SessionScreen({
       syncJump();
     };
     const stopWake = onWake(({ awayMs }) => {
-      inflightSince = null;
+      inflight = null;
       subscriptions.resync('wake');
       probeTurnOnWakeRef.current?.();
       reconcileWakeGeometry();
@@ -2743,13 +2773,15 @@ export function SessionScreen({
         } else if (event.is_live === false) {
           latestReplayHeadRef.current = null;
         }
-        if (running === painted) return;
+        const repair = event.is_repair === true;
+        if (!repair && running === painted) return;
         const now = Date.now();
-        if (now - lastReadyReconcileAt < READY_RECONCILE_MIN_MS) return;
+        if (!repair && now - lastReadyReconcileAt < READY_RECONCILE_MIN_MS) return;
         lastReadyReconcileAt = now;
         // A read issued over the socket that just died cannot answer for the gap,
         // so its silence must not suppress the one reconcile that can.
-        inflightSince = null;
+        if (repair) repairRevision++;
+        else inflight = null;
         void reconcile();
       },
       { replay: false },
@@ -2757,6 +2789,7 @@ export function SessionScreen({
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      if (repairTimer !== null) window.clearTimeout(repairTimer);
       if (wakeGeometryFrame !== null) window.cancelAnimationFrame(wakeGeometryFrame);
       stopWake();
       stopReady();
@@ -4737,8 +4770,18 @@ export function SessionScreen({
       // `turn.started` needs no ownership proof, and it survives a reload that
       // forgot which correlation id this client submitted under.
       const liveTid = runningTurnRef.current?.id;
-      if (liveTid) await client.cancelTurn(sid, liveTid);
-      else await client.cancelCurrentTurn(sid);
+      const outcome = liveTid
+        ? await client.cancelTurn(sid, liveTid)
+        : await client.cancelCurrentTurn(sid);
+      if (outcome && 'accepted' in outcome && outcome.accepted === false) {
+        setRunningTurn((turn) => {
+          if (!turn || turn.id !== liveTid) return turn;
+          const next = { ...turn, cancelling: false };
+          runningTurnRef.current = next;
+          return next;
+        });
+        return;
+      }
       // The gateway dropped these rows when it accepted the stop. Take them out of the
       // tray with their text, so the words never show in two places at once. A row
       // whose image bytes this client never held comes back through the

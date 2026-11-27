@@ -99,6 +99,18 @@ class _CouncilWatch(_SessionTask):
     def _result_from(self, answer):
         return validate("gateway", "council_readiness", answer.get("value"))
 
+    def _acknowledge(self):
+        from ._client import GatewayError, TransportError
+
+        try:
+            self._session._call(
+                "POST", "/tasks/:task-id/acknowledge", path={"task-id": self.task_id}
+            )
+        except (GatewayError, TransportError):
+            # A receipt can have expired or the gateway can predate this route.
+            # Acknowledgement does not change the result we already read.
+            pass
+
 
 def _admit(session, submit):
     # Do not open another observer for another Session wrapper of this owner.
@@ -163,9 +175,18 @@ class _Observer:
                         }
                         for task_id in pending:
                             if task_id not in running:
-                                self._read_all(task_id)
+                                self._read_all(stream, task_id)
+                    elif event.type == "event.elided" and event.data["event_type"] in {
+                        "replay",
+                        "subscription.ready",
+                        "task.ended",
+                    }:
+                        with self._lock:
+                            pending = tuple(self._pending)
+                        for task_id in pending:
+                            self._read_all(stream, task_id)
                     elif event.type == "task.ended" and event.seq > barrier:
-                        self._read_all(event.data["task"]["id"])
+                        self._read_all(stream, event.data["task"]["id"])
                     with self._lock:
                         if not self._pending:
                             stream.close()
@@ -184,21 +205,23 @@ class _Observer:
                 for handle in handles:
                     handle.set_exception(error)
 
-    def _read_all(self, task_id):
+    def _read_all(self, stream, task_id):
         with self._lock:
             handles = tuple(self._pending.get(task_id, ()))
         for handle in handles:
-            self._read(handle)
+            self._read(stream, handle)
 
-    def _read(self, handle):
+    def _read(self, stream, handle):
         # A Task admitted during a ready frame may not be in its snapshot yet.
         # Leave it registered when the detail read says it is still running.
         try:
-            state, result = handle._settlement()
+            state, result = stream.retry_request(handle._settlement)
         except Exception as error:
             state, result = "failed", error
         if state == "running":
             return
+        if isinstance(handle, _CouncilWatch) and state in {"done", "cancelled"}:
+            handle._acknowledge()
         with self._lock:
             handles = self._pending[handle._task_id]
             handles.remove(handle)
@@ -281,11 +304,33 @@ def _task_events(session):
             # Application callbacks belong to the caller, not this reader.
             pass
 
+        def retry_request(self, request):
+            from ._client import GatewayError, ProtocolError, TransportError
+
+            delay = 0.1
+            while True:
+                try:
+                    return request()
+                except (GatewayError, TransportError) as error:
+                    if isinstance(error, GatewayError):
+                        transient = (
+                            error.status in {408, 429} or 500 <= error.status < 600
+                        )
+                    else:
+                        transient = not isinstance(
+                            error, ProtocolError
+                        ) and not getattr(self.client, "_lease_error", None)
+                    if not transient or self._closing.wait(delay):
+                        raise
+                    delay = min(delay * 2, 1.0)
+
         def _page(self):
             from ._client import ProtocolError
 
-            answer = self.client.routes.get_session_events_since(
-                self.session.id, query={"cursor": self.cursor, "tasks": "true"}
+            answer = self.retry_request(
+                lambda: self.client.routes.get_session_events_since(
+                    self.session.id, query={"cursor": self.cursor, "tasks": "true"}
+                )
             )
             if (
                 not isinstance(answer, dict)

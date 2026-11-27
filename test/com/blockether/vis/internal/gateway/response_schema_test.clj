@@ -123,10 +123,8 @@
    "openapi_document.paths" "The OpenAPI Paths object. The OpenAPI 3.1 schema defines it."
    "provider_presets.presets[]" "Each provider preset adds its own fields."
    "router_fleet.providers[]" "Each provider adds its own fields to its router entry."
-   "session.match" "The search match comes from the search index. It is not mapped yet."
    "session_artifacts.artifacts[]" "Each tool writes its own artifact fields."
    "session_context" "The session mirror that the model sees. Extensions add open keys."
-   "session_fork_turns.turns[].council|0" "The Council data of a turn. It is not mapped yet."
    "session_resources.resources[]" "Each extension declares its own resource fields."
    "session_suggestions[]" "Each extension declares its own suggestion fields."
    "session_workspace.workspace.git"
@@ -136,10 +134,9 @@
    "setting_value" "A setting value has the type of its setting."
    "settings.lineage[]" "Each configuration layer adds its own fields."
    "speech_voice.voice" "Each speech engine declares its own voice fields."
-   "transcript.turns[]" "The transcript turn row comes from the store. It is not mapped yet."
+   "transcript.turns[].iterations[]" "The iteration row comes from the store. It is not mapped yet."
    "turn.content[]"
    "The content blocks have one shape for each block type. They are not mapped yet."
-   "turn.council|0" "The Council data of a turn. It is not mapped yet."
    "turn_attachments.attachments[]" "Each attachment kind adds its own fields."
    "turn_trace.iterations[]" "The trace row comes from the store. It is not mapped yet."
    "view_log" "The log page shape comes from the view sink. It is not mapped yet."
@@ -432,6 +429,21 @@
         (expect (get-in (openapi/document) ["paths" "/v1/models" "get" "responses" "426"]))
         (expect (document/valid-json? "gateway" "incompatible_protocol" body)
                 (pr-str body))))
+  (it "returns typed refusals for idle and already settled turns"
+      (let [sid (str (random-uuid))
+            tid (str (random-uuid))
+            route (str "/v1/sessions/" sid)
+            handler (app)]
+        (with-redefs [state/soul (constantly {"id" sid})
+                      state/cancel-current-turn! (constantly {:error :no-running-turn})
+                      state/cancel-turn! (constantly {:error :not-running :status "completed"})]
+          (doseq [[result reason] [[(call handler :post (str route "/cancel-current")
+                                          {"idempotency_key" "owner"}) "no_running_turn"]
+                                  [(call handler :post (str route "/turns/" tid "/cancel")) "not_running"]]]
+            (expect (= 200 (:status result)))
+            (expect (= {"accepted" false "reason" reason}
+                       (select-keys (:body result) ["accepted" "reason"])))
+            (expect (document/valid-json? "gateway" "turn_cancel_refusal" (:body result)))))))
   (it "returns a stale View action as a domain result"
       (let [sid (str (random-uuid))
             vid (str (random-uuid))
@@ -439,14 +451,16 @@
         (with-redefs [gateway-view/view-of (constantly {:id vid})
                       gateway-view/action! (constantly {:is-accepted false
                                                        :reason "stale_revision"
-                                                       :revision "new"})]
+                                                       :revision "new" :seq 5})]
           (let [{:keys [status body]}
                 (call handler :post (str "/v1/sessions/" sid "/views/" vid "/actions")
                       {"action" "submit" "revision" "old"})]
             (expect (= 200 status))
             (expect (= "stale_revision" (get body "reason")))
             (expect (document/valid-json? "gateway" "view_outcome" body))
-            (doseq [invalid [(assoc body "reason" "free-form text")
+            (expect (= 5 (get body "seq")))
+            (doseq [invalid [(assoc body "seq" "wrong")
+                             (assoc body "reason" "free-form text")
                              (assoc body "is_accepted" true)
                              (dissoc body "reason")]]
               (expect (not (document/valid-json? "gateway" "view_outcome" invalid)))))))))

@@ -5,7 +5,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayClient } from '../lib/gateway';
-import { GatewayError } from '../lib/gateway';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import { SessionEventsContext } from '../lib/session-events';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -158,7 +157,7 @@ describe('AppSurface', () => {
   it('saves a draft with base_seq and the revision, then reads again on a conflict', async () => {
     const { hub } = fakeHub();
     const { client, viewAction, liveView } = fakeClient([view(3, 'Mine'), view(5, 'Theirs')], async () => {
-      throw new GatewayError(409, 'conflict', { is_accepted: false, reason: 'conflict', seq: 5 });
+      return { is_accepted: false, reason: 'conflict', seq: 5 };
     });
     open(client, hub);
     fireEvent.click(await screen.findByRole('button', { name: 'Edit note' }));
@@ -188,7 +187,7 @@ describe('AppSurface', () => {
     const { hub, emit } = fakeHub();
     const { client, viewAction, liveView } = fakeClient([canvas(3, 'Saved A'), canvas(5, 'Saved C')], async (action) => {
       if ('base_seq' in action && action.base_seq === 5) return { is_accepted: true, seq: 6 };
-      throw new GatewayError(409, 'conflict', { is_accepted: false, reason: 'conflict', seq: 5 });
+      return { is_accepted: false, reason: 'conflict', seq: 5 };
     });
     open(client, hub);
     fireEvent.click(await screen.findByRole('button', { name: /1 comment on Plan/ }));
@@ -312,7 +311,7 @@ describe('AppSurface controls and keys', () => {
     })!;
     let refuse = false;
     const { client, viewAction } = fakeClient([gallery], async (action) => {
-      if (refuse) throw new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' });
+      if (refuse) return { is_accepted: false, reason: 'disconnected' };
       return accepted(action);
     });
     const reveal = vi.fn();
@@ -635,7 +634,7 @@ describe('a disconnected app', () => {
 
     it('says Disconnected in the opened app when the host refuses the connect', async () => {
       const { client, viewAction } = fakeClient([away()], async () => {
-        throw new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' });
+        return { is_accepted: false, reason: 'disconnected' };
       });
       render(row(client, [away()], 'away-refused'));
       fireEvent.click(screen.getByRole('button', { name: 'Open app counter' }));
@@ -696,7 +695,7 @@ describe('AppSurface focus, names and owner loss', () => {
   it('goes read only on a disconnected refusal and comes back live on the adopting open', async () => {
     const { hub, emit } = fakeHub();
     const { client, viewAction } = fakeClient([wizard(3), wizard(3, { is_stale: true })], async () => {
-      throw new GatewayError(409, 'disconnected', { is_accepted: false, reason: 'disconnected' });
+      return { is_accepted: false, reason: 'disconnected' };
     });
     open(client, hub);
     await screen.findByRole('toolbar', { name: 'App keys' });

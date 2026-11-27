@@ -153,7 +153,8 @@
    :queue-paused :queue-focus :queue-removed :pastes :paste-counter :image-counter :attachments
    :attachment-feedback :attachment-focus? :attachment-index :loading? :cancel-token :cancelling?
    :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
-   :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :detail-expansions :mouse-selection
+   :turn-start-ms :liveness-probed-at-ms :gateway-resynced-at-ms :live-trace-repair
+   :detail-expansions :mouse-selection
    :session-model-pref :human-input :human-input-queue :human-input-read :live-views :live-viewer-id
    :live-viewer-search :app-views :live-panel
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
@@ -204,6 +205,7 @@
    ;; Probe stamps throttle gateway checks for each tab's turn.
    :liveness-probed-at-ms nil
    :gateway-resynced-at-ms nil
+   :live-trace-repair nil
    :detail-expansions {}
    :mouse-selection nil
    :session-model-pref nil
@@ -2835,7 +2837,7 @@
 
 (def ^:private active-turn-state-keys
   [:loading? :cancelling? :cancelling-at-ms :progress :turn-start-ms :cancel-token :gateway-turn-id
-   :live-turn-client-id :liveness-probed-at-ms])
+   :live-turn-client-id :liveness-probed-at-ms :live-trace-repair])
 
 (defn- session-running?
   [session]
@@ -2889,7 +2891,8 @@
     :gateway-turn-id nil
     :live-turn-client-id nil
     :cancelling-at-ms nil
-    :liveness-probed-at-ms nil))
+    :liveness-probed-at-ms nil
+    :live-trace-repair nil))
 
 (defn- reconcile-in-flight-state
   [next-db previous-db session]
@@ -7150,10 +7153,12 @@
               ;; release the wait; a late result cannot clear a newer turn.
               (fn [db [_ cancel-key result]]
                 (let [accepted?
-                      (and (map? result) (not (:error result)))
+                      (and (map? result) (not (:error result)) (not (false? (get result "accepted"))))
 
                       terminal?
-                      (contains? gateway-terminal-cancel-errors (:error result))]
+                      (or (contains? gateway-terminal-cancel-errors (:error result))
+                          (and (false? (get result "accepted"))
+                               (contains? #{"not_running" "no_running_turn"} (get result "reason"))))]
 
                   (if (and cancel-key
                            (:cancelling? db)
@@ -7162,7 +7167,7 @@
                     (let [workspace-id (current-tab-id db)]
                       {:db (settle-cancelled-turn db)
                        :fx (cond-> []
-                             (some :mine? (:pending-sends (db-for-tab db workspace-id)))
+                             (and accepted? (some :mine? (:pending-sends (db-for-tab db workspace-id))))
                              (conj [:dispatch [:restore-pending-to-input workspace-id]]))})
                     {:db db}))))
 
@@ -7268,37 +7273,42 @@
                   (>= (- now (long (or (:liveness-probed-at-ms tab) 0)))
                       (long stream-silence-ms))))))
 
+(defn- pending-live-trace-repair
+  [tab]
+  (let [{:keys [sid tid] :as repair} (:live-trace-repair tab)]
+    (when (and repair (:loading? tab)
+               (= sid (get-in tab [:session :id]))
+               (= tid (:gateway-turn-id tab)))
+      repair)))
+
+(defn- start-live-trace-read
+  [db tab-id repair ^long now]
+  {:db (update-tab db tab-id #(assoc % :live-trace-repair
+                                   (assoc repair :reading? true :retry-at (+ now 500))))
+   :fx [[:read-live-trace tab-id repair]]})
+
 (reg-event-fx
   :turn-liveness-tick
-  ;; If stream completion is missed, query gateway truth and settle through the
-  ;; normal writer. This heartbeat is a transport-independent last resort.
+  ;; Settle missed completions and retry failed trace repairs independently of SSE.
   (fn [db [_ now-ms]]
-    (let [now
-          (or now-ms (System/currentTimeMillis))
+    (let [now (long (or now-ms (System/currentTimeMillis)))]
+      (reduce (fn [{:keys [db fx] :as acc} tab-id]
+                (let [tab (db-for-tab db tab-id)
+                      sid (get-in tab [:session :id])
+                      repair (pending-live-trace-repair tab)]
+                  (cond
+                    (and repair (not (:reading? repair)) (<= (long (:retry-at repair)) now))
+                    (let [next (start-live-trace-read db tab-id repair now)]
+                      {:db (:db next) :fx (into (or fx []) (:fx next))})
 
-          due
-          (filterv (fn [tab-id]
-                     (let [tab
-                           (db-for-tab db tab-id)
+                    (and sid (turn-liveness-probe-due? tab now (vis/session-stream-seen-ms sid)))
+                    {:db (update-tab db tab-id #(assoc % :liveness-probed-at-ms now))
+                     :fx (conj (or fx []) [:probe-turn-liveness tab-id sid
+                                           (:gateway-turn-id tab) (:live-turn-client-id tab)])}
 
-                           sid
-                           (get-in tab [:session :id])]
-
-                       (and (some? sid)
-                            (turn-liveness-probe-due? tab now (vis/session-stream-seen-ms sid)))))
-            (loading-tab-ids db))]
-
-      (if (empty? due)
-        {:db db}
-        {:db (reduce (fn [acc tab-id]
-                       (update-tab acc tab-id #(assoc % :liveness-probed-at-ms now)))
-                     db
-                     due)
-         :fx (mapv (fn [tab-id]
-                     (let [tab (db-for-tab db tab-id)]
-                       [:probe-turn-liveness tab-id (get-in tab [:session :id])
-                        (:gateway-turn-id tab) (:live-turn-client-id tab)]))
-                   due)}))))
+                    :else acc)))
+              {:db db}
+              (loading-tab-ids db)))))
 
 (defn- gateway-resync-probe-due?
   "True when a tab's in-flight turn must be re-asked of the gateway RIGHT NOW,
@@ -7321,39 +7331,88 @@
                       (>= (- (long now-ms) (long resynced-ms))
                           (long turn-liveness-probe-interval-ms)))))))
 
+(reg-event-db :repair-transcript
+              (fn [db [_ tab-id sid messages]]
+                (if (= (str sid) (str (get-in (db-for-tab db tab-id) [:session :id])))
+                  (update-tab db tab-id
+                              (fn [tab]
+                                (let [live-id (:gateway-turn-id tab)
+                                      repaired (if (:loading? tab)
+                                                 (remove #(= live-id (:session-turn-id %)) messages)
+                                                 messages)
+                                      ids (into #{} (keep :session-turn-id) repaired)]
+                                  (if (empty? ids)
+                                    tab
+                                    (let [[older tail] (split-with #(not (contains? ids (:session-turn-id %)))
+                                                                  (:messages tab))]
+                                      (assoc tab :messages
+                                             (into (into (vec older) repaired)
+                                                   (remove #(contains? ids (:session-turn-id %)) tail))))))))
+                  db)))
+
+(defn- merge-repaired-trace
+  "Use the snapshot for missing data and keep tracker changes since `before`."
+  [snapshot before live]
+  (let [index (fn [rows]
+                (into (sorted-map) (map-indexed (fn [i row] [(or (:position row) i) row])) rows))
+        before (index before)]
+    (->> (reduce-kv (fn [rows position row]
+                      (if-let [stored (get rows position)]
+                        (let [old (get before position)
+                              merged (reduce-kv
+                                       (fn [merged k v]
+                                         (cond
+                                           (= k :forms) (assoc merged k (merge-repaired-trace
+                                                                          (:forms stored) (:forms old) v))
+                                           (and (contains? stored k) (= (get old k) v)) merged
+                                           :else (assoc merged k v)))
+                                       stored row)]
+                          (assoc rows position merged))
+                        (assoc rows position row)))
+                    (index snapshot) (index live))
+         vals
+         vec)))
+
+(reg-event-db :repair-live-trace
+              (fn [db [_ tab-id repair rows]]
+                (let [pending (pending-live-trace-repair (db-for-tab db tab-id))]
+                  (if (and pending (= (:token pending) (:token repair)))
+                    (update-tab db tab-id
+                                (fn [tab]
+                                  (if (nil? rows)
+                                    (assoc-in tab [:live-trace-repair :reading?] false)
+                                    (let [live (get-in tab [:progress :iterations])
+                                          raw (get-in tab [:progress :tracker-iterations] live)
+                                          repaired (merge-repaired-trace rows (:before repair) live)]
+                                      (-> tab
+                                          (assoc :live-trace-repair nil)
+                                          (assoc-in [:progress :repaired-iterations] repaired)
+                                          (assoc-in [:progress :repair-baseline] raw)
+                                          (assoc-in [:progress :iterations]
+                                                    (retain-activity-reads live repaired)))))))
+                    db))))
+
 (reg-event-fx
   :sync-gateway-ready
-  ;; On subscription readiness, probe only when the daemon and tab disagree about the
-  ;; live turn. Old daemons without state still probe; throttle reconnect probes on their
-  ;; own stamp so failed attempts do not suppress recovery.
   (fn [db [_ tab-id chunk now-ms]]
-    (let [now
-          (or now-ms (System/currentTimeMillis))
+    (let [now (or now-ms (System/currentTimeMillis))
+          tab-id (or tab-id (current-tab-id db))
+          db (sync-session-goal db tab-id chunk)
+          tab (db-for-tab db tab-id)
+          sid (get-in tab [:session :id])
+          painted (:gateway-turn-id tab)
+          agrees? (and (:is-state-known chunk) painted (= painted (:gateway-turn-id chunk)))]
+      (cond
+        (and agrees? (:is-repair chunk) (:loading? tab) sid)
+        (start-live-trace-read db tab-id {:sid sid :tid painted :token (Object.)
+                                          :before (get-in tab [:progress :iterations])} now)
 
-          tab-id
-          (or tab-id (current-tab-id db))
-
-          db
-          (sync-session-goal db tab-id chunk)
-
-          tab
-          (db-for-tab db tab-id)
-
-          painted
-          (:gateway-turn-id tab)
-
-          agrees?
-          (boolean (and (:is-state-known chunk) painted (= painted (:gateway-turn-id chunk))))]
-
-      (if (or agrees? (not (gateway-resync-probe-due? tab now)) (nil? (get-in tab [:session :id])))
+        (or agrees? (not (gateway-resync-probe-due? tab now)) (nil? sid))
         {:db db}
-        {:db (update-tab db
-                         tab-id
-                         #(assoc %
-                            :gateway-resynced-at-ms now
-                            :liveness-probed-at-ms now))
-         :fx [[:probe-turn-liveness tab-id (get-in tab [:session :id]) painted
-               (:live-turn-client-id tab)]]}))))
+
+        :else
+        {:db (update-tab db tab-id #(assoc % :gateway-resynced-at-ms now :liveness-probed-at-ms now))
+         :fx [[:probe-turn-liveness tab-id sid painted (:live-turn-client-id tab)]]}))))
 
 (defn any-background-loading?
   "True when a non-active tab has a turn in flight."
@@ -7364,20 +7423,20 @@
                    (:tab-locals db)))))
 
 (reg-event-db :set-progress-iterations
-              ;; Every frame restarts at the record's first page. What the reader
-              ;; already read stays, so an open Activity never shrinks or reflows.
+              ;; Keep pages already read and history repaired after an elision.
               (fn [db [_ a b]]
                 (let [[workspace-id iterations] (if (keyword? a) [a b] [(current-tab-id db) a])]
-                  (update-tab db
-                              workspace-id
+                  (update-tab db workspace-id
                               (fn [workspace]
                                 (if-not (:loading? workspace)
                                   workspace
-                                  (cond-> (update-in workspace
-                                                     [:progress :iterations]
-                                                     retain-activity-reads
-                                                     (or iterations []))
-                                    (seq iterations) (update :progress dissoc :extension-wait))))))))
+                                  (let [{:keys [repaired-iterations repair-baseline]} (:progress workspace)
+                                        rows (if repaired-iterations
+                                               (merge-repaired-trace repaired-iterations repair-baseline iterations)
+                                               (or iterations []))]
+                                    (cond-> (update-in workspace [:progress :iterations] retain-activity-reads rows)
+                                      repaired-iterations (assoc-in [:progress :tracker-iterations] iterations)
+                                      (seq iterations) (update :progress dissoc :extension-wait)))))))))
 
 (reg-event-db :set-extension-readiness
               (fn [db [_ workspace-id wait]]
@@ -8450,6 +8509,15 @@
                      t))
                  (vis/gateway-list-turns sid)))
        (catch Throwable _ nil)))
+
+(reg-fx :read-live-trace
+        (fn [tab-id {:keys [sid tid] :as repair}]
+          (gateway-queue-io!
+            (fn []
+              (let [trace (try (some-> (vis/gateway-turn-trace sid tid)
+                                       (chat/iteration-rows->trace false))
+                               (catch Exception _ nil))]
+                (dispatch [:repair-live-trace tab-id repair trace]))))))
 
 (reg-fx :probe-turn-liveness
         ;; Ask the gateway registry whether the turn this tab still paints as live has

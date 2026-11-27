@@ -305,7 +305,10 @@ class Council:
         body = {"after": after} if after is not None else {}
         validate("gateway", "council_watch_request", body)
 
+        immediate = False
+
         def submit():
+            nonlocal immediate
             row = validate(
                 "gateway",
                 "council_watch_task",
@@ -316,9 +319,12 @@ class Council:
             watch = _CouncilWatch(self._session, row["id"], row["kind"])
             if "value" in row:
                 watch.set_result(watch._result_from(row))
+                immediate = True
             return [watch]
 
         (watch,) = _admit(self._session, submit)
+        if immediate:
+            watch._acknowledge()
         return watch
 
     def run(self, tasks: list[str | dict[str, Any]]) -> list[SubagentTask]:

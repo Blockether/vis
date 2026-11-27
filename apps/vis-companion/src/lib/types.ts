@@ -1766,6 +1766,10 @@ export interface RecordingTranscription {
 }
 
 export interface SseEvent {
+  event_type?: string;
+  reason?: string;
+  /** The ready snapshot was read after a stream gap, not after a new subscription. */
+  is_repair?: boolean;
   extension_wait?: ExtensionWait;
   transcription?: RecordingTranscription;
   type: string;

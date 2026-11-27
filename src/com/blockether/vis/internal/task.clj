@@ -437,8 +437,8 @@
                  (let [entries (assoc-in entries [id :acknowledged?] true)
                        expired (->> entries vals (filter :acknowledged?) (sort-by :number >)
                                     (drop receipt-cap) (map #(get-in % [:row :id])))]
-                   (apply dissoc entries expired))))))
-    nil))
+                   (apply dissoc entries expired))))
+        true))))
 
 (defn- foreground-wait? [{:keys [detached? observation?]}]
   (not (or detached? observation?)))

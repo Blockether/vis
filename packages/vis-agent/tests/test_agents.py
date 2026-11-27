@@ -83,11 +83,16 @@ def test_council_changed_reads_an_already_open_child_request():
                 "kind": "tool",
                 "value": request,
             }
+        if method == "POST" and route.endswith("/tasks/t1/acknowledge"):
+            return 200, {"acknowledged": True}
         raise AssertionError(route)
 
-    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         watch = client.session("leader").council().changed(after="previous")
         assert watch.done() and watch.result() == request
+        assert [path for method, path, _, _ in calls if method == "POST"][-1].endswith(
+            "/tasks/t1/acknowledge"
+        )
 
 
 def test_council_changed_observes_a_later_request():
@@ -107,12 +112,17 @@ def test_council_changed_observes_a_later_request():
             return _task_page([row])
         if route.endswith("/tasks/t1"):
             return 200, {"task": row, "value": request}
+        if method == "POST" and route.endswith("/tasks/t1/acknowledge"):
+            return 200, {"acknowledged": True}
         raise AssertionError(route)
 
-    with endpoint(respond) as (url, _), GatewayClient(url) as client:
+    with endpoint(respond) as (url, calls), GatewayClient(url) as client:
         watch = client.session("leader").council().changed()
         assert wait([watch], timeout=2).done == {watch}
         assert watch.result() == request
+        assert [path for method, path, _, _ in calls if method == "POST"][-1].endswith(
+            "/tasks/t1/acknowledge"
+        )
 
 
 def test_managed_team_transport():
@@ -459,7 +469,11 @@ def test_cancel_observes_host_settlement_and_sends_one_mutation(accepted):
             )
         if path.endswith("/cancel"):
             cancelled.set()
-            return 200, {"requested": accepted}
+            return 200, (
+                {"requested": True}
+                if accepted
+                else {"requested": False, "reason": "already_requested"}
+            )
         state = ("cancelled" if accepted else "done") if settled.is_set() else "running"
         return 200, task_status(
             "t1",

@@ -1511,7 +1511,7 @@
    gateway turn id. A session is shared, so an unaddressed cancel would kill
    whatever another channel happens to be running. Returns the parsed body
    (`{\"status\" \"cancelling\", \"turn_id\" tid}`); throws on HTTP error (409 when
-   the session is idle or the running turn is someone else's)."
+   the running turn is someone else's). An idle session returns `accepted: false`."
   [sid owner-key]
   (send-json! "POST"
               (str "/v1/sessions/" (enc sid) "/cancel-current")
@@ -1943,6 +1943,11 @@
 
 (defn current-seq [sid] (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/seq")) "seq"))
 
+(defn session-events-snapshot
+  [sid]
+  (first (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/events-since?snapshot=true"))
+              "events")))
+
 (defn events-since
   [sid cursor]
   (get (send-json! "GET"
@@ -2066,7 +2071,7 @@
                                               @forms
                                               event
                                               gateway-contract/turn-terminal-event-types)]
-                     (vreset! forms next-forms)
+                     (vreset! forms (if (= "event.elided" (get event "type")) {} next-forms))
                      event))
           watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
 
@@ -2346,7 +2351,9 @@
    silently never delivers the `turn.completed` the TUI is waiting for. The echo
    is the documented heal; the companion client already honours it (gateway.ts)."
   [cursor-atom event]
-  (if (= "subscription.ready" (get event "type"))
+  (if (or (= "subscription.ready" (get event "type"))
+          (and (= "event.elided" (get event "type"))
+               (= "subscription.ready" (get event "event_type"))))
     (let [cursor (get event "cursor")]
       (when (number? cursor) (reset! cursor-atom (long cursor))))
     (when-let [s (get event "seq")]
@@ -2616,12 +2623,23 @@
                     cursor
                     cursor*
                     (fn [event]
-                      (if (= "subscription.ready" (get event "type"))
-                        (when-not (= (str (get event "current_turn_id")) (str wanted-turn-id))
-                          (when-let [settled (gateway-contract/settled-turn-event
-                                               (get-turn sid wanted-turn-id) wanted-turn-id)]
-                            [:terminal settled]))
-                        (let [[action event'] (sse-event-action event wanted-turn-id)]
+                      (cond
+                         (= "event.elided" (get event "type"))
+                         (do (when on-event (on-event event))
+                             (when (or (nil? (get event "turn_id"))
+                                       (= (str wanted-turn-id) (get event "turn_id")))
+                               (when-let [settled (gateway-contract/settled-turn-event
+                                                    (get-turn sid wanted-turn-id) wanted-turn-id)]
+                                 [:terminal settled])))
+
+                         (= "subscription.ready" (get event "type"))
+                         (when-not (= (str (get event "current_turn_id")) (str wanted-turn-id))
+                           (when-let [settled (gateway-contract/settled-turn-event
+                                                (get-turn sid wanted-turn-id) wanted-turn-id)]
+                             [:terminal settled]))
+
+                         :else
+                         (let [[action event'] (sse-event-action event wanted-turn-id)]
                           (case action
                             :terminal
                             (do (when on-event (on-event event)) [:terminal event'])

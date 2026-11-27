@@ -128,8 +128,6 @@ class GatewayError(RuntimeError):
 
     Decision input-limit errors also expose ``input_tokens`` and ``max_input_tokens``.
     These are ``None`` when the gateway does not supply valid numeric diagnostics.
-    A refused view action, such as a press on a disconnected app, has its
-    ``reason`` token as ``code``.
     """
 
     def __init__(
@@ -429,6 +427,11 @@ class Event:
         else:
             _field(value, "seq", int)
         activity = None
+        if event_type == "event.elided":
+            try:
+                validate("gateway", "event_elided_payload", value)
+            except ValueError:
+                raise ProtocolError("invalid elision event") from None
         if event_type == "block.activity":
             _field(value, "iteration", int)
             _field(value, "form_index", int)
@@ -1106,7 +1109,7 @@ class EngineClient(ABC):
         return report
 
     def _job_events(self, route, job_id, event_name, snapshot, **options):
-        return JobEvents(self, route, job_id, event_name, **options)
+        return JobEvents(self, route, job_id, event_name, snapshot=snapshot, **options)
 
     def speech_events(self, job_id: str, **options) -> JobEvents:
         """Synthesis snapshots over SSE (HTTP) or bounded polling (local)."""
@@ -1887,9 +1890,9 @@ class Session:
 
         `values` supplies the action-specific fields of the operator action
         schema. The request is validated before submission. For the common case
-        of submitting input values, use `answer`. A refused action of a closed,
-        disconnected or changed app raises `GatewayError` with status 409 and the
-        refusal `reason` as `code`, for example `disconnected`.
+        of submitting input values, use `answer`. A refused action returns
+        `is_accepted: false` and a `reason`, such as `stale_revision`. A conflict
+        can also return the current `seq` or `revision` for a retry.
         """
         body = {**values, "action": action}
         validate("view", "operator_action", body)
@@ -2086,6 +2089,8 @@ class Turn:
         while True:
             events = self.session.events(cursor=cursor)
             events._deadline = end
+            if isinstance(events, _SessionPollingEvents):
+                events._repair_interval = _POLL_MAX_SECONDS
             is_progress = False
             try:
                 with events:
@@ -2103,8 +2108,15 @@ class Turn:
                                 own and reason == "turn-deleted"
                             ):
                                 raise GatewayError(404, reason)
-                            repair = own and (
-                                reason == "sent" or event.type in _TURN_TERMINAL_EVENTS
+                            repair = (
+                                event.type == "event.elided"
+                                and (own or event.turn_id is None)
+                            ) or (
+                                own
+                                and (
+                                    reason == "sent"
+                                    or event.type in _TURN_TERMINAL_EVENTS
+                                )
                             )
                         cursor = events.cursor
                         if repair:
@@ -2211,6 +2223,9 @@ class _ActivityStreamDecoder:
 
     def __call__(self, event):
         if not isinstance(event, dict):
+            return event
+        if event.get("type") == "event.elided":
+            self._forms.clear()
             return event
         turn = (event.get("session_id"), event.get("turn_id"))
         activity = event.get("activity")
@@ -2586,16 +2601,28 @@ class Events(_EventStream["StreamEvent"]):
             raise ProtocolError("unexpected event session")
         if name is not None and name != event.type:
             raise ProtocolError("event name disagrees with payload")
-        seq = event.cursor if event.type == "subscription.ready" else event.seq
+        reset = event.type == "subscription.ready" or (
+            event.type == "event.elided" and event.cursor is not None
+        )
+        seq = event.cursor if reset else event.seq
         assert seq is not None  # Event.from_wire requires the field of each type.
-        if event.type == "subscription.ready" or seq > self.cursor:
+        if reset or seq > self.cursor:
             self.cursor = seq
+            return event
+        if (
+            seq == self.cursor
+            and event.type == "event.elided"
+            and event.data["event_type"] == "replay"
+        ):
             return event
         return None
 
 
 class _SessionPollingEvents(_PollingEvents["StreamEvent"], Events):
     """Use the session journal for stdio and application-owned gateway callbacks."""
+
+    _repair_interval: float | None = None
+    _next_repair = 0.0
 
     def _pump(self):
         self.client._pump_client_extensions(self.session.id)
@@ -2606,7 +2633,28 @@ class _SessionPollingEvents(_PollingEvents["StreamEvent"], Events):
         )
         if not isinstance(data, dict) or not isinstance(data.get("events"), list):
             raise ProtocolError("malformed session event page")
-        return [(None, value) for value in data["events"]]
+        for value in data["events"]:
+            yield None, value
+        if "cursor" in data:
+            self.cursor = max(self.cursor, _field(data, "cursor", int))
+            self._next_repair = 0.0
+        elif (interval := self._repair_interval) is not None:
+            now = time.monotonic()
+            if now < self._next_repair:
+                return
+            # A Turn waiter checks its record while an old gateway cannot prove
+            # continuity. Plain streams do not invent events for quiet pages.
+            self._next_repair = now + interval
+            yield (
+                None,
+                {
+                    "type": "event.elided",
+                    "event_type": "replay",
+                    "reason": "replay_unavailable",
+                    "session_id": self.session.id,
+                    "seq": self.cursor,
+                },
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2630,8 +2678,9 @@ class JobEvents(_EventStream[JobEvent]):
     that the contract defines.
     """
 
-    def __init__(self, client, route, job_id, event_name, **options):
+    def __init__(self, client, route, job_id, event_name, *, snapshot=None, **options):
         self._route, self._job_id, self._event_name = route, job_id, event_name
+        self._snapshot = snapshot
         self._previous = None
         super().__init__(client, **options)
 
@@ -2639,8 +2688,17 @@ class JobEvents(_EventStream[JobEvent]):
         return self._route, None
 
     def _accept(self, name, value):
-        if name != self._event_name or _field(value, "id", str) != self._job_id:
+        if name != self._event_name or not isinstance(value, dict):
             raise ProtocolError("unexpected job event")
+        elided = value.get("is_elided") is True
+        if ("id" in value or not elided) and _field(value, "id", str) != self._job_id:
+            raise ProtocolError("unexpected job event")
+        if elided:
+            if self._snapshot is None:
+                raise ProtocolError("no snapshot reader for elided job")
+            value = self._snapshot()
+            if _field(value, "id", str) != self._job_id:
+                raise ProtocolError("unexpected job snapshot")
         event = JobEvent(
             name,
             value["id"],

@@ -2098,6 +2098,15 @@
                                 (get-in acked [:messages 1 :terminal-pending :trace])))
                      (expect (input/input-empty? (:input acked)))
                      (expect (nil? (:submitted-input acked)))))
+               (it "does not retract queued sends when the gateway refuses a late cancel"
+                   (let [queued [{:turn-id "queued-turn" :mine? true :text "next"}]
+                         result ((handler :gateway-cancel-result)
+                                 (assoc (cancelling-db []) :pending-sends queued)
+                                 [:gateway-cancel-result cancel-key
+                                  {"accepted" false "reason" "not_running"}])]
+                     (expect (false? (:cancelling? (:db result))))
+                     (expect (= queued (:pending-sends (:db result))))
+                     (expect (empty? (:fx result)))))
                (it "settles the cancelled prompt when the cancel self-heals"
                    (let [healed (:db ((handler :cancel-self-heal-tick)
                                        (cancelling-db [])
@@ -5498,6 +5507,42 @@
         (expect (nil? (state/background-task-dock (assoc ended :session {:id "s2"})))))))
 
 (defdescribe sync-gateway-ready-test
+             (it "repairs a still-running trace without losing newer tracker updates"
+                 (let [before [{:position 1 :assistant-prose "before"}]
+                       during [{:position 1 :assistant-prose "newer"}]
+                       later [{:position 1 :assistant-prose "latest"}]]
+                   (reset! state/app-db (terminal-test-db {:progress {:iterations before}}))
+                   (with-redefs [vis/gateway-turn-trace
+                                 (fn [_ _]
+                                   (state/dispatch [:set-progress-iterations during])
+                                   [{"position" 1 "assistant_prose" "Recovered."}
+                                    {"position" 2 "assistant_prose" "Stale."}])]
+                     (gateway-ready! (assoc (ready-chunk "t1") :is-repair true) [] 100))
+                   (expect (= ["Recovered." "newer"]
+                              (mapv :assistant-prose (get-in @state/app-db [:progress :iterations]))))
+                   (state/dispatch [:set-progress-iterations later])
+                   (expect (= ["Recovered." "latest"]
+                              (mapv :assistant-prose (get-in @state/app-db [:progress :iterations]))))))
+             (it "retries a failed live trace read without another repair marker"
+                 (let [reads (atom 0)]
+                   (reset! state/app-db (terminal-test-db {}))
+                   (with-redefs [vis/gateway-turn-trace
+                                 (fn [_ _]
+                                   (if (= 1 (swap! reads inc))
+                                     (throw (ex-info "Temporary trace failure" {}))
+                                     [{"position" 1 "assistant_prose" "Recovered on retry."}]))]
+                     (with-gateway-stubs
+                       []
+                       #(do
+                          (state/dispatch [:sync-gateway-ready "s1" (assoc (ready-chunk "t1") :is-repair true) 100])
+                          (expect (= 1 @reads))
+                          (state/dispatch [:turn-liveness-tick 101])
+                          (expect (= 1 @reads))
+                          (state/dispatch [:turn-liveness-tick 2000])
+                          (expect (= ["Recovered on retry."]
+                                     (mapv :assistant-prose (get-in @state/app-db [:progress :iterations]))))
+                          (state/dispatch [:turn-liveness-tick 3000])
+                          (expect (= 2 @reads)))))))
              ;; The socket dropped, the daemon finished the turn anyway, and its
              ;; `turn.completed` died with the stream. On resubscribe the server states what
              ;; it is running RIGHT NOW; if that disagrees with the bubble breathing here,

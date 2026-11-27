@@ -1669,7 +1669,8 @@
           "response": "json",
           "response_schema": "turn_cancel",
           "statuses": {
-            "202": {}
+            "200": {"schema": "turn_cancel_refusal"},
+            "202": {"schema": "turn_cancel_success"}
           },
           "request_schema": "turn_cancel_current",
           "tag": "mutation"
@@ -1848,6 +1849,19 @@
         }
       },
       "path": "/v1/sessions/:sid/tasks/:task-id/cancel"
+    },
+    {
+      "audience": "sdk",
+      "operations": {
+        "post": {
+          "request": "none",
+          "response": "json",
+          "extension": "background",
+          "response_schema": "task_acknowledgement",
+          "tag": "mutation"
+        }
+      },
+      "path": "/v1/sessions/:sid/tasks/:task-id/acknowledge"
     },
     {
       "audience": "sdk",
@@ -2035,6 +2049,12 @@
           "extension": "background",
           "response_schema": "session_events",
           "parameters": [
+            {
+              "name": "snapshot",
+              "in": "query",
+              "description": "Return the current subscription state without a replay.",
+              "schema": {"type": "boolean"}
+            },
             {
               "name": "tasks",
               "in": "query",
@@ -2830,7 +2850,8 @@
           "extension": "created",
           "response_schema": "turn_cancel",
           "statuses": {
-            "202": {}
+            "200": {"schema": "turn_cancel_refusal"},
+            "202": {"schema": "turn_cancel_success"}
           },
           "tag": "mutation"
         }
@@ -5859,8 +5880,32 @@
                 },
                 "required": ["side", "snippet", "at"]
               }
+            },
+            "rank": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            "is_in_title": {
+              "type": "boolean"
+            },
+            "is_in_request": {
+              "type": "boolean"
+            },
+            "is_in_reply": {
+              "type": "boolean"
+            },
+            "is_in_thinking": {
+              "type": "boolean"
+            },
+            "request_snippet": {
+              "type": ["string", "null"]
+            },
+            "reply_snippet": {
+              "type": ["string", "null"]
             }
-          }
+          },
+          "required": ["hits", "rank", "is_in_title", "is_in_request", "is_in_reply", "is_in_thinking"]
         }
       },
       "required": [
@@ -6965,6 +7010,10 @@
         {
           "const": "context.updated",
           "x-vis-payload": "context_updated_payload"
+        },
+        {
+          "const": "event.elided",
+          "x-vis-payload": "event_elided_payload"
         },
         {
           "const": "extensions.reloaded",
@@ -8879,6 +8928,16 @@
       ]
     },
     "turn_cancel": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/turn_cancel_success"
+        },
+        {
+          "$ref": "#/$defs/turn_cancel_refusal"
+        }
+      ]
+    },
+    "turn_cancel_success": {
       "type": "object",
       "properties": {
         "status": {
@@ -8886,11 +8945,57 @@
             "cancelling",
             "deleted"
           ]
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "also_cancelled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
         "status"
       ]
+    },
+    "turn_cancel_refusal": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "const": false
+        },
+        "reason": {
+          "enum": [
+            "no_running_turn",
+            "not_running"
+          ]
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "turn_status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accepted",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "task_acknowledgement": {
+      "type": "object",
+      "properties": {
+        "acknowledged": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "acknowledged"
+      ],
+      "additionalProperties": false
     },
     "session_block_request": {
       "type": "object",
@@ -8969,6 +9074,15 @@
           "items": {
             "type": "object",
             "properties": {
+              "turn_id": {
+                "type": "string"
+              },
+              "iterations": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
               "council": {
                 "anyOf": [
                   {
@@ -8979,7 +9093,11 @@
                   }
                 ]
               }
-            }
+            },
+            "required": [
+              "turn_id",
+              "iterations"
+            ]
           }
         },
         "total": {
@@ -10581,6 +10699,9 @@
         "is_accepted": {
           "type": "boolean"
         },
+        "seq": {"type": "integer", "minimum": 0},
+        "revision": {"type": "string"},
+        "node_id": {"type": "string"},
         "reason": {
           "enum": [
             null,
@@ -12863,6 +12984,18 @@
         "session_id"
       ],
       "additionalProperties": false
+    },
+    "event_elided_payload": {
+      "type": "object",
+      "description": "A stream could not send a frame. Advance to its sequence and read the affected state again.",
+      "properties": {
+        "event_type": {"type": "string"},
+        "reason": {"enum": ["frame_size", "replay_unavailable"]},
+        "view_id": {"type": "string"},
+        "scope": {"const": "fleet"},
+        "cursor": {"type": "integer", "minimum": 0, "description": "Reset to this cursor when the omitted frame was subscription.ready."}
+      },
+      "required": ["event_type", "reason"]
     },
     "subscription_ready_payload": {
       "type": "object",

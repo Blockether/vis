@@ -2962,6 +2962,15 @@ export function useLiveViews(
       void attempt();
     };
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
+      if (event.type === 'event.elided') {
+        const type = event.event_type;
+        if (type === 'replay' || type === 'view.open' || type === 'view.patch' || type === 'view.close') {
+          flushPatches();
+          reload();
+          if (type === 'view.close' && typeof event.view_id === 'string') revealRecord(event.view_id);
+        }
+        return;
+      }
       if (!isLiveViewEvent(event)) return;
       const viewId = typeof event.view_id === 'string' ? event.view_id : '';
       if (event.type === VIEW_OPEN_EVENT) {

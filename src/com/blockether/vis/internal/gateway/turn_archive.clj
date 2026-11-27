@@ -48,16 +48,21 @@
                             :data {:error-class (.getName (class e)) :directory directory}}))))
            (create)))))
 
-(defn write!
-  "Store a terminal projection before publishing its small registry descriptor."
-  [turn]
+(defn write-frozen!
+  "Store bytes before publishing their registry descriptor."
+  [^bytes frozen]
   (let [path (archive-file!)]
     ;; Resolve the byte-array overload statically; native reflection cannot call Files/write.
     (try (Files/write path
-                      ^bytes (nippy/freeze turn)
+                      frozen
                       ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
          (str path)
          (catch Throwable t (Files/deleteIfExists path) (throw t)))))
+
+(defn write!
+  "Store a terminal projection before publishing its small registry descriptor."
+  [turn]
+  (write-frozen! (nippy/freeze turn)))
 
 (defn read-turn
   "Read exactly one archived projection. Missing or damaged archives fail explicitly."

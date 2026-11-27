@@ -46,7 +46,7 @@
                    (fn [sid registry]
                      (binding [store/*inline-max-bytes* 0]
                        (state/append-event! sid "block.output" {:output "first"})
-                       (with-redefs [archive/write! (fn [_]
+                       (with-redefs [archive/write-frozen! (fn [_]
                                                       (throw (java.io.IOException. "disk full")))]
                          (state/append-event! sid "block.output" {:output "lost"}))
                        (expect (= 2 (state/replay-floor sid)))
@@ -85,7 +85,7 @@
   (it "replays a small frame without a file and releases its bytes when it rotates"
       (with-replay (fn [sid _]
                      (let [start (store/inline-total)]
-                       (with-redefs [archive/write! (fn [_]
+                       (with-redefs [archive/write-frozen! (fn [_]
                                                       (throw (java.io.IOException. "no file")))]
                          (state/append-event! sid "block.output" {:output "first"}))
                        (expect (= ["first"] (mapv #(get % "output") (state/events-since sid 0))))
@@ -328,3 +328,60 @@
                   (patch! i))
                 (expect (= (repeat 6 "view.patch")
                            (mapv #(get % "type") (state/events-since sid 0)))))))))))
+
+(defdescribe bounded-replay-page-test
+  (it "pages Task settlements by bytes and count before loading bodies"
+      (with-replay
+        (fn [sid _]
+          (with-redefs-fn {#'state/EVENT_RING_MAX (delay 12)}
+            (fn []
+              (doseq [n (range 1 4)]
+                (state/append-event! sid "task.ended" {:text (apply str (repeat 300 (str n)))})
+                (state/append-event! sid "block.output" {:output "other"}))
+              (let [loaded (atom [])
+                    read-event store/read-event]
+                (with-redefs [store/read-event (fn [descriptor]
+                                                 (swap! loaded conj (get descriptor "seq"))
+                                                 (read-event descriptor))]
+                  (binding [state/*replay-page-count* 8 state/*replay-page-bytes* 600]
+                    (let [{:keys [events cursor]} (state/task-events-since sid 0)]
+                      (expect (= [1] (mapv #(get % "seq") events) @loaded))
+                      (expect (= 1 cursor))))
+                  (binding [state/*replay-page-count* 1 state/*replay-page-bytes* 4096]
+                    (let [{:keys [events cursor]} (state/task-events-since sid 1)]
+                      (expect (= [3] (mapv #(get % "seq") events)))
+                      (expect (= [1 3] @loaded))
+                      (expect (= 3 cursor))
+                      (expect (= 6 (:cursor (state/task-events-since sid cursor)))))))))))))
+  (it "marks a polling cursor from an earlier gateway as unproven"
+      (with-replay
+        (fn [sid _]
+          (state/append-event! sid "block.output" {:output "one"})
+          (let [{:keys [events cursor]} (state/events-page sid 99 :full)
+                marker (first events)]
+            (expect (= 1 cursor (get marker "cursor") (get marker "seq")))
+            (expect (= "event.elided" (get marker "type")))
+            (expect (= "replay_unavailable" (get marker "reason")))
+            (expect (= {:events [] :cursor 1} (state/events-page sid cursor :full)))))))
+  (it "selects replay pages before loading their bodies"
+      (with-replay
+        (fn [sid _]
+          (with-redefs-fn {#'state/EVENT_RING_MAX (delay 8)}
+            (fn []
+              (doseq [text [(apply str (repeat 300 "a")) (apply str (repeat 300 "b")) "third"]]
+                (state/append-event! sid "block.output" {:output text}))
+              (let [loaded (atom [])
+                    read-event store/read-event
+                    {:keys [descriptors]} (state/subscribe-replay! sid "sink" (fn [_]) 0 :full)]
+                (with-redefs [store/read-event (fn [descriptor]
+                                                 (swap! loaded conj (get descriptor "seq"))
+                                                 (read-event descriptor))]
+                  (binding [state/*replay-page-count* 8 state/*replay-page-bytes* 550]
+                    (let [{:keys [events remaining]} (state/read-replay-page! sid descriptors)]
+                      (expect (= [1] (mapv #(get % "seq") events)))
+                      (expect (= [1] @loaded))
+                      (binding [state/*replay-page-count* 1 state/*replay-page-bytes* 4096]
+                        (let [{:keys [events remaining]} (state/read-replay-page! sid remaining)]
+                          (expect (= [2] (mapv #(get % "seq") events)))
+                          (expect (= [1 2] @loaded))
+                          (expect (= [3] (mapv #(get % "seq") remaining)))))))))))))))

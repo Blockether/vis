@@ -60,8 +60,8 @@ def test_gateway_routes_and_lease_policy_are_shared():
     lease = gateway["x-vis-client-lease"]
     assert 0 < lease["touch_ms"] < lease["keepalive_ms"] < lease["ttl_ms"]
     assert 0 < lease["keepalive_timeout_ms"] < lease["keepalive_ms"]
-    assert len(routes) == 185
-    assert len(operations) == 224
+    assert len(routes) == 186
+    assert len(operations) == 225
     assert all(
         operation["tag"] in {"observation", "mutation"} for operation in operations
     )
@@ -70,7 +70,7 @@ def test_gateway_routes_and_lease_policy_are_shared():
         == "observation"
     )
     assert Counter(operation["request"] for operation in operations) == {
-        "none": 135,
+        "none": 136,
         "json": 82,
         "binary": 7,
     }
@@ -418,6 +418,8 @@ class _Renderer:
             return self.foreign(target)
         if isinstance(node.get("const"), str):
             return f"Literal[{json.dumps(node['const'])}]"
+        if type(node.get("const")) is bool:
+            return f"Literal[{node['const']}]"
         if "const" in node:
             return _SCALARS.get(
                 type(node["const"]).__name__.replace("int", "integer"), "JSONValue"

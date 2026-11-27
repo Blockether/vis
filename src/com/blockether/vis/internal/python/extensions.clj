@@ -962,6 +962,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
    [:post "/v1/sessions/:sid/agents"] [:vis.council.spawn "Run subagents" false]
    [:post "/v1/sessions/:sid/agents/run"] [:vis.council.run "Run subagents" false]
    [:post "/v1/sessions/:sid/tasks/:task-id/cancel"] [:vis.task.cancel "Cancel Task" false]
+   [:post "/v1/sessions/:sid/tasks/:task-id/acknowledge"] [:vis.task.acknowledge "Acknowledge Task" false]
    [:post "/v1/sessions/:sid/agents/answer"] [:vis.council.answer "Answer subagent" false]
    [:post "/v1/sessions/:sid/agents/deny"] [:vis.council.deny "Deny subagent request" false]
    [:post "/v1/sessions/:sid/agents/extend"] [:vis.council.extend "Extend subagent budget" false]

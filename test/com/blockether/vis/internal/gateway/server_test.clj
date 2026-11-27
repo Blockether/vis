@@ -157,12 +157,12 @@
                        handler
                        (rv 'events-since-handler)]
 
-                   (with-redefs [state/events-since
+                   (with-redefs [state/events-page
                                  (fn [id cursor replay]
                                    (expect (= sid id))
                                    (expect (= 0 cursor))
                                    (expect (= :settled replay))
-                                   [event])
+                                   {:events [event] :cursor 1})
 
                                  wire/->wire
                                  (fn [_]
@@ -171,7 +171,7 @@
                      (let [response (handler {:path-params {:sid (str sid)}})]
                        (expect (= 200 (:status response)))
                        (expect (= "application/json" (get-in response [:headers "Content-Type"])))
-                       (expect (= {"events" [event]} (wire/parse-json (:body response)))))))))
+                       (expect (= {"events" [event] "cursor" 1} (wire/parse-json (:body response)))))))))
 
 (defdescribe sse-replay-test
              (it "replays settled turns by lifecycle unless the client asks for the full stream"
@@ -2625,15 +2625,18 @@
               (expect (= :cancel (deref cancel-received 5000 nil)))
               (expect (= "person" (get-in (second (request :get sid path)) ["task" "cancel_reason"])))
               (complete! (constantly {:state :cancelled}))
-              (expect (= [200 {"requested" false}] (request :post sid (str path "/cancel"))))
-              (task/acknowledge! sid (:id row))
+              (expect (= [200 {"requested" false "reason" "already_ended"}]
+                         (request :post sid (str path "/cancel"))))
+              (expect (= [200 {"acknowledged" true}]
+                         (request :post sid (str path "/acknowledge"))))
               (let [{:keys [tasks tasks-seq]} (task/at-publication-cursor sid #(state/current-seq sid))
                     frames (state/events-since sid 0)]
                 (expect (empty? tasks))
                 (expect (= tasks-seq (get (last frames) "seq")))
                 (expect (= ["task.started" "task.updated" "task.ended"] (mapv #(get % "type") frames)))
                 (expect (= "cancelled" (get-in (last frames) ["task" "state"])))
-                (expect (= [200 {"events" frames}] (request :get sid "/events-since"))))
+                (expect (= [200 {"events" frames "cursor" (get (peek frames) "seq")}]
+                            (request :get sid "/events-since"))))
               ;; An acknowledged Task leaves discovery but keeps a receipt for other observers.
               (expect (= [200 "cancelled"]
                          (let [[status body] (request :get sid path)] [status (get-in body ["task" "state"])])))
@@ -2672,7 +2675,7 @@
                             (with-redefs-fn {#'state/soul #(when (= live %) {"id" (str live)})
                                              #'state/session-exists? #(= live %)
                                              #'state/current-turn-id (constantly nil)
-                                             #'state/subscribe! (fn [sid _ _ _ _]
+                                             #'state/subscribe-replay! (fn [sid _ _ _ _]
                                                                   (swap! subscribed conj sid)
                                                                   [])
                                              #'state/unsubscribe! (fn [& _])
@@ -2710,7 +2713,7 @@
                        (with-redefs-fn {#'state/soul #(when @present? {"id" (str %)})
                                         #'state/session-exists? (fn [_]
                                                                   @present?)
-                                        #'state/subscribe! (fn [& _]
+                                        #'state/subscribe-replay! (fn [& _]
                                                              (reset! present? false)
                                                              [])
                                         #'state/unsubscribe! (fn [& _])
@@ -2777,6 +2780,43 @@
                 (expect (re-find #"subscription.ready" s))
                 (expect (= 3 (count (re-seq (re-pattern sid-a) s))))
                 (expect (= 2 (count (re-seq (re-pattern sid-b) s))))))))))))
+
+(defdescribe multi-sse-resets-receipts-after-elision
+  (it "resends full Activity rows after either a fleet or a second session ready elision"
+      (doseq [source [:fleet :ready]]
+        (let [out (java.io.ByteArrayOutputStream.)
+              large (apply str (repeat (* 1024 1024) "a"))
+              receipt {"type" "block.activity" "session_id" "a" "seq" 1
+                       "turn_id" "t" "iteration" 1 "form_index" 0
+                       "activity" {"rows" [{"id" "r1"}]}}
+              sids (if (= source :ready) [["a" 0] ["b" 0]] [["a" 0]])]
+          (with-server-state!
+            {}
+            (fn []
+              (with-redefs-fn
+                {#'state/session-exists? (constantly true)
+                 #'state/soul (fn [sid] (cond-> {"id" sid} (= sid "b") (assoc "goal" large)))
+                 #'state/subscribe-replay! (fn [sid & _] {:descriptors (when (= sid "a") [receipt])})
+                 #'state/read-replay-page! (fn [_ rows] {:events rows})
+                 #'state/unsubscribe! (fn [& _])
+                 #'state/subscribe-fleet! (fn [& _])
+                 #'state/unsubscribe-fleet! (fn [& _])
+                 #'server/pump-sse! (fn [_ _ _ write!]
+                                      (when (= source :fleet)
+                                        (write! {"scope" "fleet" "type" "session.changed" "seq" 1
+                                                 "large" large}))
+                                      (write! (assoc receipt "seq" 2)))
+                 #'server/stop! (fn [& _])}
+                #(ring-protocols/write-body-to-stream
+                   ((rv 'multi-sse-body) sids false nil (= source :fleet)) {} out))))
+          (let [events (mapv (comp wire/parse-json #(subs % 6))
+                             (filter #(str/starts-with? % "data: ")
+                                     (str/split-lines (.toString out "UTF-8"))))
+                marker (some #(when (= "event.elided" (get % "type")) %) events)]
+            (expect (= (if (= source :ready) "subscription.ready" "session.changed")
+                       (get marker "event_type")))
+            (expect (= [{"id" "r1"}] (get-in (peek events) ["activity" "rows"]))
+                    (name source)))))))
 
 ;; Regression, reported in this Vis session: the only way a session list could
 ;; learn that a run had started or ended was to re-read its whole window on a
@@ -2902,10 +2942,14 @@
                              #'state/current-turn-id (constantly nil)
                              #'state/current-seq (constantly 4)
                              #'state/replay-floor (constantly 0)
-                             #'state/subscribe!
-                             (fn [id _ _ cursor _]
+                             #'state/subscribe-replay!
+                             (fn [id _ sink cursor _]
                                (swap! subscribed conj [id cursor])
-                               [{"schema" 1 "type" "turn.started" "session_id" (str id) "seq" 5}])
+                                (sink {"schema" 1 "type" "turn.started" "session_id" (str id) "seq" 6})
+                               {:descriptors [{"schema" 1 "type" "block.output" "session_id" (str id) "seq" 5
+                                                 "text" (apply str (repeat 1050000 \x))}]
+                                 :through 5})
+                             #'state/read-replay-page! (fn [_ descriptors] {:events descriptors :remaining []})
                              #'state/unsubscribe! (fn [& _])
                              #'state/subscribe-fleet! (fn [_ sink]
                                                         (reset! fleet-attached? true)
@@ -2933,11 +2977,11 @@
         (let [frames (sse-jobs (.toString out "UTF-8"))]
           (expect (= [[sid 4]] @subscribed))
           (expect (false? @fleet-attached?))
-          (expect (= ["subscription.ready" "turn.started" "subscription.ready" "session.status"]
+          (expect (= ["subscription.ready" "event.elided" "subscription.ready" "turn.started" "session.status"]
                      (mapv #(get % "type") frames)))
-          (expect (= [nil nil "fleet" "fleet"] (mapv #(get % "scope") frames)))
+          (expect (= [nil nil "fleet" nil "fleet"] (mapv #(get % "scope") frames)))
           (expect (= 4 (get (first frames) "cursor")))
-          (expect (= [5 0 900] (mapv #(get % "seq") (rest frames))))))))
+          (expect (= [5 0 6 900] (mapv #(get % "seq") (rest frames))))))))
 
 (defdescribe
   fleet-ready-follows-subscription
@@ -5955,7 +5999,8 @@
                                             {:query (:query opts)
                                              :sessions [(fixture/session-row
                                                           {"id" "b"
-                                                           "match" {"rank" 0 "is_in_title" true}})]
+                                                           "match" {"rank" 0 "is_in_title" true "is_in_request" false
+                                                                    "is_in_reply" false "is_in_thinking" false "hits" []}})]
                                              :total 3
                                              :limit 50
                                              :next-cursor "0:-3000:b"

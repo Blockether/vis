@@ -1044,30 +1044,108 @@
              (or (contains? gateway-contract/turn-stream-event-types type)
                  (str/starts-with? type unknown-chunk-type-prefix)))))))
 
+(defn- replay-window
+  [entry cursor replay]
+  (let [window (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events entry))]
+    (if (= :settled replay) (filterv (complement (settled-turn-stream? window)) window) window)))
+
+(defn- drop-replay!
+  [sid entry e]
+  (update-session! sid #(assoc %
+                          :events clojure.lang.PersistentQueue/EMPTY
+                          :evicted-through (:next-seq entry 0)))
+  (event-store/discard-replaced! (:events entry) [] nil)
+  (throw (ex-info "Replay history is unavailable; reset the cursor"
+                  {:type ::replay-unavailable :floor (:next-seq entry 0)}
+                  e)))
+
+(defn- read-replay-descriptors!
+  [sid entry descriptors]
+  (try (mapv event-store/read-event descriptors)
+       (catch Exception e (drop-replay! sid entry e))))
+
 (defn- read-replay!
-  "Read under the event lock. A damaged file invalidates the window, never a partial tail.
-   `replay` `:settled` replays a turn that settled inside the window as its lifecycle
-   frames only; `:full` replays every stored frame for clients that follow the stream."
+  "Read under the event lock. A damaged file invalidates the window, never a partial tail."
   [sid cursor replay]
-  (let [entry
-        (session-entry sid)
+  (let [entry (session-entry sid)]
+    (read-replay-descriptors! sid entry (replay-window entry cursor replay))))
 
-        window
-        (filterv #(> (long (get % "seq")) (long (or cursor 0))) (:events entry))]
+(def ^:dynamic *replay-page-count* 128)
+(def ^:dynamic *replay-page-bytes* (* 2 1024 1024))
 
-    (try (mapv event-store/read-event
-               (cond->> window
-                 (= :settled replay)
-                 (remove (settled-turn-stream? window))))
-         (catch Exception e
-           (update-session! sid
-                            #(assoc %
-                               :events clojure.lang.PersistentQueue/EMPTY
-                               :evicted-through (:next-seq entry 0)))
-           (event-store/discard-replaced! (:events entry) [] nil)
-           (throw (ex-info "Replay history is unavailable; reset the cursor"
-                           {:type ::replay-unavailable :floor (:next-seq entry 0)}
-                           e))))))
+(defn- page-of
+  "Select a prefix using uncompressed frozen sizes. An oversized descriptor contributes only an elision."
+  [descriptors]
+  (loop [n 0 bytes 0]
+    (if (or (= n (count descriptors)) (= n (long *replay-page-count*)))
+      n
+      (let [size (frame-bytes (nth descriptors n))
+            cost (if (> size (long *replay-page-bytes*)) 0 size)]
+        (if (> (+ bytes cost) (long *replay-page-bytes*)) n (recur (inc n) (+ bytes cost)))))))
+
+(defn- load-page!
+  [sid entry page]
+  (try (mapv (fn [descriptor]
+               (if (> (frame-bytes descriptor) (long *replay-page-bytes*))
+                 (gateway-contract/elided-event descriptor "replay_unavailable")
+                 (event-store/read-event descriptor)))
+             page)
+       (catch Exception e
+         (drop-replay! sid entry e))))
+
+(defn- replay-gap
+  [sid through]
+  (gateway-contract/elided-event
+    (gateway-contract/stamp-session-event {} sid through (util/now-ms) "replay")
+    "replay_unavailable"))
+
+(defn- replay-plan
+  [sid cursor replay]
+  (let [entry (session-entry sid)]
+    {:descriptors (replay-window entry cursor replay)
+     :through (:next-seq entry 0)
+     :floor (:evicted-through entry 0)}))
+
+(defn read-replay-page!
+  "Read one page from an atomically captured plan. If the ring changed, do not read retired bodies."
+  [sid descriptors]
+  (let [n (page-of descriptors)
+        page (subvec descriptors 0 n)
+        lock (event-store/lock-for sid)]
+    (locking lock
+      (let [entry (session-entry sid)
+            current (into #{} (map #(get % "seq")) (:events entry))]
+        (when-not (every? #(contains? current (get % "seq")) page)
+          (throw (ex-info "Replay history is unavailable; reset the cursor"
+                          {:type ::replay-unavailable})))
+        {:events (load-page! sid entry page)
+         :remaining (subvec descriptors n)}))))
+
+(defn events-page
+  "Read one page of stored events for a polling subscriber."
+  [sid cursor replay]
+  (let [lock (event-store/lock-for sid)]
+    (locking lock
+      (let [entry (session-entry sid)
+            window (replay-window entry cursor replay)
+            n (page-of window)
+            page (subvec window 0 n)
+            through (:next-seq entry 0)
+            floor (:evicted-through entry 0)]
+        (cond
+          (> cursor through)
+          {:events [(assoc (replay-gap sid through) "cursor" through)] :cursor through}
+
+          (< cursor floor)
+          {:events [(replay-gap sid floor)] :cursor floor}
+
+          :else
+          (try {:events (load-page! sid entry page)
+                :cursor (if (< n (count window)) (get (peek page) "seq") through)}
+               (catch clojure.lang.ExceptionInfo e
+                 (if (= ::replay-unavailable (:type (ex-data e)))
+                   {:events [(replay-gap sid through)] :cursor through}
+                   (throw e)))))))))
 
 (defn- fan-out!
   "Deliver `event` to every local SSE sink for `sid`. Runs on the APPENDING
@@ -1382,7 +1460,8 @@
    frame) instead of catching only the bare deltas after connect. `replay` is
    `:full` (the default) or `:settled`, as in [[read-replay!]]."
   ([sid sub-id sink cursor] (subscribe! sid sub-id sink cursor :full))
-  ([sid sub-id sink cursor replay]
+  ([sid sub-id sink cursor replay] (subscribe! sid sub-id sink cursor replay read-replay!))
+  ([sid sub-id sink cursor replay capture]
    ;; ensure an entry exists so `ingest-mirrored-event!` (called by hydrate)
    ;; doesn't no-op, then hydrate the in-flight foreign turn INTO the ring
    ;; before we snapshot replay from it.
@@ -1396,7 +1475,7 @@
            ;; Forget may have won while hydration ran outside the replay lock.
            (ensure-session-entry! sid)
            (let [events
-                 (read-replay! sid cursor replay)
+                 (capture sid cursor replay)
 
                  ;; A client opens the session: it takes the session notices that waited.
                  held
@@ -1415,6 +1494,11 @@
      (doseq [notice held]
        (append-event! sid "notification" notice {:store? false}))
      events)))
+
+(defn subscribe-replay!
+  "Register a live sink and capture only replay descriptors at that instant."
+  [sid sub-id sink cursor replay]
+  (subscribe! sid sub-id sink cursor replay replay-plan))
 
 (defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
 
@@ -1680,19 +1764,22 @@
      (locking lock (read-replay! sid cursor replay)))))
 
 (defn task-events-since
-  "Read Task ends only. Return nil when the caller needs a new Task snapshot."
+  "Read a bounded page of Task ends. Return nil when the caller needs a new Task snapshot."
   [sid cursor]
   (let [lock (event-store/lock-for sid)]
     (locking lock
       (let [entry (session-entry sid)
             current (:next-seq entry 0)]
         (when (<= (:evicted-through entry 0) cursor current)
-          (try {:cursor current
-                :events (into [] (comp (filter #(and (= "task.ended" (get % "type"))
-                                                       (> (long (get % "seq")) cursor)))
-                                       (map event-store/read-event))
-                              (:events entry))}
-               (catch Exception _ nil)))))))
+          (let [ends (filterv #(and (= "task.ended" (get % "type"))
+                                    (> (long (get % "seq")) cursor))
+                              (:events entry))
+                n (page-of ends)
+                page (subvec ends 0 n)]
+            (try {:cursor (if (< n (count ends)) (get (peek page) "seq") current)
+                  :events (load-page! sid entry page)}
+                 (catch clojure.lang.ExceptionInfo e
+                   (if (= ::replay-unavailable (:type (ex-data e))) nil (throw e))))))))))
 
 (defn running-turn-count
   "Number of live turns currently owned by this gateway process. Used by the

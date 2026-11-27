@@ -192,6 +192,9 @@ AppView: TypeAlias = AppViewVariant1 | AppViewVariant2
 
 class ViewOutcome(TypedDict):
     is_accepted: bool
+    seq: NotRequired[int]
+    revision: NotRequired[str]
+    node_id: NotRequired[str]
     reason: NotRequired[JSONValue]
 
 
@@ -303,12 +306,12 @@ class McpServers(TypedDict):
 
 class McpDeleted(TypedDict):
     name: str
-    is_deleted: JSONValue
+    is_deleted: Literal[True]
 
 
 class McpAuthCancelled(TypedDict):
     flow_id: str
-    is_cancelled: JSONValue
+    is_cancelled: Literal[True]
 
 
 class McpAuthFlow(TypedDict):
@@ -564,6 +567,27 @@ class QueuePausedMarker(TypedDict):
     at: NotRequired[int]
 
 
+class SessionMatchHitsItem(TypedDict):
+    side: Literal["request", "reply", "thinking"]
+    snippet: str
+    at: int
+    request_kind: NotRequired[Literal["user", "council"]]
+    council: NotRequired[TurnCouncil]
+
+
+class SessionMatch(TypedDict):
+    """Why a search row matched the query. Only search rows carry it."""
+
+    hits: list[SessionMatchHitsItem]
+    rank: int
+    is_in_title: bool
+    is_in_request: bool
+    is_in_reply: bool
+    is_in_thinking: bool
+    request_snippet: NotRequired[str | None]
+    reply_snippet: NotRequired[str | None]
+
+
 class SessionRecord(TypedDict):
     """The wire soul of one session: its stored record and its live gateway status.
     goal is null until an explicit /goal or SDK request creates it. List rows also
@@ -610,7 +634,7 @@ class SessionRecord(TypedDict):
     queue_paused: NotRequired[None | QueuePausedMarker]
     unread_answers: NotRequired[int]
     is_unread: NotRequired[bool]
-    match: NotRequired[dict[str, JSONValue]]
+    match: NotRequired[SessionMatch]
 
 
 class SessionRead(TypedDict):
@@ -831,8 +855,20 @@ class SessionBlock(TypedDict):
     is_error: bool
 
 
-class TurnCancel(TypedDict):
+class TurnCancelSuccess(TypedDict):
     status: Literal["cancelling", "deleted"]
+    turn_id: NotRequired[str]
+    also_cancelled: NotRequired[list[str]]
+
+
+class TurnCancelRefusal(TypedDict):
+    accepted: Literal[False]
+    reason: Literal["no_running_turn", "not_running"]
+    turn_id: NotRequired[str]
+    turn_status: NotRequired[str]
+
+
+TurnCancel: TypeAlias = TurnCancelSuccess | TurnCancelRefusal
 
 
 SessionContext: TypeAlias = dict[str, JSONValue]
@@ -1083,6 +1119,11 @@ class TaskStatus(TypedDict):
 
 class TaskCancel(TypedDict):
     requested: bool
+    reason: NotRequired[Literal["already_ended", "already_requested"]]
+
+
+class TaskAcknowledgement(TypedDict):
+    acknowledged: bool
 
 
 class AgentsTimelineItemsItem(TypedDict):
@@ -1199,6 +1240,7 @@ SessionEventType: TypeAlias = Literal[
     "content.block.delta",
     "content.block.started",
     "context.updated",
+    "event.elided",
     "extensions.reloaded",
     "iteration.completed",
     "iteration.error",
@@ -1441,7 +1483,7 @@ class Keybinding(TypedDict):
     key: str
     command: NotRequired[str]
     action: NotRequired[str]
-    run: NotRequired[JSONValue]
+    run: NotRequired[Literal[True]]
     label: NotRequired[str]
     group: NotRequired[str]
     extension: NotRequired[str]
@@ -1516,6 +1558,8 @@ SessionSuggestions: TypeAlias = list[JSONValue]
 
 
 class TranscriptTurnsItem(TypedDict):
+    turn_id: str
+    iterations: list[dict[str, JSONValue]]
     council: NotRequired[TurnCouncil | None]
 
 
@@ -1723,7 +1767,7 @@ class VoiceLiveStart(TypedDict):
 class VoiceLiveClosed(TypedDict):
     """The answer to a live voice close."""
 
-    closed: JSONValue
+    closed: Literal[True]
 
 
 class VoiceLiveReceipt(TypedDict):
@@ -2319,7 +2363,7 @@ class AutomationsRunList(TypedDict):
 
 class AutomationsAutomationDeleted(TypedDict):
     id: AutomationsAutomationId
-    is_deleted: JSONValue
+    is_deleted: Literal[True]
 
 
 AutomationsDeleted: TypeAlias = AutomationsAutomationDeleted
@@ -2756,6 +2800,17 @@ class ContextUpdatedData(TypedDict):
     """The `data` of an event of type `context.updated`."""
 
     utilization: dict[str, JSONValue]
+    schema: int
+    ts: int
+
+
+class EventElidedData(TypedDict):
+    """The `data` of an event of type `event.elided`."""
+
+    event_type: str
+    reason: Literal["frame_size", "replay_unavailable"]
+    view_id: NotRequired[str]
+    scope: NotRequired[Literal["fleet"]]
     schema: int
     ts: int
 
@@ -3512,6 +3567,7 @@ RESPONSE_TYPES: dict[str, str] = {
     "POST /v1/sessions/:sid/resume-queue": "TurnQueueStep",
     "POST /v1/sessions/:sid/run": "SessionBlock",
     "POST /v1/sessions/:sid/speech": "VoiceJob",
+    "POST /v1/sessions/:sid/tasks/:task-id/acknowledge": "TaskAcknowledgement",
     "POST /v1/sessions/:sid/tasks/:task-id/cancel": "TaskCancel",
     "POST /v1/sessions/:sid/turns": "TurnRecord",
     "POST /v1/sessions/:sid/turns/:tid/cancel": "TurnCancel",
@@ -3609,6 +3665,13 @@ if TYPE_CHECKING:
         type: Literal["context.updated"]
         seq: int
         data: ContextUpdatedData
+
+    class EventElidedEvent(Event):
+        """An event of type `event.elided`."""
+
+        type: Literal["event.elided"]
+        seq: int
+        data: EventElidedData
 
     class ExtensionsReloadedEvent(Event):
         """An event of type `extensions.reloaded`."""
@@ -3934,6 +3997,7 @@ if TYPE_CHECKING:
         | ContentBlockDeltaEvent
         | ContentBlockStartedEvent
         | ContextUpdatedEvent
+        | EventElidedEvent
         | ExtensionsReloadedEvent
         | IterationCompletedEvent
         | IterationErrorEvent
