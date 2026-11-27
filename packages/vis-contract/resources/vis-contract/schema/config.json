@@ -892,6 +892,15 @@
           "default": "project",
           "description": "Environment for project Python: the uv projects of project extensions inside the project tree and the Python language tools. project uses each project's own environment, normally .venv. shared prepares extension projects like vis-agent python --shared uv sync, loads them from Vis shared packages and runs the Python language tools with vis-agent python --shared."
         },
+        "dependency_sync": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "never"
+          ],
+          "default": "auto",
+          "description": "Dependency installation by the Python language tools. auto installs the dependencies of the project before its Python starts. never installs nothing: the tools use the environment as it is, for an environment that is prepared and must not change."
+        },
         "source_paths": {
           "type": "array",
           "items": {

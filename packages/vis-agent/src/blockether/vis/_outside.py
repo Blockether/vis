@@ -152,6 +152,11 @@ def python_environment():
     return "project"
 
 
+def python_dependency_sync():
+    """Let tools install dependencies when no Vis session owns this call."""
+    return "auto"
+
+
 def python_runtime():
     """Find Vis on `PATH` and its shared packages by the documented environment rule."""
     agent = shutil.which("vis-agent")
@@ -1887,6 +1892,7 @@ _IMPLEMENTATIONS = {
     "workspace_root": workspace_root,
     "project_root": workspace_root,
     "python_environment": python_environment,
+    "python_dependency_sync": python_dependency_sync,
     "python_runtime": python_runtime,
     "workspace_files": workspace_files,
     "setting_declaration": setting_declaration,

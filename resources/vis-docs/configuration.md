@@ -821,6 +821,19 @@ Run `/reload` after you change the value. Extensions read the value with
 read [Use shared packages for project
 extensions](extension-development.md#use-shared-packages-for-project-extensions).
 
+`py.repl_start` installs the dependencies of the project before the REPL starts. To keep a prepared
+environment unchanged, such as a container image, turn the installation off:
+
+```yaml
+# vis.yml
+python:
+  dependency_sync: never
+```
+
+The value is `auto`, the default, or `never`. With `never`, the Python language tools install
+nothing, and `py.repl_start(upgrade=True)` gives an error. Extensions read the value with
+[`vis.python_dependency_sync()`](extension-api.md#python-environment).
+
 All extensions of a session run in one Python worker. Each extension imports its own environment
 first, but the extensions share one interpreter and its loaded modules. When two extensions need
 different versions of one package, both use the version that loads first. Give such extensions

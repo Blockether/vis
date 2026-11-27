@@ -2119,6 +2119,16 @@ else:
                       {:type ::invalid-environment})))
     (= "shared" environment)))
 
+(defn dependency-sync
+  "Read merged `python.dependency_sync`: `auto` (the default) or `never`.
+   With `never`, a tool that starts project Python installs nothing."
+  []
+  (let [sync (get-in (config/load-config-raw) ["python" "dependency_sync"] "auto")]
+    (when-not (contract-config/definition-valid? "python" {"dependency_sync" sync})
+      (throw (ex-info "python.dependency_sync must be auto or never"
+                      {:type ::invalid-dependency-sync})))
+    sync))
+
 (defn tls-strict?
   "Read merged `python.tls_strict` for every Vis Python process. Invalid YAML must not weaken TLS."
   []

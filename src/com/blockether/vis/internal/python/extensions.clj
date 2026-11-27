@@ -1339,6 +1339,11 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
             ;; #379: tools that start project Python follow the project's `python.environment`.
             (if (python-runtime/shared-environment?) "shared" "project")))
     (put! g
+          "__vis_host_python_dependency_sync__"
+          (fn []
+            ;; A prepared environment must not change: py tools then install nothing.
+            (python-runtime/dependency-sync)))
+    (put! g
           "__vis_host_python_runtime__"
           (fn []
             ;; #479: an extension reaches this Vis's Python without a `PATH` search.

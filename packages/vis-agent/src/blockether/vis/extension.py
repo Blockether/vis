@@ -82,6 +82,10 @@ class Host(Protocol):
         """Read the project's `python.environment`: `project` or `shared`."""
         ...
 
+    def python_dependency_sync(self) -> str:
+        """Read the project's `python.dependency_sync`: `auto` or `never`."""
+        ...
+
     def python_runtime(self) -> Mapping[str, Any]:
         """Read where this Vis keeps its Python: launcher, executables and shared packages."""
         ...
@@ -4378,6 +4382,19 @@ def python_environment() -> Literal["project", "shared"]:
     """
     value = _host.python_environment()
     return "shared" if value == "shared" else "project"
+
+
+def python_dependency_sync() -> Literal["auto", "never"]:
+    """Return whether a tool may install the dependencies of the project.
+
+    The value comes from `python.dependency_sync` in the merged configuration.
+    `auto`, the default, means that a tool installs the dependencies before it
+    starts project Python. `never` means that the environment is prepared and
+    must not change: install nothing and use it as it is. Outside Vis, the
+    value is `auto`.
+    """
+    value = _host.python_dependency_sync()
+    return "never" if value == "never" else "auto"
 
 
 @dataclass(frozen=True, slots=True)

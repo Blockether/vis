@@ -127,6 +127,11 @@ def test_python_environment_defaults_to_project_outside_vis():
     assert vis.python_environment() == "project"
 
 
+def test_python_dependency_sync_defaults_to_auto_outside_vis():
+    # py tools read this value to decide if they install the project's dependencies.
+    assert vis.python_dependency_sync() == "auto"
+
+
 def test_python_runtime_finds_vis_outside_the_engine(tmp_path, monkeypatch):
     # Regression, #479: an extension must not search PATH or guess the Vis home itself.
     agent = tmp_path / "bin" / "vis-agent"

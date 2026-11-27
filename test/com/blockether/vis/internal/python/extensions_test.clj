@@ -1947,6 +1947,13 @@
                                    [{"environment" "shared"} "shared"]]]
           (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
             (expect (= expected (environment)))))))
+  ;; A benchmark container was changed by a failed install: py tools read this value to install nothing.
+  (it "answers the project's python.dependency_sync through vis.python_dependency_sync"
+      (let [sync (get (pyx/host-doors nil "test" nil) "__vis_host_python_dependency_sync__")]
+        (doseq [[python expected] [[nil "auto"] [{"dependency_sync" "auto"} "auto"]
+                                   [{"dependency_sync" "never"} "never"]]]
+          (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
+            (expect (= expected (sync)))))))
   ;; Regression, #479: an extension found Vis Python only through `PATH` and guessed directories.
   (it
     "names the launcher, the executables and the shared packages of this Vis through the public SDK"

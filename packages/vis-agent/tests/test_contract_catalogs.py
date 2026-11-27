@@ -173,6 +173,12 @@ def _content_line_stream():
                 "environment"
             ],
         ),
+        (
+            lambda: typing.get_type_hints(vis.python_dependency_sync)["return"],
+            lambda: _contracts.definition("config", "python")["properties"][
+                "dependency_sync"
+            ],
+        ),
     ],
 )
 def test_a_literal_type_names_the_values_of_its_schema(literal, rule):

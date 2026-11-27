@@ -1776,6 +1776,11 @@ With `shared`, start Python with `runtime.python(..., shared=True)`. That interp
 the Vis shared packages and does not use the project's `.venv`. With `project`, the default, use
 the project's own environment. Outside a Vis process, the function returns `project`.
 
+Call `vis.python_dependency_sync()` before your extension installs the dependencies of the
+project. It returns `auto` or `never`, from `python.dependency_sync` in the
+[configuration](configuration.md#python-extension-environment). With `never`, install nothing and
+use the environment as it is. Outside a Vis process, the function returns `auto`.
+
 Call `vis.python_runtime()` to get the commands. Do not search `PATH` for `vis-agent`, and do
 not compute the Vis home directory. Vis can run as a native binary in a container or from a
 second installation, and then these locations differ. The result has these fields and methods:

@@ -1657,4 +1657,13 @@
                      (try (python-runtime/shared-environment?)
                           (catch clojure.lang.ExceptionInfo e
                             (when (= ::python-runtime/invalid-environment (:type (ex-data e)))
+                              ::invalid))))))))
+  (it "reads python.dependency_sync and rejects unknown values"
+      (doseq [[python expected] [[nil "auto"] [{"dependency_sync" "never"} "never"]
+                                 [{"dependency_sync" "sometimes"} ::invalid]]]
+        (with-redefs [config/load-config-raw (constantly (if python {"python" python} {}))]
+          (expect (= expected
+                     (try (python-runtime/dependency-sync)
+                          (catch clojure.lang.ExceptionInfo e
+                            (when (= ::python-runtime/invalid-dependency-sync (:type (ex-data e)))
                               ::invalid)))))))))
