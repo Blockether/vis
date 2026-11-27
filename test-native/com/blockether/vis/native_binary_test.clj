@@ -591,7 +591,7 @@
             "assert sdk.ActivityProgress('Inspect SDK', value=1, total=2).value == 1\n"
             "prototype = sdk.Extension(name='native-prototype', description='Local declaration')\n"
             "for operation in [lambda: sdk.register_extension(prototype), "
-            "lambda: sdk.state.get('key'), lambda: sdk.shell({'command': 'exit 0'})]:\n"
+            "lambda: sdk.state.get('key'), lambda: sdk.shell('exit 0')]:\n"
             "    try:\n"
             "        operation()\n" "    except RuntimeError as error:\n"
             "        assert 'unavailable in py3' in str(error)\n" "    else:\n"

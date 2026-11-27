@@ -161,7 +161,7 @@ class Host(Protocol):
         ...
 
     def shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Start one shell Task, or read or send to a shell by alias."""
+        """Start one shell Task, or attach to a live alias."""
         ...
 
     def jailed_shell(self, options: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -557,6 +557,10 @@ class _Tools:
             raise TypeError(
                 "vis.tools is not a tool; call one, such as vis.tools.spel.reserve(...)"
             )
+        if self._name == "shell" and (
+            len(args) > 1 or (args and not isinstance(args[0], str))
+        ):
+            raise TypeError("shell takes one string command and keyword options.")
         value = _host.call_tool(self._name, _tool_data(args), _tool_data(kwargs))
         return _shell_answer(value, is_tool=True) if self._name == "shell" else value
 
@@ -4671,24 +4675,45 @@ def write_private_file(path: str | PathLike[str], text: str) -> None:
         raise
 
 
-def _shell_options(name, args, options):
-    # ONE options map from the arguments, with the rule of the sandbox `shell`: a
-    # command, then an options map, then keyword options. A later source wins.
-    opts = {}
-    rest = list(args)
-    if rest and not isinstance(rest[0], dict):
-        if rest[0] is not None:
-            opts["command"] = rest[0]
-        rest = rest[1:]
-    if len(rest) > 1 or not all(isinstance(item, dict) for item in rest):
-        raise TypeError(
-            f"{name} takes a command and one options map — use {name}('ls'), "
-            f"{name}('ls', cwd='src') or {name}({{'command': 'ls'}})"
+_SHELL_UNSET = object()
+
+
+def _shell_options(command, options, *, jailed=False):
+    if "op" in options and options["op"] != "attach":
+        raise ValueError(
+            f"Unknown shell op {options['op']!r}; use 'attach' or omit op."
         )
-    for item in rest:
-        opts.update(item)
-    opts.update(options)
-    return opts
+    attach = "op" in options
+    allowed = {"op", "id"} if attach else {"cwd", "id", "env", "stdin"}
+    if jailed and not attach:
+        allowed |= {"allow_read_write", "unix_connect"}
+    for key, value in options.items():
+        if key not in allowed:
+            raise TypeError(f"Unknown shell option {key!r}.")
+        if key in {"cwd", "id"} and value is not None and not isinstance(value, str):
+            raise TypeError(f"shell `{key}` must be a string.")
+        if key == "env" and value is not None and not isinstance(value, dict):
+            raise TypeError("shell `env` must be a dict.")
+        if key == "stdin" and value not in (None, "null", "tty"):
+            raise ValueError('shell `stdin` must be "tty" or "null".')
+        if key in {"allow_read_write", "unix_connect"} and value is not None:
+            paths = [value] if isinstance(value, str) else value
+            if not isinstance(paths, (list, tuple)) or not all(
+                isinstance(path, str) and path.strip() for path in paths
+            ):
+                raise TypeError(f"shell `{key}` must contain non-blank path strings.")
+    if attach:
+        if command is not _SHELL_UNSET:
+            raise TypeError('shell op "attach" takes no command.')
+        if not (options.get("id") or "").strip():
+            raise TypeError('shell op "attach" requires a non-blank id.')
+    else:
+        if not isinstance(command, str):
+            raise TypeError("shell requires a string command.")
+        if not command.strip():
+            raise ValueError("shell needs a non-blank command.")
+        options = {"command": command, **options}
+    return options
 
 
 # The words of a log read that mean another word. The engine reads the same words.
@@ -4877,7 +4902,7 @@ class ShellResult(dict):
                 raise TypeError(f"logs: {canonical} named twice, as '{key}' too.")
             named[canonical] = value
         return self._vis_log_page(
-            {key: int(value) for key, value in named.items() if value is not None}
+            {key: value for key, value in named.items() if value is not None}
         )
 
     def __next__(self):
@@ -4922,7 +4947,14 @@ class ShellFuture(_HostFuture[ShellResult]):
         self._vis_cancel_on_await = not descriptor["snapshot"].get(
             "already_running", False
         )
-        self._vis_snapshot = self._result_from(descriptor["snapshot"])
+        snapshot = descriptor["snapshot"]
+        if snapshot.get("status") == "running":
+            snapshot = {
+                key: value
+                for key, value in snapshot.items()
+                if key not in {"timed_out", "timeout_secs"}
+            }
+        self._vis_snapshot = self._result_from(snapshot)
         from blockether.vis.engine._task_observer import _admit, _observe_door
 
         try:
@@ -4960,14 +4992,22 @@ class ShellFuture(_HostFuture[ShellResult]):
         return self._vis_snapshot.logs
 
     def type(self, text, is_enter=True):
-        self._op("send", text=str(text), is_enter=bool(is_enter))
+        if not isinstance(text, str):
+            raise TypeError("shell `text` must be a string.")
+        if not isinstance(is_enter, bool):
+            raise TypeError("shell `is_enter` must be a bool.")
+        self._op("send", text=text, is_enter=is_enter)
         return self
 
     def _read_snapshot(self):
+        if self.done() and not self.cancelled() and self.exception() is None:
+            return self.result()
+        return self._vis_snapshot
+
+    def snapshot(self):
+        """Read the current process state without waiting for it to exit."""
         if self.done():
-            if not self.cancelled() and self.exception() is None:
-                return self.result()
-            return self._vis_snapshot
+            return self._read_snapshot()
         value = self._op("snapshot")
         if self._vis_snapshot.get("already_running") and value["status"] == "running":
             value = {**value, "already_running": True}
@@ -5051,33 +5091,23 @@ def _shell_answer(raw, *, is_tool=False):
     return ShellFuture(descriptor, _host.shell_task, is_tool=is_tool)
 
 
-def _sdk_shell_call(name, args, options):
-    call = getattr(_host, name)
-    opts = _shell_options(name, args, options)
-    raw = call(opts)
-    if str(opts.get("op")).strip() in ("logs", "send"):
-        return ShellResult(raw, lambda spec: call(dict(spec, id=raw["id"], op="logs")))
-    return _shell_answer(raw)
+def shell(command=_SHELL_UNSET, **options):
+    """Start a command and return a ShellFuture, or attach by live id.
 
-
-def shell(*args, **options):
-    """Start a command and return a ShellFuture.
-
-    Read the fields on the Future for the current process state. Use `await sh`
-    or `sh.result()` for the final ShellResult. In async code, wait without
-    cancelling with `await asyncio.wait([sh], timeout=seconds)`. In a plain
-    `def`, use `concurrent.futures.wait([sh], timeout=seconds)`. `cancel()`
-    requests cancellation. `logs()` reads output, and `type()` sends input.
-
-    Give the command as text with keyword options, or give one options map:
-    `shell("ls", cwd="src")` is `shell({"command": "ls", "cwd": "src"})`.
+    Use `shell("ls", cwd="src")` or `shell(op="attach", id="build")`.
+    Use `snapshot()` for current process state, `logs()` to read output, and
+    `type()` to send input. The Future's fields give the start or final result.
+    Use `await sh` for the final ShellResult. Use `asyncio.wait` or
+    `concurrent.futures.wait` to wait for a limit without cancelling the process.
     """
-    return _sdk_shell_call("shell", args, options)
+    return _shell_answer(_host.shell(_shell_options(command, options)))
 
 
-def jailed_shell(*args, **options):
-    """Start a command in the jail and return its Future. See `shell`."""
-    return _sdk_shell_call("jailed_shell", args, options)
+def jailed_shell(command=_SHELL_UNSET, **options):
+    """Start a jailed command. It also accepts `allow_read_write` and `unix_connect`."""
+    return _shell_answer(
+        _host.jailed_shell(_shell_options(command, options, jailed=True))
+    )
 
 
 class _Fs:

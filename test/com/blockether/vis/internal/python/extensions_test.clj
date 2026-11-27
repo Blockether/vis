@@ -1706,9 +1706,9 @@
             seen
             (atom nil)]
 
-        (with-redefs [shell/jailed-shell (fn [_ opts]
-                                           (reset! seen opts)
-                                           {})]
+        (with-redefs [shell/start-shell! (fn [_ _ _ _ opts]
+                                            (reset! seen opts)
+                                            {})]
           (binding [extension/*current-environment* {:session-id "session-1" :workspace/root root}]
             (expect (= (str root "/repos/a") ((get doors "__vis_host_project_root__"))))
             (try ((get doors "__vis_host_jailed_shell__") {"command" "ls" "cwd" "src"})
@@ -2948,7 +2948,8 @@ def fetch_run(run_id, repo=None):
                            (constantly (io/file ext-dir "views"))
                            #'shell/trusted-extension-shell
                            (fn [_ opts]
-                             (swap! operations conj (get opts "op"))
+                             (swap! operations conj (or (get opts "op")
+                                                        (when (string? (get opts "command")) "start")))
                              (extension/success
                                {:result {"__vis_shell_task__" {"id" "gh-task" "token" "gh-token"
                                                               "snapshot" {"id" "gh-stop-test"
@@ -2994,7 +2995,7 @@ def fetch_run(run_id, repo=None):
                   (expect (true? (get-in answer [:result "__vis_attrs__" "is_stopped_by_human"])))
                   (expect (= "Stop CI monitoring"
                              (get-in answer [:result "__vis_attrs__" "human_note"])))
-                  (expect (= ["background" "cancel"] @operations))
+                  (expect (= ["start" "cancel"] @operations))
                   (expect (not-any? #(= sid (:session-id %)) (human-input/live-views))))
                 (finally (stop-view!))))))))))
 
@@ -6753,7 +6754,7 @@ vis.register_extension(vis.Extension(
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    from concurrent.futures import wait\n    assert not wait([handle], timeout=30).not_done\n    result = handle.result()\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
+  "import blockether.vis.extension as vis\ndef detect():\n    handle = vis.shell('printf regular-shell')\n    from concurrent.futures import wait\n    assert not wait([handle], timeout=30).not_done\n    result = handle.result()\n    return vis.ProviderCredential(result['out'], source='shell')\nvis.register_extension(vis.Extension(name='shell-provider', description='shell provider', providers=[vis.Provider(id='shell-provider', label='Shell provider', detect_fn=detect)]))")
 
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
@@ -6888,7 +6889,7 @@ vis.register_extension(vis.Extension(
     ;; policy snapshot bought nothing over the merged config read at every spawn.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    from concurrent.futures import wait\n    sh = vis.jailed_shell({'command':'echo latest'})\n    assert not wait([sh], timeout=5).not_done\n    return sh.result()['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
+       "import blockether.vis.extension as vis\ndef latest():\n    \"Use the jail.\"\n    from concurrent.futures import wait\n    sh = vis.jailed_shell('echo latest')\n    assert not wait([sh], timeout=5).not_done\n    return sh.result()['out']\ndef removed():\n    \"Report the removed session-snapshot API.\"\n    return [str(hasattr(vis, 'jailed_shell_session')), str(hasattr(vis._host, 'jailed_shell_session'))]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(latest), vis.Symbol(removed)]))"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -6922,7 +6923,7 @@ vis.register_extension(vis.Extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi'})\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [r['out'], sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell('echo hi')\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [r['out'], sh['stage']]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -6945,7 +6946,7 @@ vis.register_extension(vis.Extension(
     ;; Regression: the SDK exposes the process Task as a Future.
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\nfrom concurrent.futures import Future\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell({'command': 'echo hi', 'id': 'h'})\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [isinstance(sh, Future), r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\nfrom concurrent.futures import Future\ndef run():\n    \"Shell out.\"\n    sh = vis.jailed_shell('echo hi', id='h')\n    from concurrent.futures import wait\n    assert not wait([sh], timeout=5).not_done\n    r = sh.result()\n    return [isinstance(sh, Future), r['id'], sh.logs(offset=0)['stage'], r['stage'], r['exit'], sh.done(), sh.cancel()]\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run (symbol-fn (registered "jail") 'run)
               env {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
@@ -6955,7 +6956,7 @@ vis.register_extension(vis.Extension(
     "raises a failing host tool envelope instead of handing Python the envelope"
     (with-loaded
       {"jail.py"
-       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell({'command': 'nope'})\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
+       "import blockether.vis.extension as vis\ndef run():\n    \"Shell out.\"\n    return vis.jailed_shell('nope')\nvis.register_extension(vis.Extension(name='jail', description='jail', alias='j', symbols=[vis.Symbol(run)]))"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)

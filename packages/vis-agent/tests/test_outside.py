@@ -293,9 +293,8 @@ def test_log_sweep_preserves_fresh_empty_directories(tmp_path, with_outside):
     assert not stale.exists()
 
 
-@pytest.mark.parametrize("command", ["printf hello", ["printf", "hello"]])
-def test_shell_runs_a_command_and_answers_the_engine_shape(command):
-    run = _observed(vis.shell({"command": command}), 10)
+def test_shell_runs_a_command_and_answers_the_engine_shape():
+    run = _observed(vis.shell("printf hello"), 10)
     assert run["exit"] == 0
     assert run["out"] == "hello"
     assert run["status"] == "exited"
@@ -304,15 +303,15 @@ def test_shell_runs_a_command_and_answers_the_engine_shape(command):
 
 
 def test_a_completed_process_reports_its_final_state_without_a_result_reader():
-    run = vis.shell({"command": "true"})
+    run = vis.shell("true")
     assert wait([run], timeout=5).done == {run}
     assert (run["status"], run["exit"], run["is_eof"]) == ("exited", 0, True)
 
 
 def test_a_start_with_a_live_id_starts_no_second_process():
     # Before, the second start replaced the first run, and nothing could stop it.
-    first = vis.shell({"command": "sleep 30", "id": "live-id-test"})
-    again = vis.shell({"command": "sleep 30", "id": "live-id-test"})
+    first = vis.shell("sleep 30", id="live-id-test")
+    again = vis.shell("sleep 30", id="live-id-test")
     try:
         assert again["already_running"] is True
         assert again["pid"] == first["pid"]
@@ -325,7 +324,7 @@ def test_a_start_with_a_live_id_starts_no_second_process():
 # A command that read stdin hung for hours: nothing ever wrote to it and nothing closed it.
 def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
     started = time.monotonic()
-    sh = vis.shell({"command": "cat; echo DONE:$?"})
+    sh = vis.shell("cat; echo DONE:$?")
     run = _observed(sh, 10)
     assert run["status"] == "exited"
     assert run["out"] == "DONE:0\n"
@@ -333,11 +332,11 @@ def test_shell_stdin_is_empty_unless_the_command_asks_for_input():
     with pytest.raises(_outside.Refused, match="has exited"):
         sh.type("late")
 
-    asker = vis.shell({"command": "read x; echo GOT:$x", "stdin": "tty"})
+    asker = vis.shell("read x; echo GOT:$x", stdin="tty")
     asker.type("typed")
     assert _observed(asker, 10)["out"] == "GOT:typed\n"
-    with pytest.raises(_outside.Refused, match="stdin"):
-        vis.shell({"command": "true", "stdin": "pipe"})
+    with pytest.raises(ValueError, match="stdin"):
+        vis.shell("true", stdin="pipe")
 
 
 def _aged_log(path, days):
@@ -372,7 +371,7 @@ def test_shell_sweeps_old_logs_at_start_and_periodically(
 
     monkeypatch.setattr(_outside, "_sweep_logs", sweep)
     monkeypatch.setattr(_outside, "_LOG_SWEEP_INTERVAL_SECS", 0.01)
-    run = _observed(vis.shell({"command": "printf retention"}), 10)
+    run = _observed(vis.shell("printf retention"), 10)
     assert swept.wait(5)
     assert not stale.exists()
     assert not stale.parent.exists()
@@ -390,7 +389,7 @@ def test_shell_sweeps_old_logs_at_start_and_periodically(
     assert not later.parent.parent.exists()
     sweepers = list(_outside._LOG_SWEEPERS.values())
     assert len(sweepers) == 1 and sweepers[0][1].daemon
-    _observed(vis.shell({"command": "true"}), 10)
+    _observed(vis.shell("true"), 10)
     assert list(_outside._LOG_SWEEPERS.values()) == sweepers
 
 
@@ -486,10 +485,10 @@ def test_log_sweeper_start_failure_does_not_break_shell(monkeypatch):
 
     with monkeypatch.context() as patched:
         patched.setattr(threading.Thread, "start", fail_start)
-        run = _observed(vis.shell({"command": "printf survived"}), 10)
+        run = _observed(vis.shell("printf survived"), 10)
         assert run["exit"] == 0 and run["out"] == "survived"
         assert not _outside._LOG_SWEEPERS
-    _observed(vis.shell({"command": "true"}), 10)
+    _observed(vis.shell("true"), 10)
     assert len(_outside._LOG_SWEEPERS) == 1
 
 
@@ -509,7 +508,7 @@ def test_shell_logs_use_the_utc_date_and_keep_state_separate(
     started = datetime.fromisoformat("2026-09-14T00:00:01+00:00").timestamp()
     monkeypatch.setattr(_outside.time, "time", lambda: started)
 
-    run = _observed(vis.shell({"command": "printf dated"}), 10)
+    run = _observed(vis.shell("printf dated"), 10)
 
     assert run["exit"] == 0
     assert Path(run["log_path"]).parent == log_root / "2026-09-14" / "outside"
@@ -521,11 +520,11 @@ def test_shell_logs_use_the_utc_date_and_keep_state_separate(
 def test_shell_log_paths_survive_utc_midnight_without_overwriting(monkeypatch):
     clock = [datetime(2026, 9, 13, 23, 59, 59, tzinfo=UTC).timestamp()]
     monkeypatch.setattr(_outside.time, "time", lambda: clock[0])
-    first = _observed(vis.shell({"command": "printf first"}), 10)
+    first = _observed(vis.shell("printf first"), 10)
     first_path = Path(first["log_path"])
     clock[0] += 2
-    second = _observed(vis.shell({"command": "printf second"}), 10)
-    third = _observed(vis.shell({"command": "printf third"}), 10)
+    second = _observed(vis.shell("printf second"), 10)
+    third = _observed(vis.shell("printf third"), 10)
 
     assert first_path.parent.parent.name == "2026-09-13"
     assert Path(second["log_path"]).parent.parent.name == "2026-09-14"
@@ -549,24 +548,29 @@ def test_shell_environment_overlays_the_parent_without_mutating_it(
     names = ["PATH", "VIS_SHELL_INHERITED", "VIS_SHELL_OVERRIDE"]
     expected = {name: os.environ.get(name) for name in names}
     expected.update(environment or {})
-    options = {
-        "command": [
+    import shlex
+
+    command = shlex.join(
+        [
             sys.executable,
             "-c",
             "import json, os; "
             f"print(json.dumps({{name: os.environ.get(name) for name in {names!r}}}))",
         ]
-    }
-    if environment is not None:
-        options["env"] = environment
-    run = _observed(vis.shell(options), 10)
+    )
+    run = _observed(vis.shell(command, env=environment), 10)
     assert run["exit"] == 0
     assert json.loads(run["out"]) == expected
     assert os.environ["VIS_SHELL_OVERRIDE"] == "parent"
 
 
+def test_shell_rejects_a_bad_environment_name_before_preparing_cwd(tmp_path):
+    with pytest.raises(_outside.Refused, match="not an environment variable name"):
+        vis.shell("true", env={"VIS-BAD": "value"}, cwd=str(tmp_path / "missing"))
+
+
 def test_a_shell_handle_stops_what_it_started():
-    run = vis.shell({"command": "sleep 30"})
+    run = vis.shell("sleep 30")
     assert run["status"] == "running"
     assert run.cancel()
     assert not run.cancel()
@@ -598,11 +602,9 @@ def _ends(pid):
 
 
 # Report 2026-11-10: a stopped shell left the children of its command running under
-# init, because only the command itself got the signal. The start option
-# `timeout_secs` does not stop the process. `cancel()` ends the process group.
-@pytest.mark.parametrize("start", [{}, {"timeout_secs": 1}])
-def test_ending_a_shell_ends_the_processes_its_command_started(start):
-    run = vis.shell({"command": "sleep 30 & echo $!; wait", **start})
+# init, because only the command itself got the signal. `cancel()` ends the group.
+def test_ending_a_shell_ends_the_processes_its_command_started():
+    run = vis.shell("sleep 30 & echo $!; wait")
     pid = _started_pid(run)
     assert wait([run], timeout=2).not_done == {run}
     assert run.cancel()
@@ -619,7 +621,7 @@ def test_a_host_that_exits_ends_the_shells_it_left_running():
         import time
         import blockether.vis.extension as vis
 
-        run = vis.shell({"op": "background", "command": "sleep 30 & echo $!; wait"})
+        run = vis.shell("sleep 30 & echo $!; wait")
         while not run.logs()["out"].strip():
             time.sleep(0.02)
         print(run.logs()["out"].strip(), flush=True)
@@ -642,52 +644,16 @@ def test_a_host_that_exits_ends_the_shells_it_left_running():
 
 
 def test_shell_reads_the_last_lines_from_a_negative_offset():
-    run = _observed(vis.shell({"command": "printf 'one\ntwo\nthree\n'"}), 10)
+    run = _observed(vis.shell("printf 'one\ntwo\nthree\n'"), 10)
     assert run.logs(-2)["out"].splitlines() == ["two", "three"]
 
 
-@pytest.mark.parametrize("op", ["run", "background"])
-def test_every_spawn_op_the_engine_speaks_starts_a_process(op):
-    # The engine's `shell` takes `{"op": "run"|"background", …}`; an extension that
-    # writes what the engine documents must not be refused out here.
-    started = vis.shell({"op": op, "command": "printf hi"})
-    run = _observed(started, 10)
-    assert run["exit"] == 0
-    assert run["out"] == "hi"
-
-
 def test_a_named_spawn_answers_the_same_handle_the_next_call_reaches():
-    run = vis.shell({"op": "background", "id": "tail-me", "command": "sleep 30"})
+    run = vis.shell("sleep 30", id="tail-me")
     assert run["id"] == "tail-me"
     assert run.cancel()
     with pytest.raises(CancelledError):
         _observed(run, 5)
-
-
-def test_an_op_no_engine_speaks_is_refused_by_the_whole_vocabulary():
-    with pytest.raises(_outside.Refused) as refusal:
-        vis.shell({"op": "detonate", "command": "printf hi"})
-    said = str(refusal.value)
-    assert "detonate" in said
-    for op in ("run", "background", "logs", "send"):
-        assert f'"{op}"' in said
-    assert '"wait"' not in said and '"stop"' not in said
-
-
-@pytest.mark.parametrize(
-    ("op", "words"),
-    [
-        ("logs", "shell: unknown id 'never-started'; use the handle returned by"),
-        ("wait", 'Unknown shell op "wait"'),
-        ("send", "No background shell 'never-started' in this session — start one"),
-        ("stop", 'Unknown shell op "stop"'),
-    ],
-)
-def test_a_handle_op_names_the_handle_it_cannot_find(op, words):
-    # The words of the engine, so that one message is true in both hosts.
-    with pytest.raises(_outside.Refused) as refusal:
-        vis.shell({"op": op, "id": "never-started"})
-    assert words in str(refusal.value)
 
 
 # -- Asking a human ------------------------------------------------------------

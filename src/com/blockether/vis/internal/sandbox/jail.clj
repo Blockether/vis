@@ -725,50 +725,56 @@
   [name reason]
   (throw (ex-info (str "env " name ": " reason) {:type ::call-env-refused :name name})))
 
-(defn- call-env-value
-  "ONE delta value: nil to unset, a literal as its string, or a source map
-   resolved exactly as the `environment:` block resolves the same shape."
-  [k v]
-  (cond (nil? v) nil
-        (string? v) v
-        (or (number? v) (boolean? v)) (str v)
-        (map? v) (let [entry
-                       (into {}
-                             (map (fn [[ek ev]]
-                                    [(if (keyword? ek) (name ek) (str ek)) ev]))
-                             v)
+(defn- call-env-source [k v]
+  (let [entry (into {} (map (fn [[ek ev]] [(if (keyword? ek) (name ek) (str ek)) ev])) v)
+        sources (filterv #(contains? entry %) call-env-source-keys)
+        source (first sources)
+        value (get entry source)
+        allowed (cond-> #{source} (= source "keychain") (conj "account"))]
+    (when-not (and (= 1 (count sources)) (every? allowed (keys entry)))
+      (refuse-call-env k "a map value must name its source: exactly one of env, dotenv, keychain, command, or literal."))
+    (when-not (case source
+                "command" (and (sequential? value) (seq value) (every? util/non-blank-string? value))
+                "literal" (or (string? value) (number? value) (boolean? value))
+                "keychain" (and (util/non-blank-string? value)
+                                (or (nil? (get entry "account")) (string? (get entry "account"))))
+                (util/non-blank-string? value))
+      (refuse-call-env k (if (= source "command")
+                          (str "command source must be a non-empty argv list of non-blank strings"
+                               (if (string? value) ", not a shell string." "."))
+                          (str "invalid " source " source value."))))
+    entry))
 
-                       source
-                       (some (fn [sk]
-                               (when (some? (get entry sk)) sk))
-                             call-env-source-keys)]
+(defn validate-call-env
+  "Validate a call's environment map without resolving its sources."
+  [env]
+  (cond (nil? env) {}
+        (not (map? env))
+        (throw (ex-info "env must be a map of variable names to values or sources."
+                        {:type ::call-env-refused}))
+        :else (into {}
+                    (map (fn [[k v]]
+                           (let [k (str/trim (if (keyword? k) (name k) (str k)))]
+                             (when-not (re-matches call-env-name-pattern k)
+                               (refuse-call-env (pr-str k) "not an environment variable name."))
+                             (when (pre-exec-hijack? k)
+                               (refuse-call-env k "runs code before the process jail. No call may set it."))
+                             [k (cond (map? v) (call-env-source k v)
+                                      (or (nil? v) (string? v) (number? v) (boolean? v)) v
+                                      :else (refuse-call-env k "value must be a string, number, boolean, source map, or null."))])))
+                    env)))
 
-                   (when-not source
-                     (refuse-call-env
-                       k
-                       (str "a map value must name its source — "
-                            (str/join ", " (map #(str "{\"" % "\": …}") call-env-source-keys))
-                            " — got "
-                            (pr-str v)
-                            ".")))
-                   (when (= "command" source)
-                     (let [command (get entry source)]
-                       (when-not (and (sequential? command)
-                                      (seq command)
-                                      (every? util/non-blank-string? command))
-                         (refuse-call-env
-                           k
-                           (str "command source must be a non-empty argv list of non-blank strings"
-                                (if (string? command)
-                                  ", not a shell string."
-                                  (str " — got " (pr-str command) ".")))))))
-                   (or (config/inline-environment-value k entry)
-                       (refuse-call-env k (str "the " source ": source resolved to no value."))))
-        :else (refuse-call-env k
-                               (str "value must be a literal (string, number, boolean), a source"
-                                    " map, or null to unset — got "
-                                    (pr-str v)
-                                    "."))))
+(defn resolve-call-env
+  "Resolve the source values in an environment map validated by [[validate-call-env]]."
+  [env]
+  (into {}
+        (map (fn [[k v]]
+               [k (if (map? v)
+                    (or (config/inline-environment-value k v)
+                        (refuse-call-env k (str "the " (some #(when (contains? v %) %) call-env-source-keys)
+                                                ": source resolved to no value.")))
+                    (some-> v str))]))
+        env))
 
 (defn call-env-values
   "Resolve ONE call's `env` delta into `{NAME value-or-nil}`, where nil means
@@ -789,24 +795,7 @@
    request for ONE variable that resolved to nothing is an error here, not the
    quiet `:unset` a standing declaration is allowed."
   [env]
-  (cond (nil? env) {}
-        (not (map? env))
-        (throw (ex-info (str "env must be a map of NAME → value (a literal, or"
-                             " {\"env\"|\"dotenv\"|\"keychain\"|\"command\"|\"literal\": …}), got "
-                             (pr-str env))
-                        {:type ::call-env-refused}))
-        :else (into {}
-                    (map (fn [[k v]]
-                           (let [k (str/trim (str (if (keyword? k) (name k) k)))]
-                             (when-not (re-matches call-env-name-pattern k)
-                               (refuse-call-env (pr-str k) "not an environment variable name."))
-                             (when (pre-exec-hijack? k)
-                               (refuse-call-env
-                                 k
-                                 (str "runs code in the unconfined detacher/enforcer hops,"
-                                      " before the jail exists — no call may set it.")))
-                             [k (call-env-value k v)])))
-                    env)))
+  (resolve-call-env (validate-call-env env)))
 
 (defn with-call-env
   "`policy` with ONE call's resolved delta merged over its project environment.

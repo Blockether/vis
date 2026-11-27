@@ -29,6 +29,27 @@ def four_lines():
     return _observed(vis.shell("printf 'one\\ntwo\\nthree\\nfour\\n'"), 10)
 
 
+@pytest.mark.parametrize(
+    "options, option",
+    [
+        ({"op": "background"}, "op"),
+        ({"op": "logs"}, "op"),
+        ({"op": 1}, "op"),
+        ({"timeout_secs": 1}, "timeout_secs"),
+        ({"cwd": 5}, "cwd"),
+        ({"id": []}, "id"),
+        ({"env": []}, "env"),
+        ({"stdin": False}, "stdin"),
+        ({"allow_read_write": ["/tmp"]}, "allow_read_write"),
+    ],
+)
+def test_invalid_options_do_not_start_a_process(options, option, tmp_path):
+    marker = tmp_path / "spawned"
+    with pytest.raises((TypeError, ValueError), match=option):
+        vis.shell(f"touch '{marker}'", **options)
+    assert not marker.exists()
+
+
 def test_a_field_answers_by_attribute_and_a_miss_names_the_fields(four_lines):
     assert four_lines.exit == 0
     assert four_lines.out == four_lines.stdout == four_lines.stderr
@@ -73,7 +94,7 @@ def test_done_callback_reads_the_outcome_without_a_caller_waiting(complete):
         sh.cancel()
 
 
-def test_field_reads_follow_the_process_before_and_after_completion():
+def test_field_reads_are_local_and_snapshot_reads_the_live_process():
     sh = vis.shell("printf start; read word; printf '%s' \"$word\"", stdin="tty")
     try:
         with pytest.raises(
@@ -85,7 +106,8 @@ def test_field_reads_follow_the_process_before_and_after_completion():
         while "start" not in sh.logs().out and time.monotonic() < deadline:
             time.sleep(0.01)
         assert sh.status == "running"
-        assert sh["out"] == "start"
+        assert sh["out"] == ""
+        assert sh.snapshot().out == "start"
         assert sh.get("exit") is None
         assert "timed_out" not in sh.keys()
         assert "timeout_secs" not in sh.keys()
@@ -105,10 +127,11 @@ def test_asyncio_wait_reads_the_live_shell_without_cancelling():
             done, pending = await asyncio.wait([sh], timeout=0.02)
             assert not done and pending == {sh}
             deadline = time.monotonic() + 5
-            while "start" not in sh.out and time.monotonic() < deadline:
+            while "start" not in sh.snapshot().out and time.monotonic() < deadline:
                 await asyncio.sleep(0.01)
             assert sh.status == "running"
-            assert sh["out"] == "start"
+            assert sh["out"] == ""
+            assert sh.snapshot().out == "start"
             assert sh.get("exit") is None
             sh.type("finish")
             done, pending = await asyncio.wait([sh], timeout=5)
@@ -211,17 +234,18 @@ def test_timed_out_wait_does_not_keep_the_event_loop_alive():
         sh.cancel()
 
 
-def test_live_field_read_uses_the_bounded_tail():
+def test_live_snapshot_uses_the_bounded_tail():
     sh = vis.shell(
         "printf BEGIN; printf '%01000000d' 0; printf END; read word", stdin="tty"
     )
     try:
         deadline = time.monotonic() + 5
-        while "END" not in sh.out and time.monotonic() < deadline:
+        while "END" not in sh.snapshot().out and time.monotonic() < deadline:
             time.sleep(0.01)
-        out = sh.out
+        snapshot = sh.snapshot()
+        out = snapshot.out
         assert out.endswith("END") and "BEGIN" not in out
-        assert len(out) <= 262144 and sh.offset > 0
+        assert len(out) <= 262144 and snapshot.offset > 0
         sh.type("finish")
         assert wait([sh], timeout=5).done == {sh}
         assert sh.result().out.startswith("BEGIN")
@@ -298,16 +322,16 @@ def test_cancelled_shell_notifies_stdlib_waiters_before_callbacks():
     ("options", "message"),
     [
         ({"command": "true"}, "takes no command"),
-        ({"text": "hi"}, "takes no text payload"),
+        ({"text": "hi"}, "Unknown shell option.*text"),
     ],
 )
 def test_attach_refuses_command_and_text(options, message):
-    with pytest.raises(RuntimeError, match=message):
+    with pytest.raises(TypeError, match=message):
         vis.shell(op="attach", id="attach-invalid", **options)
 
 
 @pytest.mark.parametrize(
-    ("alias", "cancel"), [(" attach-existing-future ", False), (413, True)]
+    ("alias", "cancel"), [(" attach-existing-future ", False), ("413", True)]
 )
 def test_attach_recovers_the_live_generation_without_starting_a_process(alias, cancel):
     with pytest.raises(RuntimeError, match="No running background shell"):
@@ -369,12 +393,12 @@ def test_a_released_extension_still_waits_through_result_timeout():
 
 
 @pytest.mark.parametrize("door", ["shell", "jailed_shell"])
-def test_a_command_string_and_keyword_options_make_one_options_map(door):
+def test_start_rejects_a_second_positional_argument(door):
     start = getattr(vis, door)
     if door == "jailed_shell":
         with pytest.raises(_outside.Refused, match="needs the Vis host's jail"):
             start("true")
-    with pytest.raises(TypeError, match=f"{door} takes a command and one options map"):
+    with pytest.raises(TypeError, match="positional arguments"):
         start("ls", "src")
 
 
@@ -424,15 +448,3 @@ def test_a_log_page_reads_as_text(four_lines):
 def test_only_a_log_page_continues(four_lines):
     with pytest.raises(RuntimeError, match="shell log paging starts on a log page"):
         next(four_lines)
-
-
-def test_the_outside_host_reads_the_option_names_of_the_engine(four_lines):
-    def logs(**options):
-        return _outside.shell({"op": "logs", "id": four_lines["id"], **options})
-
-    assert logs(n=1)["out"] == "four\n"
-    assert logs(tail=1)["out"] == "four\n"
-    assert logs(start=14)["out"] == "four\n"
-    assert logs(offset=0, bytes=3)["out"] == "one"
-    first = logs(offset=0, lines=1)
-    assert (first["out"], first["next_offset"], first["is_eof"]) == ("one\n", 4, False)

@@ -15,7 +15,6 @@ import pathlib
 import re
 from concurrent.futures import Future
 from dataclasses import FrozenInstanceError
-from types import SimpleNamespace
 
 import blockether.vis.extension as vis
 import gh
@@ -1243,8 +1242,8 @@ def test_capture_does_not_accept_partial_output_from_a_timed_out_process(monkeyp
     operations = []
     output_paths = []
 
-    def start(options):
-        path = pathlib.Path(gh.shlex.split(options["command"])[-2])
+    def start(command, **options):
+        path = pathlib.Path(gh.shlex.split(command)[-2])
         path.write_text('{"status": "completed"}')
         output_paths.append(path)
 
@@ -1296,7 +1295,7 @@ def test_stop_during_a_cli_request_releases_the_process_and_reports_it(
         return native_wait(handles, **kwargs)
 
     monkeypatch.setattr(gh, "wait", stop_during_wait)
-    monkeypatch.setattr(vis, "shell", lambda _: process)
+    monkeypatch.setattr(vis, "shell", lambda *_args, **_options: process)
     polls = []
 
     def poll():
@@ -1389,7 +1388,7 @@ def test_cli_terminal_results_keep_the_exit_status(
         return native_wait(handles, timeout=timeout)
 
     monkeypatch.setattr(gh, "wait", observed_wait)
-    monkeypatch.setattr(vis, "shell", lambda _: process)
+    monkeypatch.setattr(vis, "shell", lambda *_args, **_options: process)
     if watching:
         with vis.live("CLI test", [vis.ui.status("state", "Running")]) as view:
             with gh._watch_commands(view):
@@ -1414,7 +1413,7 @@ def test_cli_deadline_is_not_extended_by_view_events(recorder, monkeypatch):
 
     monkeypatch.setattr(gh.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(gh, "wait", wait_with_changes)
-    monkeypatch.setattr(vis, "shell", lambda _: process)
+    monkeypatch.setattr(vis, "shell", lambda *_args, **_options: process)
     with vis.live("CLI test", [vis.ui.button("go", "Go")]) as view:
         with gh._watch_commands(view):
             exit_code, text = gh._capture("gh run view 42", seconds=0.3)
@@ -1431,7 +1430,9 @@ class _LoginProcess(dict, Future):
     def __init__(self, output):
         dict.__init__(self, status="running", exit=None, out="")
         Future.__init__(self)
-        self.set_result({"status": "exited", "exit": 0, "out": "Authentication complete."})
+        self.set_result(
+            {"status": "exited", "exit": 0, "out": "Authentication complete."}
+        )
         self.output = output
         self.sent = []
         self.stopped = False
@@ -1475,8 +1476,8 @@ def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):
         asks.append((title, fields, options))
         return {"authorized": True}
 
-    def start(options):
-        started.append(options)
+    def start(command, **options):
+        started.append(dict(options, command=command))
         return process
 
     monkeypatch.setattr(gh, "_capture", capture)
@@ -1493,7 +1494,7 @@ def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):
         "gh --version",
         "gh auth status --hostname github.com",
     ]
-    assert started[0]["op"] == "background"
+    assert started[0]["stdin"] == "tty"
     assert started[0]["id"].startswith("gh-login-")
     assert started[0]["command"] == (
         "GH_BROWSER=true gh auth login --hostname github.com "
@@ -1550,7 +1551,7 @@ def test_cancelling_device_login_stops_the_waiting_process(monkeypatch):
             (0, "gh version 2") if command == "gh --version" else (1, "signed out")
         ),
     )
-    monkeypatch.setattr(gh.vis, "shell", lambda options: process)
+    monkeypatch.setattr(gh.vis, "shell", lambda *_args, **_options: process)
     monkeypatch.setattr(gh.vis, "ask", lambda *args, **kwargs: Cancelled())
 
     with pytest.raises(gh.GhMissing, match="cancelled by the human"):

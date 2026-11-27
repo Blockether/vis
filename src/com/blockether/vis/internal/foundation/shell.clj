@@ -15,7 +15,7 @@
 
    1. `sh = await shell(\"ls\")` — `bash -lc` in the workspace root, spawned under
       a REAL pty, its merged output streamed verbatim to a log FILE and registered
-      as a session resource. `sh.exit` and `sh.out` read the current state. Output is
+      as a session resource. `sh.snapshot()` reads the current state. Output is
       bounded at READ time to a head+tail budget per stream, so only the MIDDLE of a
       huge stream is dropped, never its start or end. A non-zero exit is DATA the
       model reads, not an error.
@@ -40,11 +40,8 @@
    There are no id-taking verbs to re-type an id into; re-issuing a LIVE id gives
    the same handle back.
 
-   Each field read on the Task gives the current process state. The final result
-   and log pages are fixed maps.
-
-   `shell-dispatch` survives as the INTERNAL grammar the Python-extension entry
-   points use, since those hand-author an options map and genuinely need an `op`.
+   Task fields give the start result until settlement. The final result and log
+   pages are fixed maps. `shell-dispatch` handles internal lifecycle operations.
 
    EVERY result of EVERY stage — including an argv run, which uses the same runner
    — is the one [[shell-result-base]] key set: `stage` names the producer and is
@@ -548,8 +545,9 @@
    pre-exec hijack, a source that produced nothing) denies that command by name
    instead of running it without the variable it asked for."
   [env opts]
-  (cond-> (process-jail/with-call-env (jail-policy env) (process-jail/call-env-values (get opts "env")))
-    (:session/scratch env) (assoc :session/scratch (:session/scratch env))))
+  (let [delta (or (::validated-env opts) (process-jail/validate-call-env (get opts "env")))]
+    (cond-> (process-jail/with-call-env (jail-policy env) (process-jail/resolve-call-env delta))
+      (:session/scratch env) (assoc :session/scratch (:session/scratch env)))))
 
 (defn- command-note
   "The single advisory line a command result carries. Truncation wins — it changes
@@ -1017,7 +1015,7 @@
       (throw (ex-info "shell needs a non-blank command." {:type ::blank-command})))
     line))
 
-;; BACKGROUND — Python sandbox: `await shell({"command": "npm run dev", "id": "dev"})`
+;; BACKGROUND — Python sandbox: `await shell("npm run dev", id="dev")`
 
 (defonce ^:private bg-procs
   ;; { session-key -> { id -> {:proc :exit :pump :stopped? :command :dir
@@ -1701,7 +1699,9 @@
   "Return the shell process descriptor at a Python-facing start boundary."
   [{:keys [result] :as envelope}]
   (if-let [entry (::process (meta envelope))]
-    (with-meta (assoc envelope :result {"__vis_shell_task__" (process-descriptor entry result)}) nil)
+    (let [snapshot (cond-> result
+                     (= "running" (get result "status")) (dissoc "timed_out" "timeout_secs"))]
+      (with-meta (assoc envelope :result {"__vis_shell_task__" (process-descriptor entry snapshot)}) nil))
     envelope))
 
 (defn- stdin-tty?
@@ -2290,14 +2290,48 @@
         (let [v (get opts (name (first ks)))]
           (if (some? v) v (recur (rest ks))))))))
 
+(defn- validate-shell-options!
+  "Check public start or attach options before any process preparation."
+  [opts jailed?]
+  (when-not (opts-arg? opts)
+    (throw (ex-info "shell options must be a map." {:type ::bad-options})))
+  (let [op (get opts "op")
+        attach? (contains? opts "op")
+        allowed (cond attach? #{"op" "id"}
+                      jailed? #{"command" "cwd" "id" "env" "stdin" "allow_read_write" "unix_connect"}
+                      :else #{"command" "cwd" "id" "env" "stdin"})]
+    (when (and attach? (not= "attach" op))
+      (throw (ex-info (str "Unknown shell op " (pr-str op) "; use 'attach' or omit op.")
+                      {:type ::unknown-op :op op})))
+    (doseq [[k v] opts]
+      (when-not (allowed k)
+        (throw (ex-info (str "Unknown shell option " (pr-str k) ".")
+                        {:type ::bad-option :option k})))
+      (when (and (some? v)
+                 (not (case k
+                        ("cwd" "id" "command") (string? v)
+                        "env" (opts-arg? v)
+                        "stdin" (contains? #{"tty" "null"} v)
+                        true)))
+        (throw (ex-info (str "Invalid value for shell `" k "`.")
+                        {:type ::bad-option :option k}))))
+    (if attach?
+      (when-not (util/non-blank-string? (get opts "id"))
+        (throw (ex-info "shell op 'attach' requires a non-blank id." {:type ::missing-id})))
+      (when-not (util/non-blank-string? (get opts "command"))
+        (throw (ex-info "shell needs a non-blank command." {:type ::blank-command}))))
+    (cond-> (into {} opts)
+      (not attach?) (assoc ::validated-env (process-jail/validate-call-env (get opts "env"))))))
+
+(defn- public-shell-dispatch [env opts]
+  (if (= "attach" (get opts "op"))
+    (shell-attach env (str/trim (get opts "id")))
+    (let [opts (if-let [prepare (:shell-options-fn env)] (prepare opts) opts)]
+      (run-of-background (start-shell! env (some-> (get opts "id") str/trim not-empty)
+                                       (get opts "command") (get opts "cwd") opts)))))
+
 (defn shell-dispatch
-  "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
-   (`trusted-extension-shell` and `jailed-shell`) whose
-   caller authors an options map by hand and therefore genuinely needs an `op`
-   discriminator. The MODEL never reaches this: it calls the `shell` PYTHON verb —
-   one call that spawns one command — and drives what came back through the
-   HANDLE's own methods (`sh.logs()`, `sh.type(\"y\")`, `sh.cancel()`), so one
-   disambiguate."
+  "Dispatch internal shell lifecycle operations, including capability-bound logs and input."
   [env opts]
   (when-not (opts-arg? opts)
     (throw (ex-info "shell takes one options map, e.g. shell({\"command\": \"ls\"})."
@@ -2456,16 +2490,15 @@
    subprocess access; this is the result-shaped convenience API for the same trust
    boundary. Foreground calls therefore work outside a session too."
   [env opts]
-  (shell-dispatch (-> (or env {})
-                      (assoc :shell-origin (or (:shell-origin env) "trusted-extension"))
-                      ;; Unconfined, but the workspace's `.env` and the operator's
-                      ;; `environment:` declarations still apply: they say where a variable
-                      ;; comes from, not who may see it.
-                      (assoc :jail-policy-fn (constantly {:disabled? true
-                                                          :env-values
-                                                          (config/child-environment-values)}))
-                      (assoc-in [:security-policy :jail-enabled] false))
-                  opts))
+  (let [opts (validate-shell-options! opts false)]
+    (public-shell-dispatch (-> (or env {})
+                               (assoc :shell-origin (or (:shell-origin env) "trusted-extension"))
+                               ;; The project environment also applies to an unconfined child.
+                               (assoc :jail-policy-fn (constantly {:disabled? true
+                                                                   :env-values
+                                                                   (config/child-environment-values)}))
+                               (assoc-in [:security-policy :jail-enabled] false))
+                           opts)))
 
 (defn- granted-paths
   "Exact paths a trusted extension hands its OWN jailed child, on top of the session
@@ -2590,7 +2623,8 @@
    rendezvous endpoint it created and nothing else. A disabled jail ignores all of
    them."
   [env opts]
-  (let [declared
+  (let [opts (validate-shell-options! opts true)
+        declared
         (extension/current-extension-grants)
 
         grants
@@ -2600,7 +2634,7 @@
                (granted-paths opts :allow_read_write "allow_read_write"))
          :unix-connect (granted-paths opts :unix_connect "unix_connect")}]
 
-    (shell-dispatch (-> (or env {})
+    (public-shell-dispatch (-> (or env {})
                         (assoc :shell-origin (or (:shell-origin env) "jailed-extension"))
                         (assoc :jail-policy-fn #(with-granted-paths (latest-jail-policy env)
                                                                     grants)))
@@ -2666,8 +2700,18 @@
   "Start or attach to a managed shell. See the `shell` symbol for the sandbox contract."
   {:arglists '([command] [command opts])}
   [env & args]
-  (let [opts (shell-call-opts ["command"] args)]
-    (task-result (shell-dispatch env (assoc opts "op" (if (= "attach" (get opts "op")) "attach" "run"))))))
+  (let [[command opts] (if (and (= 1 (count args)) (opts-arg? (first args)))
+                         (if (::python-host/keyword-arguments (meta (first args)))
+                           [nil (first args)]
+                           [(first args) nil])
+                         args)
+        expected (if (some? command) 2 1)]
+    (when (or (> (count args) expected) (and (some? opts) (not (opts-arg? opts))))
+      (throw (ex-info "shell takes one command and keyword options." {:type ::bad-options})))
+    (when (and (some? command) (contains? opts "command"))
+      (throw (ex-info "shell command is named twice." {:type ::bad-options})))
+    (let [opts (cond-> (into {} opts) (some? command) (assoc "command" command))]
+      (task-result (public-shell-dispatch env (validate-shell-options! opts false))))))
 
 (defn shell-logs
   "`page = sh.logs()` — read a background shell's log from a byte offset, or the
@@ -2812,7 +2856,7 @@
      (str
        "Use `sh = await shell(command, cwd=dir)` to start one `bash -lc` command under a terminal. "
        "The call starts a Task that gives the running process handle. `result = await sh` waits for the exit. "
-       "Read `sh.status` or `sh.out` for the current state. "
+       "Use `sh.snapshot()` for current state. The Task fields give the start or final result. "
        "Use `done, pending = await asyncio.wait([sh], timeout=seconds)` to wait up to a limit "
        "without cancelling the process. `sh.cancel()` requests cancellation. "
        "Use `await shell(op=\"attach\", id=alias)` to recover a live handle from the same trust origin "
@@ -2825,7 +2869,7 @@
        "the command.\n\n"
        "Standard input gives end of input by default. Use `stdin=\"tty\"` to let the program read "
        "`sh.type(text)` or input from a person. `sh.type(text)` returns `sh`. "
-       "`sh.waiting_for_input` is true when a program waits for input from its terminal (Linux only). "
+       "`sh.snapshot().waiting_for_input` is true when a program waits for input from its terminal (Linux only). "
        "After 30 seconds, a process with little CPU use and no output can have a `note`.\n\n"
        "Keep command output. Read or filter the log in Python instead of using `| head`, `| tail`, "
        "`| grep`, `2>/dev/null`, or `> file` to trim it. A pipeline reports the exit of its last command.\n\n"
@@ -2836,7 +2880,7 @@
        "```python\nsh = await shell(\"npm test\", env={\"NODE_ENV\": \"test\"})\nresult = await sh\n```")
      :params [{:name "id" :note "the live shell alias"} {:name "cwd"}
               {:name "op" :note "attach to a live alias without starting a command"}
-              {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}
+              {:name "env" :note "THIS run's variables, over the project's"}
               {:name "stdin" :note "\"tty\" lets the program read sh.type; empty by default"}]
      :ticker-fn (shell-ticker "run")
      :inject-env? true
@@ -2915,7 +2959,7 @@
     (str "## Shell\n"
          "Use `shell` to run programs. Use Python for file and data work. "
          "`sh = await shell(cmd)` gives the running handle, not the result. "
-         "Read `sh.status` and `sh.out` for the current state. "
+         "Use `sh.snapshot()` for current state. The Task fields give the start or final result. "
          "Use `await asyncio.wait([sh], timeout=2)` to wait up to a limit without cancelling. "
          "`await sh` waits for the exit. See `doc(\"shell\")`.")))
 

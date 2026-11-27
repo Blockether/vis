@@ -3,7 +3,6 @@
   "exceptions": {
     "pipe": "Outside Vis, a child process has pipes and no terminal. A line ends with one byte, typed text has no echo, `type` needs a command that started with `stdin: tty`, and Ctrl-D does not end the input.",
     "sh": "Outside Vis, the command runs with `/bin/sh -c`. The engine runs it with `bash -lc`.",
-    "raw-op": "`vis.tools.shell` starts a command or attaches to a running alias. It does not take the raw logs or send operations.",
     "op-key": "The answer of the `shell` tool has the `op` key. The SDK handle does not have it.",
     "local": "Outside Vis, no session holds the shell. `attach` is empty, `note` says that the command is a local process, and `keys` is empty after `type`.",
     "roots": "`vis.tools.shell` is the `shell` tool of the model. It keeps the working directory in the filesystem roots of the session, and it checks that first.",
@@ -74,11 +73,6 @@
   "cases": [
     {
       "name": "logs reads the last page",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs())"
@@ -89,15 +83,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a negative offset reads the last lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(-5))"
@@ -108,15 +100,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "lines from an offset",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(0, 10))"
@@ -127,15 +117,13 @@
         61,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a negative offset and lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(-5, 2))"
@@ -146,15 +134,13 @@
         54,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "lines reads the last lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(lines=2))"
@@ -165,15 +151,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "tail means lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(tail=2))"
@@ -184,15 +168,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "n means lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(n=2))"
@@ -203,15 +185,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "lines zero is no line window",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(lines=0))"
@@ -222,15 +202,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "start means offset",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(start=12))"
@@ -241,15 +219,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "an offset and lines",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(offset=12, lines=2))"
@@ -260,15 +236,13 @@
         24,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "negative lines end at the offset",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(24, -2))"
@@ -279,15 +253,13 @@
         24,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "negative lines end at the log end",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(lines=-2))"
@@ -298,15 +270,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "more negative lines than the log holds",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(12, -9))"
@@ -317,15 +287,13 @@
         12,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "limit without an offset reads the last bytes",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(limit=20))"
@@ -336,15 +304,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "limit from an offset",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(0, limit=20))"
@@ -355,15 +321,13 @@
         20,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "bytes means limit",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(0, bytes=3))"
@@ -374,15 +338,13 @@
         3,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "an offset after the end",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(10**9))"
@@ -393,15 +355,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "limit zero reads one byte",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(limit=0))"
@@ -412,15 +372,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a negative limit is refused",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(limit=-1))"
@@ -428,15 +386,13 @@
       "expect": {
         "error": "limit must not be negative, got -1.",
         "is_runtime_error": true
-      }
+      },
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "lines are found in the limit window",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(lines=3, limit=10))"
@@ -447,15 +403,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "last lines are found in the limit window",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(-5, limit=10))"
@@ -466,15 +420,13 @@
         75,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "limit keeps a whole character at the end",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(0, limit=5))"
@@ -485,15 +437,13 @@
         4,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
       ]
     },
     {
       "name": "an offset inside a character moves forward",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(3, limit=6))"
@@ -504,15 +454,13 @@
         8,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
       ]
     },
     {
       "name": "the last bytes start at a whole character",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(limit=3))"
@@ -523,15 +471,13 @@
         20,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'za\\305\\274\\303\\263\\305\\202\\304\\207 g\\304\\231\\305\\233l\\304\\205\\n'"
       ]
     },
     {
       "name": "one page holds 16384 bytes",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; seq 1 5000"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "p = sh.logs()",
@@ -544,15 +490,13 @@
         23893,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; seq 1 5000"
       ]
     },
     {
       "name": "pages walk a long log",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; seq 1 5000"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "p = sh.logs(0)",
@@ -572,15 +516,13 @@
         ],
         2,
         null
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; seq 1 5000"
       ]
     },
     {
       "name": "limit has a maximum",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; seq 1 60000"
-        }
-      ],
       "steps": [
         "p = finish(sh, 60).logs(0, limit=10**7)",
         "answer = [len(p['out'])] + view(p)[1:]"
@@ -591,15 +533,13 @@
         262144,
         false,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; seq 1 60000"
       ]
     },
     {
       "name": "wait answers the output and the exit",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "result = finish(sh, 30)",
         "answer = view(result, 'stage', 'status', 'exit', 'timed_out', 'timeout_secs', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof', 'waiting_for_input', 'already_running')"
@@ -617,15 +557,13 @@
         true,
         false,
         false
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "wait holds a long output whole",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; seq 1 5000"
-        }
-      ],
       "steps": [
         "result = finish(sh, 30)",
         "answer = [len(result['out']), result['out'][:12]] + view(result)[1:]"
@@ -637,15 +575,13 @@
         23893,
         true,
         0
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; seq 1 5000"
       ]
     },
     {
       "name": "wait cuts the middle of a very long output",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; seq 1 80000"
-        }
-      ],
       "steps": [
         "result = finish(sh, 60)",
         "answer = [len(result['out']), result['out'][99990:100030]] + view(result)[1:]"
@@ -657,15 +593,13 @@
         468894,
         true,
         68894
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; seq 1 80000"
       ]
     },
     {
       "name": "the start answer has no output",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "answer = view(sh, 'stage', 'status', 'exit', 'out', 'out_omitted_chars', 'offset', 'next_offset', 'is_eof')",
         "answer += [sh.get('timed_out', 'absent'), sh.get('timeout_secs', 'absent')]"
@@ -681,15 +615,13 @@
         false,
         "absent",
         "absent"
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "a completed handle gives its final fields",
-      "args": [
-        {
-          "command": "echo fast"
-        }
-      ],
       "steps": [
         "assert wait([sh], timeout=5).done == {sh}",
         "answer = [sh.status, sh['exit'], sh.get('out')]"
@@ -698,15 +630,13 @@
         "exited",
         0,
         "fast\n"
+      ],
+      "args": [
+        "echo fast"
       ]
     },
     {
       "name": "the start answer of a command that runs",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "answer = view(sh, 'stage', 'status', 'exit', 'is_eof', 'already_running')"
       ],
@@ -716,21 +646,18 @@
         null,
         false,
         false
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "a bounded observation does not cancel a command",
-      "args": [
-        {
-          "command": "stty -echo 2>/dev/null; printf ready; read word; printf '%s' \"$word\"",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "until(sh, 'ready')",
         "async def observe():",
         "    done, pending = await asyncio.wait([sh], timeout=0.02)",
-        "    current = [not done, pending == {sh}, sh.cancelled(), sh.out]",
+        "    current = [not done, pending == {sh}, sh.cancelled(), sh.snapshot().out]",
         "    sh.type('finish')",
         "    done, pending = await asyncio.wait([sh], timeout=5)",
         "    final = await sh",
@@ -746,15 +673,16 @@
         true,
         0,
         true
-      ]
+      ],
+      "args": [
+        "stty -echo 2>/dev/null; printf ready; read word; printf '%s' \"$word\""
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      }
     },
     {
       "name": "asyncio wait_for cancels the shell process",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "async def stop():",
         "    try:",
@@ -767,15 +695,13 @@
       "expect": [
         true,
         "stopped"
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "the terminal result stays on the Task",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "result = finish(sh)",
         "answer = [sh.done(), sh.cancelled(), sh.exception(), result is sh.result()]"
@@ -785,16 +711,13 @@
         false,
         null,
         true
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a callback receives the completed process without a caller waiting",
-      "args": [
-        {
-          "command": "read word; printf '%s' \"$word\"",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "from threading import Event",
         "received = Event()",
@@ -811,66 +734,54 @@
         true,
         true,
         false
-      ]
+      ],
+      "args": [
+        "read word; printf '%s' \"$word\""
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      }
     },
     {
       "name": "a complete command cannot be cancelled",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = sh.cancel()"
       ],
-      "expect": false
+      "expect": false,
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "a fraction of an offset is refused",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh, 30)",
-        "door({'op': 'logs', 'id': sh['id'], 'offset': 1.5})"
+        "sh.logs(offset=1.5)"
       ],
       "expect": {
         "error": "offset must be a whole number, got 1.5 — a fraction rounds into a different value.",
         "is_runtime_error": true
       },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "cancellation is accepted once",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "answer = [sh.cancel(), sh.cancel()]"
       ],
       "expect": [
         true,
         false
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "a cancelled command raises CancelledError",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "sh.cancel()",
         "try:",
@@ -881,15 +792,13 @@
       "expect": [
         true,
         true
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "logs remain after cancellation",
-      "args": [
-        {
-          "command": "echo before; sleep 30"
-        }
-      ],
       "steps": [
         "until(sh, 'before')",
         "sh.cancel()",
@@ -902,15 +811,13 @@
       "expect": [
         "logs",
         "before\n"
+      ],
+      "args": [
+        "echo before; sleep 30"
       ]
     },
     {
       "name": "type refuses a cancelled command",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "sh.cancel()",
         "try:",
@@ -922,15 +829,13 @@
         "except RuntimeError:",
         "    answer = True"
       ],
-      "expect": true
+      "expect": true,
+      "args": [
+        "sleep 30"
+      ]
     },
     {
       "name": "cancel does not change a terminal result",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "result = finish(sh)",
         "answer = [sh.cancel(), result[\"exit\"]]"
@@ -938,15 +843,13 @@
       "expect": [
         false,
         0
+      ],
+      "args": [
+        "true"
       ]
     },
     {
       "name": "a failing command",
-      "args": [
-        {
-          "command": "echo oops; exit 3"
-        }
-      ],
       "steps": [
         "result = finish(sh, 30)",
         "answer = view(result, 'status', 'exit', 'out')"
@@ -955,15 +858,13 @@
         "exited",
         3,
         "oops\n"
+      ],
+      "args": [
+        "echo oops; exit 3"
       ]
     },
     {
       "name": "a command without output",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs())"
@@ -974,46 +875,13 @@
         0,
         true,
         0
-      ]
-    },
-    {
-      "name": "the start timeout does not stop the process",
+      ],
       "args": [
-        {
-          "command": "sleep 3; echo late",
-          "timeout_secs": 1
-        }
-      ],
-      "steps": [
-        "result = finish(sh, 30)",
-        "answer = view(result, 'status', 'exit', 'timed_out', 'timeout_secs', 'out')"
-      ],
-      "expect": [
-        "exited",
-        0,
-        false,
-        null,
-        "late\n"
+        "true"
       ]
-    },
-    {
-      "name": "a negative start timeout is refused",
-      "args": [
-        {
-          "command": "true",
-          "timeout_secs": -1
-        }
-      ],
-      "steps": [],
-      "expect": null
     },
     {
       "name": "a terminal ends a line with two bytes",
-      "args": [
-        {
-          "command": "printf 'a\\nb\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs())"
@@ -1034,16 +902,13 @@
           true,
           0
         ]
-      }
+      },
+      "args": [
+        "printf 'a\\nb\\n'"
+      ]
     },
     {
       "name": "typed text reaches the program",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "until(sh, 'ready')",
         "sh.type('hello')",
@@ -1066,29 +931,30 @@
           true,
           0
         ]
+      },
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x"
+      ],
+      "kwargs": {
+        "stdin": "tty"
       }
     },
     {
       "name": "type answers the handle",
-      "args": [
-        {
-          "command": "read x; echo got:$x",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "answer = sh.type('hello') is sh",
         "assert 'got:hello' in finish(sh).out"
       ],
-      "expect": true
+      "expect": true,
+      "args": [
+        "read x; echo got:$x"
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      }
     },
     {
       "name": "type without a terminal stdin",
-      "args": [
-        {
-          "command": "sleep 3"
-        }
-      ],
       "steps": [
         "answer = sh.type('x') is sh and sh.status == 'running'"
       ],
@@ -1099,15 +965,13 @@
           "error": "The stdin of this shell is empty. To type into it, start the command with {\"stdin\": \"tty\"}.",
           "is_runtime_error": true
         }
-      }
+      },
+      "args": [
+        "sleep 3"
+      ]
     },
     {
       "name": "a wrong key after a wait",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "result = finish(sh, 30)",
         "try:\n    result['zzz']\nexcept KeyError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
@@ -1115,30 +979,26 @@
       "expect": [
         "'zzz' is not a key of 'shell' result.",
         ". Read the keys it returned instead of guessing another name; use .get(k, default) when the field is optional."
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a wrong key at the start",
-      "args": [
-        {
-          "command": "sleep 1"
-        }
-      ],
       "steps": [
         "try:\n    sh['zzz']\nexcept KeyError as error:\n    head, rest = str(error.args[0]).split(' Keys: ', 1)\n    answer = [head, rest[rest.index('.'):]]"
       ],
       "expect": [
         "'zzz' is not a key of 'shell' result.",
         ". Read the keys it returned instead of guessing another name; use .get(k, default) when the field is optional."
+      ],
+      "args": [
+        "sleep 1"
       ]
     },
     {
       "name": "a wrong key on a log page",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "p = sh.logs()",
@@ -1147,15 +1007,13 @@
       "expect": [
         "'outp' is not a key of '_shell_logs' result.",
         ". Did you mean 'out'? Read the keys it returned instead of guessing another name; use .get(k, default) when the field is optional."
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "a wrong attribute",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "result = finish(sh)",
         "try:",
@@ -1163,15 +1021,13 @@
         "except AttributeError as error:",
         "    answer = \"out\" in str(error)"
       ],
-      "expect": true
+      "expect": true,
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "a field by attribute",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "result = finish(sh, 30)",
         "answer = [result.exit, result.status, result.stage, result.out == result['out'], callable(result.keys), result['keys']]"
@@ -1183,15 +1039,13 @@
         true,
         true,
         null
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
       ]
     },
     {
       "name": "the keys of a result",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "answer = sorted(finish(sh))"
       ],
@@ -1256,15 +1110,13 @@
           "uptime_ms",
           "waiting_for_input"
         ]
-      }
+      },
+      "args": [
+        "true"
+      ]
     },
     {
       "name": "an option named twice",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "sh.logs(offset=0, start=0)"
@@ -1272,15 +1124,13 @@
       "expect": {
         "error": "logs: offset named twice, as 'start' too.",
         "is_runtime_error": false
-      }
+      },
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "an unknown keyword",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "sh.logs(rows=1)"
@@ -1288,7 +1138,10 @@
       "expect": {
         "error": "logs: no keyword 'rows'. Keywords: offset, lines, limit (n/tail mean lines, start means offset).",
         "is_runtime_error": false
-      }
+      },
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\nline7\\nline8\\nline9\\nline10\\nline11\\nline12\\n'"
+      ]
     },
     {
       "name": "a command string",
@@ -1314,19 +1167,6 @@
       "expect": "src\n"
     },
     {
-      "name": "a command string with an options map",
-      "args": [
-        "basename \"$PWD\"",
-        {
-          "cwd": "src"
-        }
-      ],
-      "steps": [
-        "answer = finish(sh, 30)['out']"
-      ],
-      "expect": "src\n"
-    },
-    {
       "name": "keyword options only",
       "args": [],
       "kwargs": {
@@ -1339,277 +1179,10 @@
       "expect": "src\n"
     },
     {
-      "name": "a command list",
-      "args": [
-        {
-          "command": [
-            "printf",
-            "%s",
-            "a b"
-          ]
-        }
-      ],
-      "steps": [
-        "answer = finish(sh, 30)['out']"
-      ],
-      "expect": "a b"
-    },
-    {
-      "name": "no command",
-      "args": [
-        {}
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell: command required; use shell(command).",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "a blank command",
-      "args": [
-        {
-          "command": "  "
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell: command required; use shell(command).",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "a command that is a number",
-      "args": [
-        {
-          "command": 5
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell `command` must be a string — one bash -lc command line.",
-        "is_runtime_error": true
-      },
-      "outside": {
-        "reason": "sh",
-        "expect": {
-          "error": "shell `command` must be a string — one /bin/sh -c command line.",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "a wrong stdin",
-      "args": [
-        {
-          "command": "true",
-          "stdin": "pipe"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell `stdin` is \"tty\" or \"null\", not \"pipe\".",
-        "is_runtime_error": true
-      }
-    },
-    {
-      "name": "an unknown op",
-      "args": [
-        {
-          "op": "nope"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "Unknown shell op \"nope\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "logs of an unknown id",
-      "args": [
-        {
-          "op": "logs",
-          "id": "no-such-shell"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell: unknown id 'no-such-shell'; use the handle returned by shell().",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "wait of an unknown id",
-      "args": [
-        {
-          "op": "wait",
-          "id": "no-such-shell",
-          "seconds": 1
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "send to an unknown id",
-      "args": [
-        {
-          "op": "send",
-          "id": "no-such-shell",
-          "text": "x"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "No background shell 'no-such-shell' in this session — start one with await shell({\"command\": \"…\", \"wait\": 0, \"id\": id}).",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell op \"run\" takes no text payload.",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "stop of an unknown id",
-      "args": [
-        {
-          "op": "stop",
-          "id": "no-such-shell"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "Unknown shell op \"stop\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "logs without an id",
-      "args": [
-        {
-          "op": "logs"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell: id required; use the handle returned by shell().",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "wait without an id",
-      "args": [
-        {
-          "op": "wait",
-          "seconds": 1
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "send without an id",
-      "args": [
-        {
-          "op": "send",
-          "text": "x"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell: id required; use the handle returned by shell().",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell op \"run\" takes no text payload.",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "stop without an id",
-      "args": [
-        {
-          "op": "stop"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "Unknown shell op \"stop\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\".",
-        "is_runtime_error": true
-      },
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell: command required; use shell(command).",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
       "name": "a missing cwd is refused",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "try:",
-        "    door({'command': 'true', 'cwd': '/no-such-dir-zz'})",
+        "    door('true', cwd='/no-such-dir-zz')",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
       ],
@@ -1623,28 +1196,13 @@
           true,
           "shell cwd '/no-such-dir-zz' resolves outside the allowed filesystem roots"
         ]
-      }
-    },
-    {
-      "name": "the `cmd` option is refused",
+      },
       "args": [
-        {
-          "cmd": "true"
-        }
-      ],
-      "steps": [],
-      "expect": {
-        "error": "shell has no `cmd` option — put the bash line in {\"command\": \"…\"}.",
-        "is_runtime_error": true
-      }
+        "true"
+      ]
     },
     {
       "name": "type after the exit",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "finish(sh, 30)",
         "sh.type('x')"
@@ -1652,16 +1210,13 @@
       "expect": {
         "error": "Background shell '<id>' has exited — nothing to send to. Read its output with sh.logs(offset=0).",
         "is_runtime_error": true
-      }
+      },
+      "args": [
+        "true"
+      ]
     },
     {
       "name": "type after the exit of a tty command",
-      "args": [
-        {
-          "command": "true",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "finish(sh, 30)",
         "sh.type('x')"
@@ -1669,15 +1224,16 @@
       "expect": {
         "error": "Background shell '<id>' has exited — nothing to send to. Read its output with sh.logs(offset=0).",
         "is_runtime_error": true
+      },
+      "args": [
+        "true"
+      ],
+      "kwargs": {
+        "stdin": "tty"
       }
     },
     {
       "name": "the start answer says how to attach",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "answer = str(sh['attach']).startswith('vis-agent extension shell attach')"
       ],
@@ -1685,16 +1241,13 @@
       "outside": {
         "reason": "local",
         "expect": false
-      }
+      },
+      "args": [
+        "sleep 30"
+      ]
     },
     {
       "name": "a field read after type gives the final process result",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
         "until(sh, 'ready')",
         "sh.type('hello')",
@@ -1705,15 +1258,16 @@
         "run",
         null,
         true
-      ]
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; echo ready; read x; echo got:$x"
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      }
     },
     {
       "name": "a log page answers the text reads",
-      "args": [
-        {
-          "command": "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\n'"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "page = sh.logs()",
@@ -1747,37 +1301,34 @@
           "line2"
         ],
         6
+      ],
+      "args": [
+        "stty -onlcr <&1 2>/dev/null; printf 'line1\\nline2\\n'"
       ]
     },
     {
       "name": "a start with the id of a live shell answers that shell",
-      "args": [
-        {
-          "command": "sleep 30",
-          "id": "contract-live"
-        }
-      ],
       "steps": [
-        "again = door({'command': 'sleep 30', 'id': 'contract-live'})",
+        "again = door('sleep 30', id='contract-live')",
         "answer = [again['pid'] == sh['pid'], again['id'], not again.done()]"
       ],
       "expect": [
         true,
         "contract-live",
         true
-      ]
+      ],
+      "args": [
+        "sleep 30"
+      ],
+      "kwargs": {
+        "id": "contract-live"
+      }
     },
     {
       "name": "a live id with another command is refused",
-      "args": [
-        {
-          "command": "sleep 30",
-          "id": "contract-other"
-        }
-      ],
       "steps": [
         "try:",
-        "    door({'command': 'sleep 31', 'id': 'contract-other'})",
+        "    door('sleep 31', id='contract-other')",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error)]"
@@ -1785,19 +1336,19 @@
       "expect": [
         true,
         "Shell '<id>' is already running and it is running a different command (sleep 30) — nothing was started. Cancel it first with sh.cancel(), or start this command under a different id."
-      ]
+      ],
+      "args": [
+        "sleep 30"
+      ],
+      "kwargs": {
+        "id": "contract-other"
+      }
     },
     {
       "name": "a live id in another directory is refused",
-      "args": [
-        {
-          "command": "sleep 30",
-          "id": "contract-dir"
-        }
-      ],
       "steps": [
         "try:",
-        "    door({'command': 'sleep 30', 'id': 'contract-dir', 'cwd': '/tmp'})",
+        "    door('sleep 30', id='contract-dir', cwd='/tmp')",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
@@ -1805,19 +1356,19 @@
       "expect": [
         true,
         "Shell '<id>' is already running and it is running in a different directory"
-      ]
+      ],
+      "args": [
+        "sleep 30"
+      ],
+      "kwargs": {
+        "id": "contract-dir"
+      }
     },
     {
       "name": "an id is free after the exit",
-      "args": [
-        {
-          "command": "echo one",
-          "id": "contract-exit"
-        }
-      ],
       "steps": [
         "finish(sh, 5)",
-        "again = door({'command': 'echo two', 'id': 'contract-exit'})",
+        "again = door('echo two', id='contract-exit')",
         "page = finish(again, 5)",
         "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
       ],
@@ -1826,23 +1377,23 @@
         "contract-exit",
         "two\n",
         0
-      ]
+      ],
+      "args": [
+        "echo one"
+      ],
+      "kwargs": {
+        "id": "contract-exit"
+      }
     },
     {
       "name": "an id is free after cancellation",
-      "args": [
-        {
-          "command": "sleep 30",
-          "id": "contract-stop"
-        }
-      ],
       "steps": [
         "sh.cancel()",
         "try:",
         "    finish(sh)",
         "except CancelledError:",
         "    pass",
-        "again = door({'command': 'echo two', 'id': 'contract-stop'})",
+        "again = door('echo two', id='contract-stop')",
         "page = finish(again, 5)",
         "answer = [again['already_running'], again['id'], page['out'], page['exit']]"
       ],
@@ -1851,19 +1402,20 @@
         "contract-stop",
         "two\n",
         0
-      ]
+      ],
+      "args": [
+        "sleep 30"
+      ],
+      "kwargs": {
+        "id": "contract-stop"
+      }
     },
     {
       "name": "a boolean is no number of lines",
-      "args": [
-        {
-          "command": "echo a"
-        }
-      ],
       "steps": [
         "finish(sh, 5)",
         "try:",
-        "    door({'op': 'logs', 'id': sh['id'], 'lines': True})",
+        "    sh.logs(lines=True)",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error)]"
@@ -1872,25 +1424,16 @@
         true,
         "lines must be a number, got true."
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": [
-          true,
-          "shell: command required; use shell(command)."
-        ]
-      }
+      "args": [
+        "echo a"
+      ]
     },
     {
       "name": "a boolean is no offset",
-      "args": [
-        {
-          "command": "echo a"
-        }
-      ],
       "steps": [
         "finish(sh, 5)",
         "try:",
-        "    door({'op': 'logs', 'id': sh['id'], 'offset': False})",
+        "    sh.logs(offset=False)",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error)]"
@@ -1899,25 +1442,16 @@
         true,
         "offset must be a number, got false."
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": [
-          true,
-          "shell: command required; use shell(command)."
-        ]
-      }
+      "args": [
+        "echo a"
+      ]
     },
     {
       "name": "a boolean is no limit",
-      "args": [
-        {
-          "command": "echo a"
-        }
-      ],
       "steps": [
         "finish(sh, 5)",
         "try:",
-        "    door({'op': 'logs', 'id': sh['id'], 'limit': True})",
+        "    sh.logs(limit=True)",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error)]"
@@ -1926,49 +1460,14 @@
         true,
         "limit must be a number, got true."
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": [
-          true,
-          "shell: command required; use shell(command)."
-        ]
-      }
+      "args": [
+        "echo a"
+      ]
     },
     {
-      "name": "the raw wait operation is removed",
-      "args": [
-        {
-          "command": "echo a"
-        }
-      ],
+      "name": "type ends the line",
       "steps": [
-        "try:",
-        "    door({'op': 'wait', 'id': sh['id'], 'seconds': True})",
-        "except Exception as error:",
-        "    answer = [isinstance(error, RuntimeError), str(error)]"
-      ],
-      "expect": [
-        true,
-        "Unknown shell op \"wait\" — use \"run\" (default), \"background\", \"attach\", \"logs\" or \"send\"."
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": [
-          true,
-          "shell: command required; use shell(command)."
-        ]
-      }
-    },
-    {
-      "name": "a raw send ends the line",
-      "args": [
-        {
-          "command": "read x; echo got:$x",
-          "stdin": "tty"
-        }
-      ],
-      "steps": [
-        "door({'op': 'send', 'id': sh['id'], 'text': 'raw'})",
+        "sh.type('raw')",
         "page = finish(sh, 5)",
         "answer = ['got:raw' in page['out'], page['exit']]"
       ],
@@ -1976,25 +1475,18 @@
         true,
         0
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell op \"run\" takes no text payload.",
-          "is_runtime_error": true
-        }
+      "args": [
+        "read x; echo got:$x"
+      ],
+      "kwargs": {
+        "stdin": "tty"
       }
     },
     {
-      "name": "a raw send without Enter keeps the line open",
-      "args": [
-        {
-          "command": "read x; echo got:$x",
-          "stdin": "tty"
-        }
-      ],
+      "name": "type without Enter keeps the line open",
       "steps": [
-        "door({'op': 'send', 'id': sh['id'], 'text': 'ra', 'is_enter': False})",
-        "door({'op': 'send', 'id': sh['id'], 'text': 'w'})",
+        "sh.type('ra', is_enter=False)",
+        "sh.type('w')",
         "page = finish(sh, 5)",
         "answer = ['got:raw' in page['out'], page['exit']]"
       ],
@@ -2002,48 +1494,15 @@
         true,
         0
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell op \"run\" takes no text payload.",
-          "is_runtime_error": true
-        }
-      }
-    },
-    {
-      "name": "a raw send of a number is refused",
       "args": [
-        {
-          "command": "cat",
-          "stdin": "tty"
-        }
+        "read x; echo got:$x"
       ],
-      "steps": [
-        "try:",
-        "    door({'op': 'send', 'id': sh['id'], 'text': 123})",
-        "    answer = 'no refusal'",
-        "except Exception as error:",
-        "    answer = [isinstance(error, RuntimeError), str(error)]"
-      ],
-      "expect": [
-        true,
-        "shell `text` must be a string."
-      ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": [
-          true,
-          "shell op \"run\" takes no text payload."
-        ]
+      "kwargs": {
+        "stdin": "tty"
       }
     },
     {
       "name": "logs reads from an offset",
-      "args": [
-        {
-          "command": "printf abcdef"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(offset=3))"
@@ -2054,15 +1513,13 @@
         6,
         true,
         0
+      ],
+      "args": [
+        "printf abcdef"
       ]
     },
     {
       "name": "logs from an offset after the end",
-      "args": [
-        {
-          "command": "printf abcdef"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(offset=99))"
@@ -2073,15 +1530,13 @@
         6,
         true,
         0
+      ],
+      "args": [
+        "printf abcdef"
       ]
     },
     {
       "name": "logs from an offset before the first byte",
-      "args": [
-        {
-          "command": "sleep 0.3; printf abcdef"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(offset=3))"
@@ -2092,15 +1547,13 @@
         6,
         true,
         0
+      ],
+      "args": [
+        "sleep 0.3; printf abcdef"
       ]
     },
     {
       "name": "logs from an offset after the end before the first byte",
-      "args": [
-        {
-          "command": "sleep 0.3; printf abcdef"
-        }
-      ],
       "steps": [
         "finish(sh)",
         "answer = view(sh.logs(offset=99))"
@@ -2111,18 +1564,16 @@
         6,
         true,
         0
+      ],
+      "args": [
+        "sleep 0.3; printf abcdef"
       ]
     },
     {
       "name": "a file as cwd is refused",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "try:",
-        "    door({'command': 'true', 'cwd': '/etc/hosts'})",
+        "    door('true', cwd='/etc/hosts')",
         "    answer = 'no refusal'",
         "except Exception as error:",
         "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
@@ -2137,85 +1588,45 @@
           true,
           "shell cwd '/etc/hosts' resolves outside the allowed filesystem roots"
         ]
-      }
-    },
-    {
-      "name": "a number as cwd names a directory",
+      },
       "args": [
-        {
-          "command": "true"
-        }
-      ],
-      "steps": [
-        "try:",
-        "    door({'command': 'true', 'cwd': 5})",
-        "    answer = 'no refusal'",
-        "except Exception as error:",
-        "    answer = [isinstance(error, RuntimeError), str(error).split(' (')[0]]"
-      ],
-      "expect": [
-        true,
-        "shell cwd '5' does not exist"
+        "true"
       ]
     },
     {
       "name": "a blank cwd is no cwd",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
-        "answer = finish(door({'command': 'echo ok', 'cwd': '  '}), 5)['out']"
+        "answer = finish(door('echo ok', cwd='  '), 5)['out']"
       ],
-      "expect": "ok\n"
-    },
-    {
-      "name": "a blank `cmd` option is no option",
+      "expect": "ok\n",
       "args": [
-        {
-          "command": "true"
-        }
-      ],
-      "steps": [
-        "answer = finish(door({'command': 'echo ok', 'cmd': ''}), 5)['out']"
-      ],
-      "expect": "ok\n"
+        "true"
+      ]
     },
     {
       "name": "a number is the value of a variable",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
-        "answer = finish(door({'command': 'echo v=$ZZ_N', 'env': {'ZZ_N': 1}}), 5)['out']"
+        "answer = finish(door('echo v=$ZZ_N', env={'ZZ_N': 1}), 5)['out']"
       ],
-      "expect": "v=1\n"
+      "expect": "v=1\n",
+      "args": [
+        "true"
+      ]
     },
     {
       "name": "a boolean is the value of a variable and None unsets one",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
-        "answer = finish(door({'command': 'echo v=$ZZ_N$HOME', 'env': {'ZZ_N': True, 'HOME': None}}), 5)['out']"
+        "answer = finish(door('echo v=$ZZ_N$HOME', env={'ZZ_N': True, 'HOME': None}), 5)['out']"
       ],
-      "expect": "v=true\n"
+      "expect": "v=true\n",
+      "args": [
+        "true"
+      ]
     },
     {
       "name": "Ctrl-D ends the input of a terminal",
-      "args": [
-        {
-          "command": "cat; echo ended",
-          "stdin": "tty"
-        }
-      ],
       "steps": [
-        "door({'op': 'send', 'id': sh['id'], 'text': '\\x04', 'is_enter': False})",
+        "sh.type('\\x04', is_enter=False)",
         "try:",
         "    page = finish(sh, 3)",
         "except TimeoutError:",
@@ -2229,13 +1640,6 @@
         false,
         "exited"
       ],
-      "tools": {
-        "reason": "raw-op",
-        "expect": {
-          "error": "shell op \"run\" takes no text payload.",
-          "is_runtime_error": true
-        }
-      },
       "outside": {
         "reason": "pipe",
         "expect": [
@@ -2243,17 +1647,18 @@
           true,
           "running"
         ]
+      },
+      "args": [
+        "cat; echo ended"
+      ],
+      "kwargs": {
+        "stdin": "tty"
       }
     },
     {
       "name": "attach to the live generation without starting a command",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
-        "attached = door({\"op\": \"attach\", \"id\": sh[\"id\"]})",
+        "attached = door(op=\"attach\", id=sh[\"id\"])",
         "answer = [attached[\"pid\"] == sh[\"pid\"], attached[\"stage\"], attached[\"already_running\"], attached.cancel()]"
       ],
       "expect": [
@@ -2261,36 +1666,32 @@
         "run",
         true,
         true
+      ],
+      "args": [
+        "sleep 30"
       ]
     },
     {
       "name": "refuse to attach after exit",
-      "args": [
-        {
-          "command": "true"
-        }
-      ],
       "steps": [
         "finish(sh)",
-        "door({\"op\": \"attach\", \"id\": sh[\"id\"]})"
+        "door(op=\"attach\", id=sh[\"id\"])"
       ],
       "expect": {
         "error": "No running background shell '<id>' in this session.",
         "is_runtime_error": true
-      }
+      },
+      "args": [
+        "true"
+      ]
     },
     {
       "name": "refuse to attach from another trust origin",
-      "args": [
-        {
-          "command": "sleep 30"
-        }
-      ],
       "steps": [
         "if other_door is None:",
         "    answer = \"no second trust origin\"",
         "else:",
-        "    other_door({\"op\": \"attach\", \"id\": sh[\"id\"]})"
+        "    other_door(op=\"attach\", id=sh[\"id\"])"
       ],
       "expect": {
         "error": "Shell '<id>' was started by a different trust origin.",
@@ -2299,6 +1700,58 @@
       "outside": {
         "reason": "other-origin",
         "expect": "no second trust origin"
+      },
+      "args": [
+        "sleep 30"
+      ]
+    },
+    {
+      "name": "live fields do not refresh the start result",
+      "args": [
+        "printf ready; sleep 30"
+      ],
+      "steps": [
+        "until(sh, 'ready')",
+        "answer = [sh.out, sh['out'], sh.get('out'), sh.snapshot().out, sh.out]"
+      ],
+      "expect": [
+        "",
+        "",
+        "",
+        "ready",
+        ""
+      ]
+    },
+    {
+      "name": "type does not coerce a number to text",
+      "args": [
+        "cat"
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      },
+      "steps": [
+        "sh.type(123)"
+      ],
+      "expect": {
+        "error": "shell `text` must be a string.",
+        "is_runtime_error": false
+      }
+    },
+    {
+      "name": "type does not coerce the Enter flag",
+      "args": [
+        "cat"
+      ],
+      "kwargs": {
+        "stdin": "tty"
+      },
+      "steps": [
+        "sh.type('a', is_enter=1)"
+      ],
+      "expect": {
+        "error": "shell `is_enter` must be a bool.",
+        "is_runtime_error": false
       }
     }
   ]

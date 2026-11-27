@@ -874,13 +874,7 @@ def _shell(command, seconds=120):
     view = _watch_view.get()
     if view is not None and view.is_interrupted:
         raise vis.Interrupted(view.view_id, reason=view.reason, note=view.note)
-    handle = vis.shell(
-        {
-            "op": "background",
-            "id": f"gh-{int(time.monotonic() * 1000)}",
-            "command": command,
-        }
-    )
+    handle = vis.shell(command, id=f"gh-{int(time.monotonic() * 1000)}")
     finished = False
     try:
         try:
@@ -901,7 +895,9 @@ def _shell(command, seconds=120):
                     ready = _wait_for_view(view, remaining, handle)
                     if ready == "closed":
                         view.state()
-                        raise vis.Interrupted(view.view_id, reason=view.reason, note=view.note)
+                        raise vis.Interrupted(
+                            view.view_id, reason=view.reason, note=view.note
+                        )
                     if ready:
                         view.events()
                         view.state()
@@ -909,7 +905,9 @@ def _shell(command, seconds=120):
                     raise TimeoutError()
                 done = handle.result()
         except TimeoutError as error:
-            raise TimeoutError(f"GitHub CLI command timed out after {seconds:g}s") from error
+            raise TimeoutError(
+                f"GitHub CLI command timed out after {seconds:g}s"
+            ) from error
         if done.get("exit") is None:
             raise RuntimeError("GitHub CLI command ended without an exit status")
         finished = True
@@ -1002,14 +1000,10 @@ def _login(hostname="github.com") -> Account:
 
     quoted = shlex.quote(hostname)
     process = vis.shell(
-        {
-            "op": "background",
-            "id": f"gh-login-{int(time.monotonic() * 1000)}",
-            "command": (
-                "GH_BROWSER=true gh auth login "
-                f"--hostname {quoted} --git-protocol https --web --skip-ssh-key"
-            ),
-        }
+        "GH_BROWSER=true gh auth login "
+        f"--hostname {quoted} --git-protocol https --web --skip-ssh-key",
+        id=f"gh-login-{int(time.monotonic() * 1000)}",
+        stdin="tty",
     )
     completed = False
     try:

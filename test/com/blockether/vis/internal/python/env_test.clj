@@ -71,7 +71,7 @@
              (str
                "import blockether.vis.extension as sdk\n"
                "operations = [lambda: sdk.state.get('key'), lambda: sdk.notify('hello'), "
-               "lambda: sdk.shell({'command': 'exit 0'}), lambda: sdk.sessions.create(), "
+               "lambda: sdk.shell('exit 0'), lambda: sdk.sessions.create(), "
                "lambda: sdk.sessions.list(), lambda: sdk.run('Hello'), lambda: sdk.session, "
                "lambda: sdk.council, "
                "lambda: sdk.register_extension(sdk.Extension(name='blocked', description='Not installed'))]\n"

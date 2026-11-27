@@ -1205,7 +1205,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
 
         shell-env
         (fn [kind] (assoc extension/*current-environment* :session-id (shell-session)
-                          :shell-origin (shell-origin kind)))
+                          :shell-origin (shell-origin kind) :shell-options-fn project-shell-opts))
 
         admit-shell
         (fn [value origin]
@@ -1427,14 +1427,14 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
           (fn [opts]
             (admit-shell (host-tool-result
                            (shell/task-result
-                             (shell/trusted-extension-shell (shell-env "trusted-extension") (project-shell-opts opts))))
+                             (shell/trusted-extension-shell (shell-env "trusted-extension") opts)))
                          (shell-origin "trusted-extension"))))
     (put! g
           "__vis_host_jailed_shell__"
           (fn [opts]
             (admit-shell (host-tool-result
                            (shell/task-result
-                             (shell/jailed-shell (shell-env "jailed-extension") (project-shell-opts opts))))
+                             (shell/jailed-shell (shell-env "jailed-extension") opts)))
                          (shell-origin "jailed-extension"))))
     (put! g
           "__vis_host_shell_task__"

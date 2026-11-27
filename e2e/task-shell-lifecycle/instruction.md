@@ -1,4 +1,4 @@
-Start `python3 shell_probe.py hold` and save its ShellTask as `sh`. Wait up to one second with `done, pending = await asyncio.wait([sh], timeout=1)`. Check that `sh` is in `pending`. Read `sh.out` while the process runs. If `hold-started` is not visible yet, read `sh.out` again after a short `asyncio.sleep`.
+Start `python3 shell_probe.py hold` and save its ShellTask as `sh`. Wait up to one second with `done, pending = await asyncio.wait([sh], timeout=1)`. Check that `sh` is in `pending`. Read `sh.snapshot().out` while the process runs. If `hold-started` is not visible yet, read `sh.snapshot().out` again after a short `asyncio.sleep`.
 
 Cancel `sh` and await it. Catch `asyncio.CancelledError` and check that `sh` is cancelled. Then start `python3 shell_probe.py finish`. Await that ShellTask itself and read the exit code and output. Do not stop either command with an external command. Do not change files.
 

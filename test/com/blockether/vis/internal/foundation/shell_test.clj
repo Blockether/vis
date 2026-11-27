@@ -79,6 +79,35 @@
 
 (def ^:private shell* @#'shell/shell-dispatch)
 
+(defdescribe shell-call-validation-test
+  (it "rejects invalid options before preparing a shell"
+      (let [effects (atom [])
+            env {:jail-policy-fn #(swap! effects conj :policy)}]
+        (with-redefs [shell/start-shell! (fn [& _] (swap! effects conj :spawn) {})]
+          (doseq [opts [{"op" "background"} {"op" "logs"} {"op" 1}
+                        {"timeout_secs" 1} {"cwd" 5} {"id" []} {"env" []}
+                        {"stdin" false} {"allow_read_write" ["/tmp"]}]]
+            (let [error (try (shell/shell env "true" opts) nil
+                             (catch clojure.lang.ExceptionInfo e e))]
+              (expect (some? error) opts))))
+        (expect (empty? @effects))))
+  (it "rejects invalid trusted calls before preparing the project environment"
+      (let [effects (atom [])]
+        (with-redefs [config/child-environment-values (fn [] (swap! effects conj :environment) {})]
+          (let [error (try (shell/trusted-extension-shell {} {"command" "true" "cwd" []}) nil
+                           (catch clojure.lang.ExceptionInfo e e))]
+            (expect (str/includes? (ex-message error) "cwd"))))
+        (expect (empty? @effects))))
+  (it "validates the full environment before resolving a source"
+      (let [resolved (atom [])
+            env (array-map "VIS_FIRST" {"env" "SOME_HOST_NAME"} "VIS_BAD" [])]
+        (with-redefs [config/inline-environment-value (fn [& args] (swap! resolved conj args) "value")]
+          (let [error (try (process-jail/call-env-values env) nil
+                           (catch clojure.lang.ExceptionInfo e e))]
+            (expect (str/includes? (ex-message error) "VIS_BAD"))))
+        (expect (empty? @resolved)))))
+
+
 (def ^:private keys-label @#'shell/keys-label)
 
 (defn- with-shell-on
@@ -2221,9 +2250,9 @@
                                                            {"rss_bytes" 8192})))}
               (fn []
                 (py ctx "sh = await shell('sleep 30', id='sampled')\nTrue")
-                (expect (= 4096 (poll #(py ctx "sh.rss_bytes") some? 100)))
+                (expect (= 4096 (poll #(py ctx "sh.snapshot().rss_bytes") some? 100)))
                 (Thread/sleep 2100)
-                (let [reader (future (py ctx "[sh.status, sh.id, sh.exit, sh.rss_bytes, sh.rss_bytes]"))]
+                (let [reader (future (py ctx "[sh.status, sh.id, sh.exit, sh.snapshot().rss_bytes, sh.snapshot().rss_bytes]"))]
                   (try
                     (expect (true? (deref entered 3000 nil)))
                     (expect (= ["running" "sampled" nil 4096 4096]
@@ -2231,7 +2260,7 @@
                     (expect (= 2 @calls))
                     (finally (deliver release true)
                              (deref reader 3000 nil))))
-                (expect (= 8192 (poll #(py ctx "sh.rss_bytes") #(= 8192 %) 100)))))))))
+                (expect (= 8192 (poll #(py ctx "sh.snapshot().rss_bytes") #(= 8192 %) 100)))))))))
   (it "returns the bounded tail while the process still runs"
       (with-shell-task-context
         (fn [_ ctx]
@@ -2239,8 +2268,8 @@
                      (py ctx (str "import asyncio\n"
                                   "sh = await shell(\"printf BEGIN; printf '%01000000d' 0; printf END; read word\", stdin='tty')\n"
                                   "while 'END' not in sh.logs().out:\n    await asyncio.sleep(.02)\n"
-                                  "out = sh.out\n"
-                                  "['BEGIN' not in out, out.endswith('END'), len(out) <= 262144, sh.offset > 0]")))))))
+                                  "snap = sh.snapshot()\nout = snap.out\n"
+                                  "['BEGIN' not in out, out.endswith('END'), len(out) <= 262144, snap.offset > 0]")))))))
   (it "reads the retired generation before its Task has published the outcome"
       (with-shell-task-context
         (fn [_ ctx]
@@ -2261,7 +2290,7 @@
                   (expect (true? (deref retired 5000 nil)))
                   (expect (= ["exited" "old" 0 "new"]
                              (py ctx (str "new = await shell('printf new', id='reused')\n"
-                                          "[old.status, old.out, old.exit, (await new).out]"))))))
+                                          "[old.snapshot().status, old.snapshot().out, old.snapshot().exit, (await new).out]"))))))
               (finally (deliver release true)))))))
   (it "keeps the final fields after a pump error"
       (with-shell-task-context
@@ -2338,7 +2367,7 @@
              (expect (= ["run" "logs" true false]
                         (py c
                             (str
-                              "b = await shell('echo alive; sleep 30', {'id':'pyjob'})\n"
+                              "b = await shell('echo alive; sleep 30', id='pyjob')\n"
                               "l = b.logs(limit=10)\n"
                               "s = b.cancel()\n" "[b['stage'], l['stage'], s, s is b]"))))
              (finally (resources/stop-all! sid)))))
@@ -2356,7 +2385,7 @@
                         (py c
                             (str "import asyncio, time\n"
                                  "sh = await shell('while true; do echo x; done',"
-                                 " {'id':'chatty'})\n"
+                                 " id='chatty')\n"
                                  "t0 = time.time()\n" "done, pending = await asyncio.wait([sh], timeout=1)\n"
                                  "took = time.time() - t0\n"
                                  "seen = [sh in pending, sh['status'], took < 45]\n"
@@ -2380,7 +2409,7 @@
             (py
               c
               (str
-                "sh = await shell('read x; echo got $x', {'id':'handle', 'stdin':'tty'})\n"
+                "sh = await shell('read x; echo got $x', id='handle', stdin='tty')\n"
                 "sent = sh.type('ready') is sh\n"
                 "await sh\n"
                 "seen = ['got ready' in sh['out'], sh['status']]\n"
@@ -2401,7 +2430,7 @@
         (try (expect (= [true true true true]
                         (py c
                             (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
-                                 " done', {'id':'walk'})\n"
+                                 " done', id='walk')\n"
                                  "await sh\n" "a = sh.logs(lines=3)\n"
                                  "b = sh.logs(n=3)\n" "head = sh.logs(0, 10)\n"
                                  "try:\n" "    sh.logs(nlines=3)\n"
@@ -2431,7 +2460,7 @@
                   (py c
                       (str
                         "status_res = await shell('printf abcdefghij',"
-                        " {'id':'text'})\n" "await status_res\n"
+                        " id='text')\n" "await status_res\n"
                         "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
                         "lines = status_res.logs.splitlines()\n"
                         "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
@@ -2461,7 +2490,7 @@
         (try (expect (= [true true true true true true "exited" true true true true true]
                         (py c
                             (str
-                              "sh = await shell('printf abcdefghij', {'id':'aliases'})\n"
+                              "sh = await shell('printf abcdefghij', id='aliases')\n"
                               "waited = await sh\n"
                               "try:\n" "    waited.output\n"
                               "    miss = 'nothing was refused'\n" "except AttributeError as e:\n"
@@ -2486,7 +2515,7 @@
              (= [true true true true true true true true true true true]
                 (py c
                     (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
-                         " done', {'id':'pages'})\n"
+                         " done', id='pages')\n"
                          "await sh\n" "try:\n"
                          "    next(sh)\n" "    refusal = 'nothing was refused'\n"
                          "except TypeError as e:\n" "    refusal = str(e)\n"
@@ -2523,7 +2552,7 @@
         (try (expect (= [true true true]
                         (py c
                             (str "sh = await shell('for i in $(seq 1 40); do echo line-$i;"
-                                 " done', {'id':'back'})\n" "await sh\n"
+                                 " done', id='back')\n" "await sh\n"
                                  "down = sh.logs(0, 10)\n"
                                  "further = sh.logs(down['next_offset'], 10)\n"
                                  "up = sh.logs(down['next_offset'], -10)\n" "sh.cancel()\n"
@@ -2551,7 +2580,7 @@
             (py
               c
               (str
-                "sh = await shell('sleep 30', {'id':'stat'})\n"
+                "sh = await shell('sleep 30', id='stat')\n"
                 "seen = [hasattr(sh, 'status'), callable(sh.status),"
                 " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
                 " sh['log_path'].endswith('stat.log'),"
@@ -2676,7 +2705,7 @@
                             (str "job = "
                                  (pr-str sid)
                                  "\n"
-                                 "b = await shell('echo ready; sleep 30', {'id':job})\n"
+                                 "b = await shell('echo ready; sleep 30', id=job)\n"
                                  "l = b.logs(limit=1)\n"
                                  "running = not b.done()\n"
                                  "s = b.cancel()\n" "[b['stage'], l['stage'], not running, s]"))))
@@ -2730,7 +2759,7 @@
                  (let [result (interrupt-during "shell-wait-cancel-test"
                                                 (str "import asyncio\nsh = await shell("
                                                      "'while true; do echo x; done',"
-                                                     " {'id':'parked'})\n" "await asyncio.wait([sh], timeout=60)"))]
+                                                     " id='parked')\n" "await asyncio.wait([sh], timeout=60)"))]
                    ;; The host interrupt can finish the block before the guest signal,
                    ;; so :landed may be false. Require the actual unwind and session
                    ;; reuse rather than an acknowledgement of an already-finished block.
@@ -3345,7 +3374,7 @@
         (expect (= {:net-enabled? true} (merged {:net-enabled? true} {})))))
   (it "gives the calling extension's declared grants to its jailed child by mode (#394)"
       (let [seen (atom nil)]
-        (with-redefs [shell/shell-dispatch (fn [env _opts]
+        (with-redefs [shell/public-shell-dispatch (fn [env _opts]
                                              (reset! seen ((:jail-policy-fn env)))
                                              {})
                       shell/latest-jail-policy (constantly {:allow-read-write ["/workspace"]})]

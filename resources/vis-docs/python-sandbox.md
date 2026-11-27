@@ -255,24 +255,24 @@ result = await sh
 print(result.exit, result.out)
 ```
 
-To wait up to a limit without cancelling, use `asyncio.wait`. Read the fields on `sh` after
-the wait, even if the process is still running:
+To wait up to a limit without cancelling, use `asyncio.wait`. Use `sh.snapshot()` to read the
+process state, even while the process runs:
 
 ```python
 sh = await shell("python -m pytest")
 done, pending = await asyncio.wait([sh], timeout=2)
-print(sh.status, sh.out)
+snapshot = sh.snapshot()
+print(snapshot.status, snapshot.out)
 ```
 
-Each field read gives the current value. For example, use `sh.out`, `sh["out"]`, or
-`sh.get("out")`. After the process ends, the fields give the final values. The result from
-`await sh` is a fixed dictionary. For more output, use `sh.logs()`. See `doc("shell")` for the
-process controls.
+Fields on `sh` give the start result until the Task receives the final result. They do not
+ask the host for an update. Each result is a fixed dictionary. For more output, use `sh.logs()`.
+See `doc("shell")` for the process controls.
 
 Live reads do not give `timed_out` or `timeout_secs`. Check `sh in pending` to see if the wait
-ended before the process. On Linux, `sh.waiting_for_input` is true if you started the process
+ended before the process. On Linux, `snapshot.waiting_for_input` is true if you started the process
 with `stdin="tty"` and a process in its tree is waiting for input from its terminal. On macOS,
-the field is false. Vis can give a `sh.note` if the current output is empty. The process tree
+the field is false. Vis can give a `snapshot.note` if the current output is empty. The process tree
 must also use less than one second of CPU time over at least 30 seconds.
 
 ## What the sandbox may do

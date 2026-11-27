@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import queue
+import re
 import secrets
 import shlex
 import shutil
@@ -695,9 +696,7 @@ class _Run:
         self._sink = open(self.log_path, "wb")
         try:
             self.process = subprocess.Popen(
-                command
-                if isinstance(command, (list, tuple))
-                else ["/bin/sh", "-c", command],
+                ["/bin/sh", "-c", command],
                 cwd=self.cwd,
                 # A name mapped to None is unset for the child, as in the engine.
                 env={
@@ -993,33 +992,11 @@ def _result(run, stage, *, refresh=True, **fields):
     return result
 
 
-_SPAWN_OPS = ("run", "background")
-_HANDLE_OPS = ("logs", "send")
-
-
-def _shell_vocabulary():
-    """The ops this host answers, worded the way the engine words its own refusal."""
-    names = [
-        '"{}"{}'.format(op, " (default)" if op == "run" else "")
-        for op in _SPAWN_OPS + ("attach",) + _HANDLE_OPS
-    ]
-    return ", ".join(names[:-1]) + " or " + names[-1]
-
-
-def _given(value):
-    # The engine reads a null, a blank string and an empty collection as no option.
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (list, tuple, dict, set, frozenset)):
-        return bool(value)
-    return value is not None
-
-
 def _shell_cwd(cwd):
     # The directory that a start names, or the refusal of the engine in its words.
-    if cwd is None:
+    if cwd is None or not cwd.strip():
         return None
-    path = Path(str(cwd)).expanduser()
+    path = Path(cwd).expanduser()
     if not path.exists():
         raise Refused(f"shell cwd '{cwd}' does not exist ({path.resolve()}).")
     if not path.is_dir():
@@ -1038,6 +1015,9 @@ def _shell_env(env):
         raise Refused(f"env must be a map of NAME → value, got {env!r}")
     values = {}
     for name, value in env.items():
+        key = name.strip() if isinstance(name, str) else ""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise Refused(f"env {name!r}: not an environment variable name.")
         if isinstance(value, bool):
             value = "true" if value else "false"
         elif isinstance(value, (int, float)):
@@ -1047,7 +1027,7 @@ def _shell_env(env):
                 f"env {name}: outside Vis a value is a string, a number, a boolean "
                 f"or None to unset — got {value!r}."
             )
-        values[str(name).strip()] = value
+        values[key] = value
     return values
 
 
@@ -1076,90 +1056,48 @@ def _live_run(run_id, command, cwd):
     return run
 
 
-def _known_run(opts, op):
-    # The run that a handle op names, or the refusal of the engine in its words.
-    id_option = opts.get("id")
-    run_id = "" if id_option is None else str(id_option).strip()
-    if not run_id:
-        raise Refused("shell: id required; use the handle returned by shell().")
+def _known_run(opts):
+    run_id = opts["id"].strip()
     with _RUNS_LOCK:
         run = _RUNS.get(run_id)
-    if op == "logs" and run is None:
-        raise Refused(
-            f"shell: unknown id {run_id!r}; use the handle returned by shell()."
-        )
-    if op == "attach" and run is None:
+    if run is None:
         raise Refused(f"No running background shell {run_id!r} in this session.")
-    if run is None or (run.is_stopped and op == "send"):
-        raise Refused(
-            f"No background shell {run_id!r} in this session — "
-            'start one with await shell({"command": "…", "wait": 0, "id": id}).'
-        )
     return run
 
 
 def shell(opts):
-    """Start a process, or drive one this host already started.
-
-    Spawn operations create a process. Handle operations use the process ID that the
-    host keeps. The answers follow the engine; the `shell-handle` contract fixture
-    holds the cases and names each difference.
-    """
-    opts = {name: value for name, value in dict(opts or {}).items() if _given(value)}
-    op = str(opts.get("op") or "run").strip()
-    if op in _SPAWN_OPS:
-        if opts.get("cmd") is not None:
-            raise Refused(
-                'shell has no `cmd` option — put the bash line in {"command": "…"}.'
-            )
-        command = opts.get("command")
-        if not command or (isinstance(command, str) and not command.strip()):
-            raise Refused("shell: command required; use shell(command).")
-        if not isinstance(command, (str, list, tuple)):
-            raise Refused(
-                "shell `command` must be a string — one /bin/sh -c command line."
-            )
-        stdin = opts.get("stdin")
-        if stdin not in (None, "null", "tty"):
-            raise Refused(f'shell `stdin` is "tty" or "null", not {json.dumps(stdin)}.')
-        cwd = _shell_cwd(opts.get("cwd"))
-        env = _shell_env(opts.get("env"))
-        # A named start keeps the id that it was given. While that shell runs, the
-        # same start answers the same process and starts no second one.
-        run_id = str(opts["id"]).strip() if "id" in opts else None
-        with _RUNS_LOCK:
-            live = _live_run(run_id, command, cwd) if run_id else None
-            if live is not None:
-                snapshot = _result(
-                    live,
-                    op,
-                    already_running=True,
-                    note=f"Shell '{run_id}' is already running. Nothing was restarted.",
-                )
-                return _shell_descriptor(live, snapshot)
-            run = _Run(command, cwd, env, stdin)
-            if run_id:
-                run.id = run_id
-            _RUNS[run.id] = run
-            snapshot = _result(run, op, status="running", exit=None, is_eof=False)
-            return _shell_descriptor(run, snapshot)
-    if op == "attach":
-        if opts.get("command") is not None:
-            raise Refused(
-                'shell op "attach" takes no command — it acts on {"id": "…"}.'
-            )
-        if opts.get("text") is not None:
-            raise Refused('shell op "attach" takes no text payload.')
-        run = _known_run(opts, op)
+    """Start a validated command or attach to a live local shell."""
+    if opts.get("op") == "attach":
+        run = _known_run(opts)
         with run._lock:
             if run.is_stopped or run.poll() is not None:
                 raise Refused(
                     f"No running background shell {run.id!r} in this session."
                 )
             return _shell_descriptor(run, _result(run, "run", already_running=True))
-    if op not in _HANDLE_OPS:
-        raise Refused(f"Unknown shell op {json.dumps(op)} — use {_shell_vocabulary()}.")
-    return shell_task(_known_run(opts, op), op, opts)
+    command = opts["command"]
+    stdin = opts.get("stdin")
+    env = _shell_env(opts.get("env"))
+    cwd = _shell_cwd(opts.get("cwd"))
+    # A named start keeps the id that it was given. While that shell runs, the
+    # same start answers the same process and starts no second one.
+    run_id = (opts.get("id") or "").strip()
+    with _RUNS_LOCK:
+        live = _live_run(run_id, command, cwd) if run_id else None
+        if live is not None:
+            snapshot = _result(
+                live,
+                "run",
+                already_running=True,
+                note=f"Shell '{run_id}' is already running. Nothing was restarted.",
+            )
+            return _shell_descriptor(live, snapshot)
+        run = _Run(command, cwd, env, stdin)
+        if run_id:
+            run.id = run_id
+        _RUNS[run.id] = run
+        snapshot = _result(run, "run", status="running", exit=None, is_eof=False)
+        return _shell_descriptor(run, snapshot)
 
 
 def _shell_descriptor(run, snapshot):

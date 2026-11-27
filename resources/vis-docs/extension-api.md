@@ -2063,12 +2063,12 @@ read goes to the extension log.
 To confine a child, use `vis.jailed_shell(...)`. It applies the jail policy from the merged
 configuration on disk, read again at every spawn, with or without a session.
 
-`vis.shell` and `vis.jailed_shell` take a command with keyword options, or one options map. So
-`vis.shell("npm test", cwd="app")` and `vis.shell({"command": "npm test", "cwd": "app"})` start
-the same process. The child runs under a terminal, and Vis keeps its output in a log.
+`vis.shell` and `vis.jailed_shell` take one command string and the keyword options `cwd`, `id`,
+`env`, and `stdin`. The child runs under a terminal, and Vis keeps its output in a log.
+To attach to a live process instead, pass only `op="attach"` and the process `id`.
 
-`vis.shell` and `vis.jailed_shell` return a `ShellFuture` for the process. Each read of `sh.status`
-or `sh.out` gives the current value. After the process ends, the fields give the final values.
+Both calls return a `ShellFuture`. Its fields give the start result until the Future settles.
+Use `sh.snapshot()` to read the current process state without waiting for it to exit.
 
 In an `async def`, use `await asyncio.wait([sh], timeout=30)` to wait up to 30 seconds. In a
 plain `def`, use `concurrent.futures.wait([sh], timeout=30)` on the same `ShellFuture`. Both calls
@@ -2096,7 +2096,8 @@ import asyncio
 async def run_tests():
     sh = vis.shell("npm test", cwd="app")
     done, pending = await asyncio.wait([sh], timeout=30)
-    print(sh.status, sh.out)
+    snapshot = sh.snapshot()
+    print(snapshot.status, snapshot.out)
     if sh in done:
         print(sh.exit)
 ```
@@ -2110,12 +2111,12 @@ Two options of `vis.jailed_shell` add exactly what you created for the child:
 | `unix_connect` | one socket path or a list of them | a unix socket your extension is listening on |
 
 ```python
-sh = vis.jailed_shell({
-    "command": "java -cp … my.runtime",
-    "cwd": project,
-    "env": {"MY_RUNTIME_SOCKET": socket_path},
-    "unix_connect": [socket_path],
-})
+sh = vis.jailed_shell(
+    "java -cp … my.runtime",
+    cwd=project,
+    env={"MY_RUNTIME_SOCKET": socket_path},
+    unix_connect=[socket_path],
+)
 ```
 
 Use the options when the child must talk back to the extension. A shell child runs under a real
