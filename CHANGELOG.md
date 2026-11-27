@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Logs: the svar stream progress profile records the time until the response headers arrived (`headers-ms`) and the provider request ID (`request-id`). A long wait before the first token now shows if the provider held the request or sent nothing on an open stream. Svar is pinned at 0.7.251.
+
+### Fixed
+
+- Live speech: speech no longer falls behind when one local speech model step takes more than 2 seconds. The gateway keeps all admitted speech. The Companion tells you that the local speech model prepares until live speech is ready.
+
 ## [v0.5.35] - 2026-11-27
 
 ### Added

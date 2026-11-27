@@ -20,7 +20,7 @@
         com.blockether/imaging {:mvn/version "0.1.17"}
         ;; Names the wrong quote or bracket when Python refuses a `py3` block.
         com.blockether/parinferish {:mvn/version "0.2.4"}
-        com.blockether/svar {:mvn/version "0.7.250"}
+        com.blockether/svar {:mvn/version "0.7.251"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
         com.blockether/vis-python-runtime {:git/sha "73230e5e1a8a75a9f570709663fa2c23dd3b8983"
