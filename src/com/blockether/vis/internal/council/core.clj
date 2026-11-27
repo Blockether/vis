@@ -270,7 +270,12 @@
                             (not= [(:author_session_id request)]
                                   (when (vector? (:ping opts))
                                     (mapv header/unmark-session-id (:ping opts)))))))
-          (fail! :invalid-reply "Reply must answer a request addressed to this session"))
+          (fail! :invalid-reply
+                 (str "Reply must answer a request addressed to this session"
+                      (when-let [thread (when (= gid (:group_id request))
+                                          (or (:thread_id request) reply-to))]
+                        (str ". To add to thread " thread ", publish with thread_id=" thread
+                             " and no reply_to")))))
 
         thread
         (or (:thread_id request) (:thread_id opts))

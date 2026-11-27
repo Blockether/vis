@@ -390,6 +390,13 @@ def council_recovery_evidence(form_outputs, activities, expected):
     return [], {failed["id"]}, [message]
 
 
+def _headline(answer):
+    """The first nonblank line of a child answer: its result headline."""
+    if not isinstance(answer, str):
+        return None
+    return next((line.strip() for line in answer.splitlines() if line.strip()), "")
+
+
 def council_attempt_failures(form_outputs, host_evidence, mode, work, answer):
     """Check two Council attempts against their gateway Task transitions."""
     attempts = tasks(host_evidence, "subagent")
@@ -429,7 +436,8 @@ def council_attempt_failures(form_outputs, host_evidence, mode, work, answer):
         return ["Council trial reused the same Task"]
     if second.get("status") != "completed":
         return ["second Council attempt does not have status 'completed'"]
-    if second.get("answer") != "written":
+    # A child answer has its evidence after the headline.
+    if _headline(second.get("answer")) != "written":
         return ["second Council attempt must answer exactly 'written'"]
     child_keys = ("id", "session_id")
     if mode == "followup":
@@ -437,7 +445,7 @@ def council_attempt_failures(form_outputs, host_evidence, mode, work, answer):
             return ["follow-up Task did not use the same child"]
         if first.get("status") != "completed":
             return ["first Council attempt does not have status 'completed'"]
-        if first.get("answer") != "scope-ok-7431":
+        if _headline(first.get("answer")) != "scope-ok-7431":
             return ["first Council attempt must answer exactly 'scope-ok-7431'"]
         if _workspace_text(work, "audit.txt").splitlines() != [
             "scope-ok-7431",
@@ -1061,7 +1069,7 @@ def stdout_recovery_failures(form_outputs, form_events, expected):
             for event in form_events
             if isinstance(event["iteration"], int)
             and event["iteration"] > first["iteration"]
-            and "read_session()" in event["code"]
+            and "read_session(" in event["code"]
             and ("['stdout']" in event["code"] or '["stdout"]' in event["code"])
             and "svar_tool_call_id" in event["code"]
             and any(f"{q}{scope}{q}" in event["code"] for q in ('"', "'"))
@@ -1078,7 +1086,7 @@ def stdout_recovery_failures(form_outputs, form_events, expected):
             for item in form_outputs
         ):
             failures.append(
-                label + "no later read_session() block verified the exact stdout"
+                label + "no later session read verified the exact stdout"
             )
     return failures
 

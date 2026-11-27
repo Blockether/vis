@@ -1462,6 +1462,14 @@ class CouncilAttemptsTest(unittest.TestCase):
         first = self.attempt(1, answer="scope-ok-7431")
         follow = {**first, "task_id": "t2", "answer": "written"}
         self.assertEqual([], self.failures(first, follow, mode="followup"))
+        self.assertEqual(
+            [],
+            self.failures(
+                {**first, "answer": "scope-ok-7431\n\nThe only line of notes.txt."},
+                {**follow, "answer": "written\n\nI read audit.txt back."},
+                mode="followup",
+            ),
+        )
         self.assertTrue(self.failures(first, self.attempt(2), mode="followup"))
         self.assertTrue(
             self.failures(first, {**follow, "task_id": "t1"}, mode="followup")

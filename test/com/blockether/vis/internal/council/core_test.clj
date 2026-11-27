@@ -2200,6 +2200,18 @@
                                [:replies 0 :reply_entry_id]))))
           (expect (= 4 (count (:entries (page w {}))))))))))
 
+(defdescribe reply-to-own-thread-test
+             (it "names thread_id when reply_to targets a message that asks nothing of this session"
+                 (with-council
+                   (let [w (world)
+                         root (publish w {:content "Root"})
+                         error (try (publish w {:content "Reply" :reply_to (:entry_id root)})
+                                    nil
+                                    (catch clojure.lang.ExceptionInfo e e))]
+                     (expect (= :invalid-reply (:error (ex-data error))))
+                     (expect (str/includes? (ex-message error)
+                                            (str "thread_id=" (:thread_id root))))))))
+
 (defdescribe required-reply-validation-test
              (it "required reply validation"
                  (with-council
