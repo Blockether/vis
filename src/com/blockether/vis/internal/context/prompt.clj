@@ -814,8 +814,7 @@
             "\nDirectory walks cap at 10,000 entries. Narrow `ls` or `grep`."
             "\nTasks start on call. `await asyncio.wait([task], timeout=seconds)` does not cancel. "
             "Read live fields. Await results. Do not wrap or retry Tasks. See `asyncio.all_tasks()`. "
-            "For child requests, save `watch = council.changed()`. Include it with the child Task in `asyncio.wait` with `return_when=asyncio.FIRST_COMPLETED`. "
-            "Reuse a pending watch or cancel it when finished."
+            "For child requests, wait on the child Task and a saved `council.changed()` (`FIRST_COMPLETED`); cancel it when done."
             "\nFor app input, `await asyncio.wait([app.changed()])`, then call `app.events()`."
            "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
