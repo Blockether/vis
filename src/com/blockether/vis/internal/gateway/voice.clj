@@ -5,7 +5,8 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.voice-session :as coordinator]
             [com.blockether.vis.internal.util :as util]
-            [ring.websocket :as ws])
+            [ring.websocket :as ws]
+            [taoensso.telemere :as tel])
   (:import [java.nio ByteBuffer]
            [java.security MessageDigest]
            [java.util Arrays UUID]
@@ -134,17 +135,21 @@
 
     (if (true? result)
       true
-      (let [{active :operation started :started-at} @(:input-active runtime)]
-        (state/append-event! (:sid runtime)
-                             "voice.input_overflow"
-                             (assoc result
-                               :voice-session-id (:id runtime)
-                               :capture-generation generation
-                               :operation (name operation)
-                               :active-operation (some-> active
-                                                         name)
-                               :active-duration-ms
-                               (if started (- (monotonic-ms) (long started)) 0)))
+      (let [{active :operation started :started-at}
+            @(:input-active runtime)
+
+            payload
+            (assoc result
+              :voice-session-id (:id runtime)
+              :capture-generation generation
+              :operation (name operation)
+              :active-operation (some-> active
+                                        name)
+              :active-duration-ms (if started (- (monotonic-ms) (long started)) 0))]
+
+        ;; The journal drops this event at the next turn start. The log keeps the cause.
+        (tel/log! {:level :warn :id ::input-overflow :data payload})
+        (state/append-event! (:sid runtime) "voice.input_overflow" payload)
         false))))
 
 (defn- clear-input! [^ArrayBlockingQueue queue] (locking queue (.clear queue)))

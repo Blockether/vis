@@ -267,7 +267,9 @@ describe('hands-free live session', () => {
     expect(h.controls().filter((e) => e.type === 'capture.mute')).toEqual([]);
     expect(h.audio.stopOutput).toHaveBeenCalledTimes(stops);
     expect(h.audio.capture).toHaveBeenCalledTimes(1);
+    expect(h.views.at(-1)?.message).toBe('Input paused. Unmute to retry.');
     h.session.setMuted(false);
+    expect(h.views.at(-1)?.message).toBeNull();
     expect(h.controls().at(-1)).toEqual({ type: 'capture.mute', muted: false });
     expect(h.audio.capture).toHaveBeenCalledTimes(1);
     h.emit({

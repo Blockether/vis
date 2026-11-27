@@ -515,7 +515,8 @@ export class LiveVoiceSession {
   }
   setMuted(muted: boolean): void {
     if (muted === this.view.muted) return;
-    this.update({ muted });
+    // Unmute answers the pause notice of an input overflow.
+    this.update(muted ? { muted } : { muted, message: null });
     this.minimumCaptureGeneration = (this.view.state?.capture_generation ?? -1) + 1;
     this.releaseCapture();
     const generation = this.captureGeneration;
