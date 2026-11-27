@@ -703,7 +703,7 @@ def test_real_council_disabled(tmp_path, monkeypatch, transport, engines):
         assert disabled.value.status == 409
         assert len(requests) == 2
         assert all(
-            "## Council: session conversation" not in str(message.get("content", ""))
+            "## Council: messages" not in str(message.get("content", ""))
             for request in requests
             for message in request["messages"]
             if message["role"] == "system"
@@ -1109,7 +1109,7 @@ def test_real_council_roundtrip(tmp_path, monkeypatch, transport, engines):
         )  # No Council request started a turn or extra iteration.
         for request in requests:
             assert any(
-                "## Council: session conversation" in str(message.get("content", ""))
+                "## Council: messages" in str(message.get("content", ""))
                 for message in request["messages"]
                 if message["role"] == "system"
             )
