@@ -116,6 +116,8 @@ class Runs:
                     "id": run_id,
                     "workflow": workflow,
                     "version": about.get("version"),
+                    # The model of the run. A run in a session of a person keeps the model of that session.
+                    "uses": about.get("uses") if session is None else None,
                     "title": about["title"],
                     "input": given,
                     "status": "queued",

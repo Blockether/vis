@@ -72,7 +72,15 @@ class Workflows:
         if known is None or known[0] != head["version"]:
             text = self.code(name, head["version"])["source"]
             known = self.known[name] = (head["version"], {**describe(name, text), "version": head["version"], "updated": head["at"]}, text)
-        return known[1], known[2]
+        about, choice = known[1], self.choice(name)
+        default = {"provider": about["provider"], "model": about["model"]} if about["model"] else None
+        return {**about, "choice": choice, "uses": choice or default}, known[2]
+
+    def choice(self, name: str) -> Document | None:
+        """Return the model that a person selected for a workflow on the page, or None for the model of the code."""
+        item = self.table.get(f"uses/{name}")
+        doc = unpack(item) if item else {}
+        return {"provider": doc["provider"], "model": doc["model"]} if doc.get("model") else None
 
     def versions(self, name: str) -> list[Document]:
         """List the versions of a workflow without their source, newest first."""
@@ -115,6 +123,7 @@ class Workflows:
             "origin": code["origin"],
             "current": head["version"],
             "deleted": head["deleted"],
+            "choice": self.choice(name),
             "draft": self.errors.get(name),
             "versions": self.versions(name),
         }
@@ -142,6 +151,10 @@ class Workflows:
             condition = Equals(key, "version", int(item["version"])) if item else Absent(key)
             if self.records.write({key: pack(head, int(item["version"]) + 1 if item else 1), f"code/{name}/{version:08d}": pack(code)}, [condition]):
                 return head
+
+    def choose(self, name: str, provider: str | None, model: str | None) -> None:
+        """Keep the model that a person selected for a workflow. No model clears the selection. The last selection replaces the others."""
+        self.records.write({f"uses/{name}": pack({"name": name, "provider": provider, "model": model, "at": time.time()})}, [])
 
     def mark(self, name: str, file: str | None) -> None:
         """Record the file content that agrees with the table. A lost write is repeated by the next look."""

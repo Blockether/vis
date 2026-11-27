@@ -11,6 +11,17 @@ from factory import settings
 from factory.records import FILE, Document, Refused
 
 
+def provider_of(client: GatewayClient, model: str, provider: str | None = None) -> str:
+    """Return the provider of a model: the given one, else `FACTORY_PROVIDER`, else the first provider of the gateway that has the model."""
+    known = provider or settings.PROVIDER
+    if known:
+        return known
+    found = next((row.provider for row in client.models(is_available=True) if row.name == model), None)
+    if found is None:
+        raise Refused(400, f"no provider of the gateway has the model {model!r}")
+    return found
+
+
 class Gateway:
     """Use a new SDK client for each calling thread and request."""
 
@@ -48,6 +59,11 @@ class Gateway:
                 return {"ok": True, "version": version}, models
         except (GatewayError, TransportError, Refused):
             return {"ok": False, "version": ""}, []
+
+    def models(self) -> list[Document]:
+        """List the models of the providers that the gateway can use, in the order of its pickers."""
+        with self.client() as client:
+            return [{"provider": model.provider, "model": model.name, "label": model.label, "default": model.is_default} for model in client.models(is_available=True, timeout=5)]
 
     def sessions(self) -> list[Document]:
         """Read the sessions of this project with the fields the scheduler needs."""
@@ -119,15 +135,14 @@ class Gateway:
                 raise Refused(404, "no such file")
             return file.read()
 
-    def create(self, client: GatewayClient, *, group: str, key: str, title: str, model: str | None = None) -> Session:
-        """Open or create the grouped session that belongs to one operation."""
-        if model and not settings.PROVIDER:
-            raise Refused(400, "set the factory provider to use a workflow model")
+    def create(self, client: GatewayClient, *, group: str, key: str, title: str, uses: Document | None = None) -> Session:
+        """Open or create the grouped session that belongs to one operation. `uses` names its model, and optionally the provider."""
+        model = (uses or {}).get("model")
         return client.create_session(
             group=client.group(group, root=settings.PROJECT),
             idempotency_key=key,
             title=title,
-            provider=settings.PROVIDER if model else None,
+            provider=provider_of(client, model, (uses or {}).get("provider")) if model else None,
             model=model,
             **client.session_options(settings.PROJECT),
         )

@@ -60,10 +60,15 @@ class Gateway:
         """Start without any sessions."""
         self.rows, self.talks, self.cancelled = [], [], []
         self.is_editing = False
+        self.offered = [{"provider": "anthropic", "model": "haiku", "label": "Haiku", "default": True}, {"provider": "alibaba", "model": "qwen", "label": "Qwen", "default": False}]
 
     def sessions(self):
         """List the fake sessions."""
         return self.rows
+
+    def models(self):
+        """List the models that the fake gateway offers."""
+        return self.offered
 
     def editing(self):
         """Return whether a session of the workflow project has a running turn."""

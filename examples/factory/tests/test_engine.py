@@ -372,3 +372,42 @@ def test_talk_can_finish_a_claim_after_gateway_error(engine, monkeypatch):
     assert engine.call("POST", path) == (200, {"session_id": SESSION})
     assert engine.call("POST", path) == (200, {"session_id": SESSION})
     assert len(calls) == 2
+
+
+def test_run_uses_the_model_of_the_page_before_the_model_of_the_code(engine):
+    """The code of a workflow gives the default model. A selection on the page replaces it until a person clears it."""
+    code = "from factory.workflows import workflow\n\n@workflow(model='haiku')\ndef review(ctx):\n    pass\n"
+
+    def uses():
+        """Start a run and return the model that it keeps."""
+        return engine.call("POST", "runs", {"workflow": "review"})[1]["uses"]
+
+    engine.write("review", code)
+    assert uses() == {"provider": None, "model": "haiku"}
+    status, detail = engine.call("POST", "workflows/review/model", {"provider": "alibaba", "model": "qwen"})
+    assert status == 200
+    assert (detail["model"], detail["choice"]) == ("haiku", {"provider": "alibaba", "model": "qwen"})
+    assert uses() == {"provider": "alibaba", "model": "qwen"}
+    # A new version of the code changes the default, not the selection of the page.
+    engine.write("review", code.replace("haiku", "opus"))
+    assert uses() == {"provider": "alibaba", "model": "qwen"}
+    assert engine.call("POST", "workflows/review/model", {})[1]["choice"] is None
+    assert uses() == {"provider": None, "model": "opus"}
+    assert engine.call("GET", "workflows")[1]["workflows"][0]["choice"] is None
+
+
+def test_page_selects_only_a_model_that_the_gateway_offers(engine):
+    """A pair of provider and model that the gateway does not have must not reach a run."""
+    engine.write("review", SIMPLE)
+    assert engine.call("GET", "models")[1]["models"] == engine.gateway.offered
+    for body in ({"provider": "alibaba", "model": "haiku"}, {"provider": "alibaba"}, {"model": "qwen"}, {"provider": 1, "model": "qwen"}):
+        assert engine.call("POST", "workflows/review/model", body)[0] == 400
+    assert engine.call("POST", "workflows/absent/model", {"provider": "alibaba", "model": "qwen"})[0] == 404
+    assert engine.call("POST", "runs", {"workflow": "review"})[1]["uses"] is None
+
+
+def test_workflow_provider_needs_a_model(engine):
+    """A provider without a model selects nothing, so the file gets no version."""
+    engine.write("review", "from factory.workflows import workflow\n\n@workflow(provider='alibaba')\ndef review(ctx):\n    pass\n")
+    (row,) = engine.call("GET", "workflows")[1]["workflows"]
+    assert (row["version"], row["draft"]) == (0, "give a model with the provider of the workflow")

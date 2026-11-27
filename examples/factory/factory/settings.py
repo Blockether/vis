@@ -54,7 +54,7 @@ LOGIN_S = 30 * 86400
 # The gateway of the factory and the file with its token.
 GATEWAY_URL = ENV.get("VIS_GATEWAY_URL", "http://127.0.0.1:7890").rstrip("/")
 TOKEN_FILE = os.path.expanduser(ENV.get("VIS_GATEWAY_TOKEN_FILE", "~/.vis/gateway.token"))
-# The provider and the model of a run whose workflow names a model. Without `@workflow(model=)`, a run uses the model of the gateway.
+# The provider of a model that a workflow or a request names without a provider. Without it, such a model uses the first provider of the gateway that has it.
 PROVIDER = ENV.get("FACTORY_PROVIDER", "")
 # The session group of the runs, and the group of the sessions that the factory starts for a talk about a suggestion.
 RUNS_GROUP, TALKS_GROUP = "Runs", "Suggestions"

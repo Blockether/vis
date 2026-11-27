@@ -1,11 +1,12 @@
 // Workflow versions, inputs and triggers. The code changes in the Vis project of the workflows, not on this page.
 import {
-  api, back, bar, button, chip, date, dialog, empty, field, fill, h, item, loadError, loading,
-  panel, panes, poll, press, selection, setSelection, structured, toast, update,
+  api, back, bar, button, chip, date, dialog, empty, field, fill, guard, h, item, loadError, loading,
+  panel, panes, poll, press, select, selection, setSelection, structured, toast, update,
 } from "./common.js";
 
 // `version` is the version on the page. Without it, the page follows the current version.
-const state = { name: selection("workflow"), version: null, project: "Workflows", list: [], triggers: [], about: null, listRead: 0, detailRead: 0 };
+// `models` is the list of the gateway. It is null until the first read.
+const state = { name: selection("workflow"), version: null, project: "Workflows", list: [], triggers: [], models: null, about: null, listRead: 0, detailRead: 0 };
 const view = panes("Workflows", "See the code of a workflow and its versions, check its triggers or start a run.", h("h2", { text: "Workflows" }));
 const failure = h("p", { class: "status-line bad-text", role: "status" });
 const body = h("div");
@@ -101,6 +102,44 @@ function versions(about) {
   return select;
 }
 
+/** Return the control that selects the model of the next runs. The first row is the model that the code names. */
+function model(about) {
+  const rows = state.models || [];
+  const chosen = about.choice;
+  const at = chosen ? rows.findIndex((row) => row.provider === chosen.provider && row.model === chosen.model) : -1;
+  const code = about.model ? [about.provider, about.model].filter(Boolean).join(" · ") : "the model of the gateway";
+  const now = chosen ? (at < 0 ? "gone" : String(at)) : "";
+  const control = select("Model of the runs", [
+    ["", `From the code · ${code}`],
+    ...rows.map((row, index) => [String(index), `${row.provider} · ${row.label}`]),
+    ...(now === "gone" ? [["gone", `${chosen.provider} · ${chosen.model} · not available`]] : []),
+  ], (value) => guard(control, async () => {
+    control.value = now; // the control shows the new model when the factory has it
+    await choose(value ? rows[Number(value)] : null);
+  }));
+  control.value = now;
+  return field("Model of the runs", control);
+}
+
+async function choose(row) {
+  const name = state.name;
+  const about = await api(`workflows/${encodeURIComponent(name)}/model`, { method: "POST", body: row ? { provider: row.provider, model: row.model } : {} });
+  toast(row ? `The next runs use ${row.label}.` : "The next runs use the model of the code.", "good");
+  if (name !== state.name || state.version) return;
+  state.about = about;
+  draw();
+}
+
+async function readModels() {
+  if (state.models) return;
+  try {
+    state.models = (await api("models")).models || [];
+    if (state.about) draw();
+  } catch {
+    // Without the list, the control shows the model in use. The next poll reads the list again.
+  }
+}
+
 function show(version) {
   state.version = version === state.about.current ? null : version;
   void readDetail();
@@ -112,7 +151,7 @@ function draw() {
   const live = !old && !about.deleted && !about.error;
   const timing = new Map(state.triggers.filter((trigger) => trigger.workflow === name).map((row) => [row.id, row]));
   const triggers = (about.triggers || []).map((trigger) => ({ ...(live ? timing.get(trigger.id) : {}), ...trigger }));
-  update(body, [about, triggers], () => panel(
+  update(body, [about, triggers, state.models], () => panel(
     [h("div", { class: "row" }, back(() => open("")), h("h2", { text: about.title || name })),
       h("span", { class: "meta", text: `${name}.py` }),
       h("div", { class: "row actions" },
@@ -126,6 +165,7 @@ function draw() {
     about.error && h("p", { class: "status-line bad-text", role: "status", text: `This version does not load: ${about.error}.` }),
     about.deleted && h("p", { class: "status-line", text: old ? "This workflow is removed. Restore this version to use it again." : "This workflow is removed. Select an earlier version and restore it to use the workflow again." }),
     old && !about.deleted && h("p", { class: "status-line", text: `This is version ${about.version}. Runs use version ${about.current}.` }),
+    !old && !about.deleted && model(about),
     about.origin !== "delete" && field(`Source · version ${about.version}`, h("pre", { class: "input source", tabindex: "0", text: about.source })),
     about.origin !== "delete" && h("div", { class: "stack" },
       about.description && h("p", { text: about.description }),
@@ -172,7 +212,7 @@ async function run() {
 }
 
 async function refresh() {
-  await Promise.all([readList(), readTriggers()]);
+  await Promise.all([readList(), readTriggers(), readModels()]);
   if (state.name) await readDetail();
 }
 

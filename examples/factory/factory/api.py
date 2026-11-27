@@ -48,10 +48,12 @@ class App:
         self.editing = False
         routes: list[tuple[str, str, Callable[..., Any]]] = [
             ("GET", r"status", self.status),
+            ("GET", r"models", self.models),
             ("GET", r"workflows", self.workflows),
             ("POST", r"workflows/check", self.check),
             ("GET", r"workflows/(\w+)", self.workflow),
             ("POST", r"workflows/(\w+)/restore", self.restore),
+            ("POST", r"workflows/(\w+)/model", self.select),
             ("DELETE", r"workflows/(\w+)", self.remove),
             ("GET", r"runs", self.list_runs),
             ("POST", r"runs", self.run),
@@ -143,6 +145,10 @@ class App:
             "gateway": gateway,
         }
 
+    def models(self, **_: Any) -> Document:
+        """List the models that a workflow can use, in the order of the gateway."""
+        return {"models": self.gateway.models()}
+
     def workflows(self, **_: Any) -> Document:
         """List the workflows and what their current versions say about themselves."""
         return {"workflows": self.store.listing(), "project": settings.WORKFLOWS_NAME, "editing": self.editing}
@@ -162,6 +168,15 @@ class App:
     def restore(self, name: str, payload: Document, **_: Any) -> Document:
         """Make an old version the current one."""
         return self.store.restore(name, payload.get("version"))
+
+    def select(self, name: str, payload: Document, **_: Any) -> Document:
+        """Keep the model that a person selected for a workflow. A body without a model selects the model of the code again."""
+        self.store.head(name)
+        provider, model = payload.get("provider"), payload.get("model")
+        if (provider, model) != (None, None) and not any((row["provider"], row["model"]) == (provider, model) for row in self.gateway.models()):
+            raise Refused(400, "the gateway does not offer that model")
+        self.store.choose(name, provider, model)
+        return self.store.detail(name)
 
     def remove(self, name: str, **_: Any) -> Document:
         """Remove one workflow. Its versions stay."""

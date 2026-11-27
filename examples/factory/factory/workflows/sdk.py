@@ -20,6 +20,7 @@ of the failed attempt stays as it is. The files of the work directory do not go 
 A document of a run is a native Vis attachment: the session calls `attach`, and the
 activity reads the files of that turn with `Session.attachments` of the SDK.
 
+A workflow names its model in the code: `@workflow(model="qwen3.8-max", provider="alibaba-token-plan")`.
 One request can use another language model: `ctx.ask(request, llm="qwen3.8-max")`.
 `ctx.delegate(tasks)` gives each task to its own subagent of the session and returns
 their answers.
@@ -71,7 +72,8 @@ from typing import Concatenate, Literal, NotRequired, ParamSpec, Protocol, Typed
 from blockether.vis.engine import Attachment, GatewayError, JSONValue, Session, Turn, final_answer
 from pydantic import BaseModel, ValidationError
 
-from factory.settings import CORRECTIONS, PROVIDER, TURN_S
+from factory.gateway import provider_of
+from factory.settings import CORRECTIONS, TURN_S
 from factory.workflows.client import Durable
 
 Model = TypeVar("Model", bound=BaseModel)
@@ -270,6 +272,7 @@ class Marks:
     title: str
     description: str
     model: str | None
+    provider: str | None
     activities: tuple[Around, ...]
     requests: tuple[Through, ...]
     triggers: tuple[Trigger, ...]
@@ -331,15 +334,6 @@ def subagent(item: dict[str, object]) -> Subagent:
     return Subagent(id=str(item.get("id")), status=str(item.get("status")), answer=answer if isinstance(answer, str) else None, error=item.get("error"))
 
 
-def route(llm: str | None, provider: str | None) -> dict[str, str]:
-    """Return the turn fields that select the model `llm` for one request. Without a provider, it is the provider of the stack."""
-    if llm is None:
-        if provider is not None:
-            raise ValueError("give `llm` with `provider`")
-        return {}
-    return {"provider": provider or PROVIDER, "model": llm}
-
-
 @dataclass(frozen=True)
 class Trigger:
     """A schedule or event that starts a workflow."""
@@ -360,9 +354,20 @@ def on(event: str, input: Mapping[str, JSONValue] | None = None) -> Trigger:
 
 
 def workflow(
-    title: str = "", description: str = "", model: str | None = None, *, activities: Sequence[Around] = (), requests: Sequence[Through] = (), triggers: Sequence[Trigger] = ()
+    title: str = "",
+    description: str = "",
+    model: str | None = None,
+    *,
+    provider: str | None = None,
+    activities: Sequence[Around] = (),
+    requests: Sequence[Through] = (),
+    triggers: Sequence[Trigger] = (),
 ) -> Callable[[Entry], Entry]:
-    """Mark the function that a run calls. `model` selects the model of the session.
+    """Mark the function that a run calls. `model` selects the model of the session, and `provider` the provider of that model.
+
+    Without `provider`, the session uses the provider of the gateway that has the
+    model. Without `model`, it uses the model of the gateway. These are the defaults
+    of the workflow: a person can select another model on the page of the workflow.
 
     `activities` and `requests` are the middleware of the run. A middleware of
     `activities` is `(ctx, step, call)`: it gets each activity as a `Step`, and `call()`
@@ -376,9 +381,12 @@ def workflow(
     Thus a middleware that changes the text must give the same text each time.
     """
 
+    if provider and not model:
+        raise ValueError("give `model` with `provider`")
+
     def mark(function: Entry) -> Entry:
         """Record the title, the description, the model and the middleware on the function."""
-        function.__workflow__ = Marks(title or function.__name__, description, model, tuple(activities), tuple(requests), tuple(triggers))  # type: ignore[attr-defined]
+        function.__workflow__ = Marks(title or function.__name__, description, model, provider, tuple(activities), tuple(requests), tuple(triggers))  # type: ignore[attr-defined]
         return function
 
     return mark
@@ -453,6 +461,8 @@ class Context:
         self._turns, self._at = turns[base:], 0
         # The last turn that a fork of the session keeps.
         self._kept: str | None = turns[base - 1]["turn_id"] if base else None
+        # The provider of each model that the code names without a provider.
+        self._providers: dict[str, str] = {}
         steps = run.get("activities") or []
         # The activities that the run shows as completed, and the decisions that the transcript does not have yet.
         self._done = {step["seq"]: step["name"] for step in steps if step["status"] == "completed"}
@@ -560,13 +570,23 @@ class Context:
                     raise
             time.sleep(2)
 
+    def _provider(self, model: str, provider: str | None = None) -> str:
+        """Return the provider of a model. Without a given provider, the gateway is asked one time for each model."""
+        if provider:
+            return provider
+        if model not in self._providers:
+            self._providers[model] = provider_of(self.session.client, model)
+        return self._providers[model]
+
     def _send(self, request: Request) -> Reply:
         """Return the answer of a request: of its turn in the transcript, or of a new turn of the session."""
-        using = route(request.llm, request.provider)
+        if request.provider and not request.llm:
+            raise ValueError("give `llm` with `provider`")
         turn = self._recorded(lambda text: text == request.text, request.timeout)
         if turn is None:
             self._leave()
             self._report()
+            using = {"provider": self._provider(request.llm, request.provider), "model": request.llm} if request.llm else {}
             sent = row(self.session.send(request.text, **using).wait(timeout=request.timeout))
             if sent["status"] != "completed":
                 raise ActivityError(f"the turn ended with the status {sent['status']!r}")
@@ -593,9 +613,9 @@ class Context:
         Schema of the model, and a correction request for an answer that does not fit.
         Without a model, return the answer text. Each request is one turn of the transcript.
 
-        `llm` names the language model of this request only, and `provider` its provider
-        when it is not the provider of the stack. The next request uses the model of
-        the session again. A request on another model does not use the prompt cache.
+        `llm` names the language model of this request only, and `provider` its provider.
+        Without `provider`, it is the first provider of the gateway that has the model.
+        The next request uses the model of the session again. A request on another model does not use the prompt cache.
         """
         if model is None:
             return self._request(request, timeout, llm, provider).text
@@ -629,8 +649,8 @@ class Context:
                 raise ValueError(f"a task is a text, or a dict with `task` and these optional fields: {', '.join(TASK[1:])}")
             if task.get("provider") and not task.get("model"):
                 raise ValueError("give `model` with `provider` in a task")
-            if task.get("model") and not task.get("provider"):
-                task["provider"] = PROVIDER
+            if (named := task.get("model")) and not task.get("provider"):
+                task["provider"] = self._provider(named)
         if not given:
             return []
         # A backtick in a task must not end the code block of the request.

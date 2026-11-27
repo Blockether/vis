@@ -46,14 +46,17 @@ def describe(name: str, source: str) -> dict[str, Any]:
     defaults = [None] * (len(positional) - len(entry.args.defaults)) + list(entry.args.defaults)
     arguments = list(zip(positional, defaults, strict=True))[1:] + list(zip(entry.args.kwonlyargs, entry.args.kw_defaults, strict=True))
     about = {key: literal(value) for key, value in found.items() if key != "triggers"}
-    if any(value is not None and not isinstance(value, str) for key, value in about.items() if key in ("title", "description", "model")):
-        raise Refused(400, "the workflow title, description and model must be text")
+    if any(value is not None and not isinstance(value, str) for key, value in about.items() if key in ("title", "description", "model", "provider")):
+        raise Refused(400, "the workflow title, description, model and provider must be text")
+    if about.get("provider") and "model" not in about:
+        raise Refused(400, "give a model with the provider of the workflow")
     activities = [(node, marks(node, "activity")) for node in functions]
     return {
         "name": name,
         "title": about.get("title") or entry.name,
         "description": about.get("description") or ast.get_docstring(entry) or "",
         "model": about.get("model"),
+        "provider": about.get("provider"),
         "inputs": [{"name": a.arg, "default": literal(d), "required": d is None, "type": ast.unparse(a.annotation) if a.annotation else None} for a, d in arguments],
         "activities": [{"name": node.name, "title": literal(kept.get("title")) or node.name} for node, kept in activities if kept is not None],
         "triggers": trigger_list(name, found.get("triggers"), {a.arg for a, _ in arguments}),

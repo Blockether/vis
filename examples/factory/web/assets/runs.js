@@ -87,7 +87,7 @@ function draw(run) {
   const draft = body.dataset.gate === `${run.id}/${waiting?.key}` ? current?.value : "";
   redraw(body, body, "details", () => update(body, run, () => panel(
     [h("div", { class: "row wrap" }, back(() => open("")), status(run.status)), h("h2", { text: run.title || run.workflow }),
-      h("span", { class: "meta", text: [run.workflow, run.version && `version ${run.version}`, date(run.created), run.trigger?.id].filter(Boolean).join(" · ") }),
+      h("span", { class: "meta", text: [run.workflow, run.version && `version ${run.version}`, run.uses?.model && `model ${run.uses.model}`, date(run.created), run.trigger?.id].filter(Boolean).join(" · ") }),
       h("div", { class: "row actions" },
         session && h("a", { href: sessionPath(session), class: "btn" }, icon("open"), "Open session"),
         OPEN.has(run.status) && button("Cancel", { class: "danger", onclick: press(() => action(run.id, "cancel")) }, "stop"),

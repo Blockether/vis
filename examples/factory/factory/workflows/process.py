@@ -61,7 +61,9 @@ def main(run_id: str) -> int:
                 key = f"factory-run-{run_id}"
                 if run.get("session_id") or fresh_count > 1:
                     key += f"-{run['starts']}-{fresh_count}"
-                return gateway.create(client, group=settings.RUNS_GROUP, key=key, title=f"{run['title']} · run {run_id[:8]}", model=about.model)
+                # The run has the model that the page or the code named when the run started. A model that the code computes is known only here.
+                uses = run.get("uses") or ({"provider": about.provider, "model": about.model} if about.model else None)
+                return gateway.create(client, group=settings.RUNS_GROUP, key=key, title=f"{run['title']} · run {run_id[:8]}", uses=uses)
 
             known = run.get("session_id")
             if known:

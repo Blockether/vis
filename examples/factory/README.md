@@ -108,6 +108,21 @@ a run starts again, a request that the transcript has returns its answer at once
 a new request goes to the session. A person can retry a failed run, and
 `@activity(retries=2)` retries one activity in a fork of the session.
 
+### The model of a workflow
+
+The code of a workflow names its model: `@workflow(model="claude-haiku-5-5")`. Add
+`provider="..."` when two providers of the gateway have a model with that name. Without
+`provider`, the model uses the first provider of the gateway that has it. Without
+`model`, a run uses the model of the gateway.
+
+The code gives the default. On the Workflows page, the control **Model of the runs**
+lists the models of the gateway, and a selection there replaces the model of the code
+for the next runs. The selection stays when the code changes. The first row of the
+control, **From the code**, removes the selection. A run keeps the model that it
+started with, and a run in a session of a person keeps the model of that session.
+
+One request can use another model: `ctx.ask(request, llm="qwen3.8-flash")`.
+
 The factory refuses a run that has no value for an input without a default, and a
 value that does not fit an annotation `str`, `int`, `float`, `bool`, `list` or `dict`.
 It does not check other annotations.
@@ -200,6 +215,9 @@ change. The token for the sign-in is in `<root>/secret.env`.
 
 A run needs a language model. Open `/factory/vis`, open the settings and add a
 provider. The header of each page shows `Gateway: no model` until the gateway has one.
+The gateway of the factory has its own Vis home, `<root>/home/.vis`, so it does not use
+the providers of another Vis on the machine. `FACTORY_PROVIDER` names the provider of
+each model that a workflow names without a provider.
 
 Put a proxy with TLS in front of the factory when people use it from other machines.
 

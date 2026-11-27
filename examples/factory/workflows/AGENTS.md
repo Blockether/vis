@@ -55,6 +55,9 @@ def nightly(ctx: Context, task: str = "Find and fix one failing test") -> Work:
 - `ctx.delegate(tasks)` gives the answer of one subagent for each task.
 - `ctx.gate(key, title)` waits for the decision of a person.
 - `ctx.note(text)` writes a line in the log of the run.
+- `@workflow(model="claude-haiku-5-5")` names the default model of the runs, and
+  `provider="..."` its provider. A person can select another model on the Workflows
+  page. `ctx.ask(request, llm="...")` names the model of one request.
 - The arguments of `@workflow`, `@activity`, `cron` and `on` must be constants. The
   factory reads them from the source and does not run the file for that.
 - An input without a default is necessary. The fields of an event fill the inputs that

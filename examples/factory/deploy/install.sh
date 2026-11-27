@@ -13,7 +13,7 @@
 #   FACTORY_PUBLIC_URL    The address that people use, when a proxy is in front.
 #   FACTORY_NAME          The name on the pages. Default: Factory.
 #   FACTORY_DATABASE      sqlite:///<file>, postgres://... or d1://<account>/<database>. Default: SQLite in <root>/data.
-#   FACTORY_PROVIDER      The provider of a run whose workflow names a model.
+#   FACTORY_PROVIDER      The provider of a model that a workflow names without a provider. Default: the first provider that has the model.
 #   VIS_SOURCE            The Git repository of Vis. Default: https://github.com/Blockether/vis.
 #   VIS_WEB_DIR           A build of Vis web. Default: the script builds it from VIS_SOURCE with Node.js.
 #
