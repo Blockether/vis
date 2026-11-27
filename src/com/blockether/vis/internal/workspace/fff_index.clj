@@ -299,9 +299,18 @@
   "How long a scoped search skips a repository index whose build failed."
   60000)
 
-(def ^:private cover-cooldown-limit "Maximum number of failed repository indexes to remember." 64)
+(def ^:private scope-memory-limit
+  "Maximum number of keys that `failed-covers` and `costly-snapshots` each keep."
+  64)
 
 (defonce ^:private failed-covers (atom {}))
+
+(def ^:private costly-snapshot-ms
+  "A snapshot search that takes this long has read a large tree. A new snapshot has
+   no content index, so each grep reads each file of the tree again."
+  100)
+
+(defonce ^:private costly-snapshots (atom {}))
 
 (defonce ^:private index-sequence (java.util.concurrent.atomic.AtomicLong. 0))
 
@@ -531,18 +540,23 @@
   (contains? #{:ext.foundation.editing/fff-unavailable :ext.foundation.editing/fff-scan-timeout}
              (:type (ex-data error))))
 
-(defn- remember-cover-failure!
-  "Called under the pool lock before the failed entry is removed."
-  [k]
+(defn- remember!
+  "Keep `k` in `memory` for `ttl-ms`. Drop each key whose time ended, and the
+   oldest key above `scope-memory-limit`."
+  [memory k ttl-ms]
   (let [now (quot (System/nanoTime) 1000000)]
-    (swap! failed-covers (fn [failures]
-                           (let [recent (into {k (+ now (long cover-cooldown-ms))}
-                                              (filter (fn [[key until]]
-                                                        (and (not= key k) (> (long until) now))))
-                                              failures)]
-                             (if (> (count recent) cover-cooldown-limit)
-                               (dissoc recent (key (apply min-key val recent)))
-                               recent))))))
+    (swap! memory (fn [entries]
+                    (let [recent (into {k (+ now (long ttl-ms))}
+                                       (filter (fn [[key until]]
+                                                 (and (not= key k) (> (long until) now))))
+                                       entries)]
+                      (if (> (count recent) (long scope-memory-limit))
+                        (dissoc recent (key (apply min-key val recent)))
+                        recent))))))
+
+(defn- remembered?
+  [memory k]
+  (> (long (get @memory k Long/MIN_VALUE)) (quot (System/nanoTime) 1000000)))
 
 (defn- retire-failed!
   "Remove a failed entry. The last borrower closes it."
@@ -554,7 +568,8 @@
          removed?
          (locking pool
            (when (identical? (get @pool k) entry)
-             (when remember? (remember-cover-failure! k))
+             ;; Under the pool lock, before the failed entry leaves the pool.
+             (when remember? (remember! failed-covers k cover-cooldown-ms))
              (swap! pool dissoc k)
              true))]
 
@@ -710,10 +725,7 @@
         [entry reused?]
         (locking pool
           (let [existing (get @pool k)]
-            (when (or existing
-                      (not (and fallback
-                                (> (long (get @failed-covers k Long/MIN_VALUE))
-                                   (quot (System/nanoTime) 1000000)))))
+            (when (or existing (not (and fallback (remembered? failed-covers k))))
               (let [entry (or existing (new-entry lease k))]
                 (when-not existing (swap! pool assoc k entry))
                 (.set ^java.util.concurrent.atomic.AtomicLong (:last-used entry) (util/now-ms))
@@ -801,15 +813,36 @@
     (when-let [root (repository-root scope)]
       (repository-lease root scope respect-ignore-files? overlay))))
 
+(defn warm?
+  "True when this lease's index is ALREADY built — i.e. `with-index` on it will
+   only pay for a search, never for a tree scan. Lets a latency-sensitive caller
+   (the TUI `@` popup on the render thread) skip the first, blocking build."
+  [lease]
+  (boolean (when-let [e (get @pool (pool-key lease))]
+             (and (realized? (:idx e))
+                  (not (.get ^java.util.concurrent.atomic.AtomicBoolean (:closed e)))))))
+
 (defn- with-snapshot*
-  [{:keys [root respect-ignore-files? overlay content-indexing?]} reason f]
-  (with-open [idx (open! root respect-ignore-files? overlay nil content-indexing? reason)]
-    (f idx root nil)))
+  "Call `f` with an index that has no watcher and close it. A slow call is
+   remembered for `idle-ttl-ms`, the time that a pooled index stays without use."
+  [{:keys [root respect-ignore-files? overlay content-indexing?] :as lease} reason f]
+  (let [started
+        (System/nanoTime)
+
+        result
+        (with-open [idx (open! root respect-ignore-files? overlay nil content-indexing? reason)]
+          (f idx root nil))]
+
+    (when (>= (quot (- (System/nanoTime) started) 1000000) (long costly-snapshot-ms))
+      (remember! costly-snapshots (pool-key lease) idle-ttl-ms))
+    result))
 
 (defn with-scoped-index*
   "Call `f` with an index, its base and an optional literal scope. A repository
    root and an allowed root keep their watched index. Any other scope that no
-   watched index covers is scanned once without a watcher."
+   watched index covers is scanned once without a watcher. When that scan was
+   slow, the next search of the scope gets a watched index, because only a
+   retained index has a content index."
   [^File scope respect-ignore-files? overlay f]
   (let [scope
         (.getCanonicalFile scope)
@@ -818,18 +851,20 @@
         (repository-root scope)
 
         direct
-        #(lease scope respect-ignore-files? overlay)
+        (delay (lease scope respect-ignore-files? overlay))
 
         watched
-        #(with-index* (direct)
+        #(with-index* @direct
                       (fn [idx]
                         (f idx scope nil)))
 
         uncovered
         (fn [reason]
-          (if (some #{(.getPath scope)} (workspace/allowed-roots))
+          (if (or (some #{(.getPath scope)} (workspace/allowed-roots))
+                  (warm? @direct)
+                  (remembered? costly-snapshots (pool-key @direct)))
             (watched)
-            (with-snapshot* (direct) reason f)))]
+            (with-snapshot* @direct reason f)))]
 
     (cond
       ;; A root is the base of its own index, so overlay globs keep their meaning.
@@ -864,15 +899,6 @@
   `(with-index* ~lease
                 (fn [~sym]
                   ~@body)))
-
-(defn warm?
-  "True when this lease's index is ALREADY built — i.e. `with-index` on it will
-   only pay for a search, never for a tree scan. Lets a latency-sensitive caller
-   (the TUI `@` popup on the render thread) skip the first, blocking build."
-  [lease]
-  (boolean (when-let [e (get @pool (pool-key lease))]
-             (and (realized? (:idx e))
-                  (not (.get ^java.util.concurrent.atomic.AtomicBoolean (:closed e)))))))
 
 (defn prewarm!
   "Build this lease's index OFF the calling thread, at most one build in flight

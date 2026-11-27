@@ -120,8 +120,10 @@
            (fs/create-dirs (fs/parent file))
            (spit (fs/file file) "SCOPEPROBE\n"))
          (binding [workspace/*workspace-root* (str root)]
-           (with-redefs [config/search-overlay (constantly nil)]
-             (f root)))
+           ;; No fixture scope is slow enough for a watched index, also under load.
+           (with-redefs-fn {#'config/search-overlay (constantly nil)
+                            #'fff-index/costly-snapshot-ms Long/MAX_VALUE}
+             #(f root)))
          (finally (fs/delete-tree root)))))
 
 (defdescribe

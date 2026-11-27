@@ -29,7 +29,9 @@
                      #'index/idle-reaper reaper
                      #'index/idle-reap-interval-ms 10
                      #'index/lifecycle-counters (atom {})
-                     #'index/failed-covers (atom {})}
+                     #'index/failed-covers (atom {})
+                     #'index/costly-snapshots (atom {})
+                     #'index/costly-snapshot-ms Long/MAX_VALUE}
       (fn []
         (try (f pool reaper)
              (finally (when-let [^Thread runner @reaper]
@@ -216,7 +218,53 @@
                        (expect (identical? (lease-root) (lease-root))))
                      (expect (= [true] @opened))
                      (expect (= [[(str root) true nil true]] (vec (keys @pool))))))
-                 (finally (fs/delete-tree root))))))))
+                 (finally (fs/delete-tree root)))))))
+  ;; Regression: a new snapshot has no content index. Each grep of a large ignored
+  ;; tree read each file again: 430 ms for one `node_modules`, against 7 ms with a
+  ;; retained index.
+  (it
+    "keeps a watched index for a slow scope that is searched again"
+    (with-pool
+      (fn [pool _]
+        (let [root
+              (.getCanonicalFile (fs/file (fs/create-temp-dir {:prefix "vis-fff-slow-"})))
+
+              scope
+              (io/file root "src")
+
+              opened
+              (atom [])
+
+              search
+              #(index/with-scoped-index* scope
+                                         true
+                                         nil
+                                         (fn [idx _ _]
+                                           idx))]
+
+          (try (fs/create-dirs scope)
+               (binding [workspace/*workspace-root* (str root)]
+                 (with-redefs [fff/create (fn [opts]
+                                            (swap! opened conj (:watch? opts))
+                                            (reify
+                                              java.io.Closeable
+                                                (close [_])))
+                               fff/refresh-git-status! (constantly 0)
+                               fff/wait-for-scan (constantly true)]
+
+                   ;; A fast scope stays a snapshot.
+                   (search)
+                   (search)
+                   (expect (= [false false] @opened))
+                   (expect (empty? @pool))
+                   (with-redefs-fn {#'index/costly-snapshot-ms 0}
+                     (fn []
+                       (search)
+                       (expect (empty? @pool))
+                       (expect (identical? (search) (search)))
+                       (expect (= [false false false true] @opened))
+                       (expect (= [[(str scope) true nil true]] (vec (keys @pool))))))))
+               (finally (fs/delete-tree root))))))))
 
 (defdescribe idle-index-is-released-without-another-search-test
              (it "idle index is released without another search"
