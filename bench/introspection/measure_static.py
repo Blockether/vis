@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from bench_agent import HERE, write_fallback
+from bench_agent import HERE, TASKS, write_fallback
 from blockether.vis.evals.agent import source_classpath, source_commit
 
 
@@ -58,7 +58,7 @@ def main():
     checkout = args.checkout.resolve(strict=True)
     cp = source_classpath("clojure", checkout)
     render = runpy.run_path(str(checkout / "resources/vis-host-python/vis_results.py"))["_result_repr"]
-    tasks = sorted(path.parent for path in HERE.parent.glob("introspection-*/task.toml"))
+    tasks = sorted(path.parent for path in TASKS.glob("introspection-*/task.toml"))
     with tempfile.TemporaryDirectory(prefix="vis-introspection-static-") as tmp:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             cases = dict(pool.map(lambda task: run_fixture(task, Path(tmp), cp, render), tasks))

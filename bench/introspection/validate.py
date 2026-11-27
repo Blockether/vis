@@ -2,24 +2,27 @@
 
 import argparse
 import asyncio
-import shlex
-import sys
 import json
 import os
 import re
+import shlex
 import subprocess
+import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
+from bench_agent import HERE, SID, TASKS, TURN, InspectionAgent, journal, write_fallback
 from blockether.vis.evals.agent import source_classpath
-from blockether.vis.evals.grade import check_problems, structured_failures, verifier_failures
+from blockether.vis.evals.grade import (
+    check_problems,
+    structured_failures,
+    verifier_failures,
+)
 from blockether.vis.evals.harbor import read_tasks
-
-from bench_agent import HERE, SID, TURN, InspectionAgent, journal, write_fallback
-from harbor.models.agent.context import AgentContext
 from compare import comparison, trials
+from harbor.models.agent.context import AgentContext
 
 
 def load(path):
@@ -27,7 +30,7 @@ def load(path):
 
 
 def check_dataset(checkout, tmp):
-    tasks = [task for task in read_tasks(HERE.parent) if task.name.startswith("introspection-")]
+    tasks = [task for task in read_tasks(TASKS) if task.name.startswith("introspection-")]
     assert len(tasks) == 10
     cp = source_classpath("clojure", checkout)
     with ThreadPoolExecutor(max_workers=3) as workers:

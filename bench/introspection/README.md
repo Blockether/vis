@@ -33,7 +33,7 @@ Use the Vis SDK Python environment. Prepare each source checkout with `clojure -
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$VIS/packages/vis-agent/src" \
-  "$VIS/packages/vis-agent/.venv/bin/python" "$VIS/e2e/introspection-bench/validate.py" "$VIS" --tmp-dir "$TMPDIR"
+  "$VIS/packages/vis-agent/.venv/bin/python" "$VIS/bench/introspection/validate.py" "$VIS" --tmp-dir "$TMPDIR"
 ```
 
 It reads the Harbor task layout and grader specs, checks good/wrong structured answers, reads all four DB-backed answers through the real model projection, and checks the raw journal/log oracles. For Council, it checks both verifiers against accepted and missing host evidence and saved child reports; live attempts require the paid run. It also checks the comparator against fabricated Harbor job artifacts and exercises the runner with a stub CLI, including token and request-accounting capture.
@@ -44,7 +44,7 @@ Run the static benchmark with no model calls. Pass the absolute path of the chec
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$VIS/packages/vis-agent/src" \
-  "$VIS/packages/vis-agent/.venv/bin/python" "$VIS/e2e/introspection-bench/measure_static.py" "$BASELINE"
+  "$VIS/packages/vis-agent/.venv/bin/python" "$VIS/bench/introspection/measure_static.py" "$BASELINE"
 ```
 
 The JSON gives character and UTF-8 byte counts for the default session data, its Python display, and the three prompt sections. It also gives the rendered Council input for 20 iterations with one reply due. The two live Council cases use the task text and the same synthetic parent history. The report gives the Svar estimates for both inherited prefixes, or `null` when the checkout does not support the experiment. These counts are not provider tokens.
@@ -55,7 +55,7 @@ Run this only with approval for model calls. Use the same SDK, fixture seeder, p
 
 ```bash
 export HARBOR_TELEMETRY=off VIS_BENCH_SOURCE="$VIS"
-BENCH="$VIS/e2e/introspection-bench"
+BENCH="$VIS/bench/introspection"
 export PYTHONPATH="$BENCH:$VIS/packages/vis-agent/src"
 common=(--path "$VIS/e2e" --include-task-name 'introspection-*'
         --agent bench_agent:InspectionAgent
