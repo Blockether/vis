@@ -2319,7 +2319,7 @@
       (when-not (util/non-blank-string? (get opts "id"))
         (throw (ex-info "shell op 'attach' requires a non-blank id." {:type ::missing-id})))
       (when-not (util/non-blank-string? (get opts "command"))
-        (throw (ex-info "shell needs a non-blank command." {:type ::blank-command}))))
+        (throw (ex-info "shell: command required; use shell(command)." {:type ::blank-command}))))
     (cond-> (into {} opts)
       (not attach?) (assoc ::validated-env (process-jail/validate-call-env (get opts "env"))))))
 

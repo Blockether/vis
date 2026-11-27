@@ -2072,6 +2072,9 @@
       "archived_at": null
     },
     "POST /v1/sessions/:sid/agents/run": [{"task_id": "t7", "id": "a1", "session_id": "child-session"}],
+    "POST /v1/sessions/:sid/tasks/:task-id/acknowledge": {
+      "acknowledged": true
+    },
     "POST /v1/sessions/:sid/tasks/:task-id/cancel": {
       "requested": true
     },

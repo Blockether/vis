@@ -29,6 +29,7 @@
     }
   },
   "cancel": {
-    "requested": false
+    "requested": false,
+    "reason": "already_ended"
   }
 }

@@ -1235,7 +1235,7 @@
               (Thread/sleep 20)
               (recur (dec n))))
           (expect (= ["cancelled" "blocked"] (mapv #(:status (agents/info db %)) [a1 a2])))
-          (expect (= {"requested" false}
+          (expect (= {"requested" false "reason" "already_ended"}
                      (json/read-json (:body (request :post (str path "/cancel") nil)))))))))
   (it "stops the child when the owning worker loses its Task registry"
       (with-team {:statuses ["running" "waiting"]}
