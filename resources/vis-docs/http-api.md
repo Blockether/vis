@@ -76,6 +76,7 @@ An error answer has a JSON body with `error.type` and `error.message`:
 An event stream frame has a limit of 1 MiB, including its headers and delimiters. If the gateway
 cannot send an event, it sends `event.elided` and gives the sequence number of the omitted event.
 The `event_type` field names that event. The `reason` is `frame_size` or `replay_unavailable`.
+
 If the frame has a `cursor`, use it to reset the stream position.
 The `turn_id` and `view_id` fields identify the affected record if they fit. If the frame does not
 identify a record, read the session snapshot.
@@ -84,7 +85,7 @@ Save the sequence number before you read the affected state again. Do not reconn
 omitted body. Read the affected turn, view, or session from its HTTP resource. For current
 subscription state, read the following resource. Do not use its cursor to skip later stream events.
 
-```http
+```text
 GET /v1/sessions/<session-id>/events-since?snapshot=true
 ```
 
