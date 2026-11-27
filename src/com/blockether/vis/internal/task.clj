@@ -556,7 +556,8 @@
         entries (locking sessions
                   (let [entries (sort-by :number (vals (get-in @sessions [sid :entries])))
                         ended-at (System/currentTimeMillis)
-                        ended (into [] (comp (filter #(= :running (get-in % [:row :state])))
+                        running? #(= :running (get-in % [:row :state]))
+                        ended (into [] (comp (filter running?)
                                             (map #(update % :row assoc :state :cancelled :ended-at ended-at
                                                           :cancel-reason reason :view-ids []))) entries)]
                     (if (= reason :session-close)
@@ -564,8 +565,10 @@
                       (when (contains? @sessions sid)
                         (swap! sessions update sid
                                #(cond-> (dissoc % :entries :detach-notices)
-                                  (and (= reason :worker-death) (seq ended))
-                                  (update :swept-receipts keep-swept-receipts ended)))))
+                                  ;; A Task that ended before keeps its receipt, like one that ends now.
+                                  (and (= reason :worker-death) (seq entries))
+                                  (update :swept-receipts keep-swept-receipts
+                                          (concat (remove running? entries) ended))))))
                     (doseq [entry ended]
                       (publish-row! sid "task.ended" entry))
                     entries))]

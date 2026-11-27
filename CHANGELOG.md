@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Subagents: a child that a provider failure other than a 429 stopped now has `error` with the code `provider_failed`, the provider message and the working `alternatives`. Before, its `error` was empty.
 - Session introspection: `doc("read_session")` and `doc("list_sessions")` show their keys again (`view`, `turn`, `iteration`, `block`, `offset`, `limit` and `cursor`). Before, the signature named only the first argument.
 - Council: the agent guidance tells how to add to a thread (`thread_id`) and read it. Before, the agent used `reply_to` for its own thread and Council refused the message.
+- Tasks: a Task that ended before the Python worker stopped keeps its record. Before, a read, a cancel or an acknowledge of that Task answered `404`, while the client still showed its card.
 
 ## [v0.5.35] - 2026-11-27
 

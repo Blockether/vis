@@ -154,7 +154,24 @@
                   (expect (= "t2" (get-in next-task [:row :id])))
                   (expect (= {:requested false :reason "already_ended"}
                              (task/cancel-result! sid id :person))))
-                (finally (task/sweep! sid :session-close)))))))))
+                (finally (task/sweep! sid :session-close))))))))
+  ;; A client keeps the card of a Task that ended before the worker died. Read and
+  ;; cancel gave 404 for it, while a Task that ran at that moment kept its receipt.
+  (it "keeps the receipt of a Task that ended before the worker died"
+      (let [sid (str (random-uuid))
+            {:keys [row complete!]} (task/start-manual! sid {:kind :tool :name "done"} (fn [_]))
+            id (:id row)
+            running (get-in (task/start-manual! sid {:kind :tool :name "live"} (fn [_])) [:row :id])]
+        (try
+          (complete! (constantly {:state :done :value 1}))
+          (task/sweep! sid :worker-death)
+          (expect (= :done (:state (task/wire-state sid id))))
+          (expect (= :cancelled (:state (task/wire-state sid running))))
+          (expect (= {:requested false :reason "already_ended"} (task/cancel-result! sid id :person)))
+          ;; The guest of the new worker cannot read the old result.
+          (expect (empty? (task/wire-tasks sid)))
+          (finally (task/sweep! sid :session-close)))
+        (expect (nil? (task/wire-state sid id))))))
 
 (defdescribe task-events-test
   (it "publishes committed public snapshots in order and stops at settlement"
