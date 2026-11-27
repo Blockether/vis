@@ -60,7 +60,7 @@ class Routes:
     ) -> _types.TaskStatus:
         """GET /v1/sessions/:sid/tasks/:task-id — read one Task.
 
-        Set ``include_record`` to ask for the record of a subagent Task.
+        Set ``include_record`` to also read the record of a Task that runs an agent.
         """
         return self._client._request(
             "GET",
