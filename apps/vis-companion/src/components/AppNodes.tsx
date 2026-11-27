@@ -5,6 +5,7 @@
  */
 
 import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 
 import {
   APP_ACTION_WORDS,
@@ -194,8 +195,11 @@ export function DraftEditor({
   onClose,
 }: DraftEditorProps) {
   const [text, setText] = useReviewState(`${memoryId}:text`, saved);
+  // A diff mounts an open editor again when it scrolls back: only the first open takes the focus.
+  const [wasFocused, setFocused] = useReviewState(`${memoryId}:focused`, false);
   const close = () => {
     setText(saved);
+    setFocused(false);
     onClose();
   };
   const [outcome, setOutcome] = useState<Pick<AppActionResult, 'status' | 'message'>>({ status: 'idle' });
@@ -241,7 +245,8 @@ export function DraftEditor({
       }}
     >
       <textarea
-        autoFocus
+        autoFocus={!wasFocused}
+        onFocus={() => setFocused(true)}
         rows={3}
         placeholder={placeholder}
         className={TEXTAREA}
@@ -715,7 +720,10 @@ function HunkView(model: HunkProps) {
           isPinned={chunk.anchors.some((key) => model.pinned.has(key))}
           estimate={(columns) =>
             chunk.rows.reduce((sum, { row }) => sum + rowLines([row.old, row.new], columns), 0) * DIFF_ROW_HEIGHT +
-            chunk.anchors.reduce((count, key) => count + (model.byAnchor.get(key)?.length ?? 0), 0) * DIFF_THREAD_HEIGHT
+            chunk.anchors.reduce(
+              (sum, key) => sum + (model.byAnchor.get(key) ?? []).reduce((height, thread) => height + threadHeight(thread, columns), 0),
+              0,
+            )
           }
         >
           <table className="diff-table" data-diff-lines>
@@ -938,8 +946,20 @@ function rowLines(sides: readonly (AppDiffLine | undefined)[], columns: number |
 
 /** The rows of a hunk that mount or wait as one. A chunk of a long file costs a few milliseconds. */
 const DIFF_CHUNK_ROWS = 64;
-/** The height that one thread under a row of an unpainted chunk stands in for. */
-const DIFF_THREAD_HEIGHT = 96;
+/** The frame of one thread under a row of an unpainted chunk, without its text. */
+const DIFF_THREAD_HEIGHT = 56;
+/** The columns of a thread line when the code does not wrap. */
+const DIFF_THREAD_COLUMNS = 80;
+
+/** The height that a thread stands in for: its frame and the lines of its messages and draft. */
+function threadHeight(thread: LiveThread, columns: number | null): number {
+  const texts = [...thread.messages.map((message) => message.body), thread.draft ?? ''];
+  const lines = texts
+    .filter((text) => text !== '')
+    .flatMap((text) => text.split('\n'))
+    .reduce((sum, line) => sum + wrappedLines(line, columns ?? DIFF_THREAD_COLUMNS), 0);
+  return DIFF_THREAD_HEIGHT + lines * DIFF_ROW_HEIGHT;
+}
 
 /** One row of a chunk: the row, its old line with an old anchor, and the lines that threads and the selection name. */
 interface ChunkRow {
@@ -1034,6 +1054,13 @@ class ChunkStore {
   private columns: number | null = null;
   private resizer: ResizeObserver | null = null;
   private width: number | null = null;
+  /** The element of the diff. Its width wraps the rows, and the focus and the selection are in it. */
+  private content: HTMLElement | null = null;
+  /** The chunks around the focus: Tab and Shift+Tab move to rows, and a focused row stays when it scrolls away. */
+  private focused = new Set<string>();
+  private isFocusDue = false;
+  /** The chunks inside a selection while the browser copies it. */
+  private readonly copied = new Set<string>();
 
   constructor(eager: ReadonlySet<string>, isObserved: boolean, wrap: boolean) {
     this.near = new Set(eager);
@@ -1071,8 +1098,74 @@ class ChunkStore {
   }
 
   isNear(key: string): boolean {
-    return !this.isObserved || this.near.has(key);
+    return !this.isObserved || this.near.has(key) || this.focused.has(key) || this.copied.has(key);
   }
+
+  private notify(keys: Iterable<string>) {
+    for (const key of keys) for (const listener of this.listeners.get(key) ?? []) listener();
+  }
+
+  /** Holds the chunks that contain the focus, and the nearest row chunks before and after it. */
+  private readonly refocus = () => {
+    this.isFocusDue = false;
+    const content = this.content;
+    const active = document.activeElement;
+    const next = new Set<string>();
+    if (content && active && content.contains(active)) {
+      let before: HTMLElement | null = null;
+      let after: HTMLElement | null = null;
+      for (const el of content.querySelectorAll<HTMLElement>('[data-diff-chunk]')) {
+        if (el.contains(active)) next.add(el.dataset.diffChunk ?? '');
+        else if (el.compareDocumentPosition(active) & Node.DOCUMENT_POSITION_FOLLOWING) before = el;
+        else if (!el.querySelector('[data-diff-chunk]')) {
+          after = el;
+          break;
+        }
+      }
+      // A chunk mounts only inside a mounted file chunk. A file chunk that mounts adds its own chunks
+      // and observes them, so the next pass reaches its first rows.
+      for (let el of [before, after]) {
+        for (; el && content.contains(el); el = el.parentElement?.closest<HTMLElement>('[data-diff-chunk]') ?? null) {
+          next.add(el.dataset.diffChunk ?? '');
+        }
+      }
+    }
+    const changed = [...next, ...this.focused].filter((key) => next.has(key) !== this.focused.has(key));
+    this.focused = next;
+    this.notify(changed);
+  };
+
+  /** The focus leaves before it arrives: read it after the move. */
+  private readonly focusLeft = () => {
+    window.setTimeout(this.refocus);
+  };
+
+  /**
+   * The browser copies only the rows in the page, so a copy mounts the gaps inside the selection
+   * first. A gap of a file mounts gaps of its chunks, so it repeats. The rows go after the copy.
+   */
+  readonly copySelection = () => {
+    const content = this.content;
+    const selection = document.getSelection();
+    if (!content || !selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    const range = selection.getRangeAt(0);
+    for (let depth = 0; depth < 3; depth++) {
+      const keys = [...content.querySelectorAll<HTMLElement>('.diff-chunk-gap')]
+        .filter((gap) => range.intersectsNode(gap))
+        .map((gap) => gap.dataset.diffChunk ?? '');
+      if (keys.length === 0) break;
+      flushSync(() => {
+        for (const key of keys) this.copied.add(key);
+        this.notify(keys);
+      });
+    }
+    if (this.copied.size === 0) return;
+    window.setTimeout(() => {
+      const keys = [...this.copied];
+      this.copied.clear();
+      this.notify(keys);
+    });
+  };
 
   /** The painted height of the chunk, unless its rows changed since: other threads or other columns. */
   heightOf(key: string, estimate: number): number | undefined {
@@ -1095,13 +1188,21 @@ class ChunkStore {
     this.measureWrap(el);
     this.elements.add(el);
     this.observer?.observe(el);
+    if (this.focused.size > 0 && !this.isFocusDue) {
+      this.isFocusDue = true;
+      queueMicrotask(this.refocus);
+    }
     return () => {
       this.elements.delete(el);
       this.observer?.unobserve(el);
     };
   };
 
-  start(root: Element | null) {
+  start(root: Element | null, content: HTMLElement | null) {
+    this.content = content;
+    content?.addEventListener('focusin', this.refocus);
+    content?.addEventListener('focusout', this.focusLeft);
+    this.refocus();
     this.observer = new IntersectionObserver(
       (entries) => {
         const changed = new Set<string>();
@@ -1125,7 +1226,7 @@ class ChunkStore {
           else this.near.delete(key);
           changed.add(key);
         }
-        for (const key of changed) for (const listener of this.listeners.get(key) ?? []) listener();
+        this.notify(changed);
       },
       { root, rootMargin: `${DIFF_NEAR_MARGIN}px 0px` },
     );
@@ -1136,7 +1237,8 @@ class ChunkStore {
       if (this.width !== null && width !== this.width) this.relayout();
       this.width = width;
     });
-    this.resizer.observe(root ?? document.documentElement);
+    // The scroller and the diff keep their width when the file list opens beside the files, so watch the files.
+    this.resizer.observe(content?.querySelector('.diff-files') ?? content ?? root ?? document.documentElement);
   }
 
   /** Another width wraps the rows and the threads again, so the measured heights and columns are old. */
@@ -1150,6 +1252,9 @@ class ChunkStore {
   }
 
   stop() {
+    this.content?.removeEventListener('focusin', this.refocus);
+    this.content?.removeEventListener('focusout', this.focusLeft);
+    this.content = null;
     this.observer?.disconnect();
     this.observer = null;
     this.resizer?.disconnect();
@@ -1176,7 +1281,7 @@ function useChunkStore(
   const store = useMemo(() => new ChunkStore(eagerChunks(files, eagerLines), isObserved, wrap), [files, split, wrap, eagerLines, isObserved]);
   useEffect(() => {
     if (!store.isObserved) return;
-    store.start(scrollerOf(container.current ?? undefined));
+    store.start(scrollerOf(container.current ?? undefined), container.current);
     return () => store.stop();
   }, [store, container]);
   return store;
@@ -1363,6 +1468,7 @@ export function DiffNodeView({ node, heading, actions, commands }: DiffNodeViewP
       data-wrap={wrap}
       data-split={split}
       data-dragging={isDragging || undefined}
+      onCopy={store.copySelection}
       onKeyDown={(event) => {
         if (event.nativeEvent.isComposing || event.keyCode === 229 || event.altKey) return;
         if (event.key.toLowerCase() === 'f' && !event.shiftKey && (event.metaKey || event.ctrlKey)) {

@@ -10,6 +10,13 @@ import {
 
 /** The time for the rows around a match to mount after the scroll to it. */
 const DIFF_SEARCH_SETTLE_MS = 150;
+/** The input of a person who scrolls. */
+const SCROLL_INPUTS = ['wheel', 'touchmove', 'pointerdown'] as const;
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+function isEditable(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+}
 
 /** One state owner for find-in-diff, occurrence navigation, and focus return. */
 export function useDiffSearch(
@@ -33,9 +40,23 @@ export function useDiffSearch(
         ?.scrollIntoView({ block: 'center', inline: 'nearest' });
     reveal();
     // The rows around the match mount after the scroll. WebKit moved the scroll as they did,
-    // by thousands of pixels near the end of a long file, so reveal the match again after them.
-    const settled = window.setTimeout(reveal, DIFF_SEARCH_SETTLE_MS);
-    return () => window.clearTimeout(settled);
+    // by thousands of pixels near the end of a long file, so reveal the match again after them,
+    // unless the person scrolls first.
+    const settled = window.setTimeout(() => {
+      cancel();
+      reveal();
+    }, DIFF_SEARCH_SETTLE_MS);
+    const onKey = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) cancel();
+    };
+    const cancel = () => {
+      window.clearTimeout(settled);
+      for (const type of SCROLL_INPUTS) window.removeEventListener(type, cancel, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+    for (const type of SCROLL_INPUTS) window.addEventListener(type, cancel, { capture: true, passive: true });
+    window.addEventListener('keydown', onKey, true);
+    return cancel;
   }, [searchAnchor, currentResult?.start]);
   const moveMatch = (delta: number) => {
     if (!matches.length) return;

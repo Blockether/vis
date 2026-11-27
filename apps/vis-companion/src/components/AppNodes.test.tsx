@@ -685,6 +685,67 @@ describe('a long diff', () => {
     expect(screen.getByRole('region', { name: 'far.txt' }).querySelector('[data-diff-scroll]')).toHaveTextContent('remote');
   });
 
+  // Report: Tab from a row went to the next file, and a focused row that scrolled away lost the focus.
+  it('keeps the rows around the focus mounted', () => {
+    const show = stubViewport();
+    render(<DiffNodeView node={longDiff(3000)} actions={actions()} />);
+    const row = screen.getByText('line 150').closest('tr')!;
+    const button = row.querySelector('button')!;
+    act(() => button.focus());
+    expect(screen.getByText('line 192')).toBeInTheDocument();
+    show(row.closest('[data-diff-chunk]')!, false, 1280);
+    expect(button).toHaveFocus();
+  });
+
+  // Report: a copy of 600 lines held 26,476 of 106,185 characters. The rows between the screens were gaps.
+  it('copies the rows of a selection that are not mounted', () => {
+    const show = stubViewport();
+    const { container } = render(<DiffNodeView node={longDiff(3000)} />);
+    const gaps = screen.getByRole('region', { name: 'near.txt' }).querySelectorAll('.diff-chunk-gap');
+    show(gaps[gaps.length - 1], true);
+    const range = document.createRange();
+    range.setStart(screen.getByText('line 0'), 0);
+    range.setEnd(screen.getByText('line 2999'), 0);
+    document.getSelection()!.removeAllRanges();
+    document.getSelection()!.addRange(range);
+    fireEvent.copy(container.querySelector('.app-diff')!);
+    expect(screen.getByText('line 1500')).toBeInTheDocument();
+  });
+
+  // Report: a longer draft kept the height of the shorter one, so the rows below moved when it mounted.
+  it('drops the measured height of rows whose thread got longer', () => {
+    const show = stubViewport();
+    const thread = { ...DIFF.threads[0], anchor: { path: 'far.txt', side: 'new' as const, line: 1 }, draft: 'short' };
+    const node = { ...longDiff(), threads: [thread] };
+    const view = render(<DiffNodeView node={node} />);
+    const far = screen.getByRole('region', { name: 'far.txt' });
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('.diff-chunk-gap')!, true);
+    show(far.querySelector('[data-diff-scroll] [data-diff-chunk]')!, false, 321);
+    view.rerender(<DiffNodeView node={{ ...node, threads: [{ ...thread, draft: 'longer\n'.repeat(20) }] }} />);
+    expect(far.querySelector<HTMLElement>('[data-diff-scroll] .diff-chunk-gap')!.style.height).not.toBe('321px');
+  });
+
+  // Report: the find bar moved the diff back to the match 150 ms after the person scrolled away from it.
+  it('leaves the scroll of the person after a match', () => {
+    vi.useFakeTimers();
+    const scroll = Element.prototype.scrollIntoView;
+    const reveal = vi.fn();
+    Element.prototype.scrollIntoView = reveal;
+    try {
+      const { container } = render(<DiffNodeView node={DIFF} />);
+      fireEvent.keyDown(container.querySelector('.app-diff')!, { key: 'f', ctrlKey: true });
+      fireEvent.change(screen.getByRole('textbox', { name: 'Find in diff' }), { target: { value: 'new' } });
+      expect(reveal).toHaveBeenCalledTimes(1);
+      fireEvent.wheel(window);
+      act(() => vi.advanceTimersByTime(1000));
+      expect(reveal).toHaveBeenCalledTimes(1);
+    } finally {
+      Element.prototype.scrollIntoView = scroll;
+      vi.useRealTimers();
+    }
+  });
+
   it('mounts the far file of a search match', () => {
     stubViewport();
     const scroll = Element.prototype.scrollIntoView;
