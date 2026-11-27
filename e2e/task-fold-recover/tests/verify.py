@@ -39,7 +39,7 @@ def verify(evidence):
     ]
     if len(launches) != 1 or launches[0].state != "succeeded":
         return ["expected one shell launch"]
-    launched = False
+    launched = named = False
     flow = TaskFlow()
     for block in evidence.trajectory.tool_calls:
         if block.tool_call_id == launches[0].tool_call_id:
@@ -48,19 +48,25 @@ def verify(evidence):
         if block.error or not block.code:
             continue
         flow.feed(block.code)
-        if not launched or not flow.recovered_await:
+        if not launched or "recovered" not in flow.names.values():
             continue
         lines = block.stdout.splitlines()
+        # The name can come in an earlier block than the result, but not after it.
+        start = 0 if named else None
         for index, line in enumerate(lines):
-            if line.startswith("folded through ") or not identity.search(line):
-                continue
-            if any(
-                type(row.get("exit")) is int
-                and row["exit"] == rows[0]["exit"]
-                and FINAL in str(row.get("out")).splitlines()
-                for row in observations("\n".join(lines[index + 1 :]))
-            ):
-                return []
+            if not line.startswith("folded through ") and identity.search(line):
+                start = index + 1 if start is None else start
+                named = True
+                break
+        if start is None or not flow.recovered_await:
+            continue
+        if any(
+            type(row.get("exit")) is int
+            and row["exit"] == rows[0]["exit"]
+            and FINAL in str(row.get("out")).splitlines()
+            for row in observations("\n".join(lines[start:]))
+        ):
+            return []
     return [
         "missing the original Task name and confirmed exit and output after recovery"
     ]

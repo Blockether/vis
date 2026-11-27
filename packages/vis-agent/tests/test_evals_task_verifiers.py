@@ -227,6 +227,8 @@ def shell_events(task_id="t1", *, state="done"):
         "filter",
         "dict",
         "attach",
+        "split",
+        "split-unnamed",
     ],
 )
 def test_fold_matches_recovered_name_and_host_result(tmp_path, case):
@@ -288,6 +290,22 @@ print(json.dumps(dict(exit=result.get("exit"), out=result.get("out"))))
         stdout=f'{recovered}\n{{"exit": 0, "out": "fold-result-7351"}}\n',
         activity=attach,
     )
+    blocks = [start, fold]
+    if case.startswith("split"):
+        # A model may print the recovered name, then send input in a later block.
+        named = case == "split"
+        lookup_code = code[: code.index("send = ")]
+        if not named:
+            lookup_code = lookup_code.replace("print(recovered.get_name())\n", "")
+        blocks = [
+            start,
+            atif.block(
+                "t1/i2/f1", lookup_code, stdout=f"{recovered}\n" if named else ""
+            ),
+            atif.block(
+                "t1/i3/f1", rest, stdout='{"exit": 0, "out": "fold-result-7351"}\n'
+            ),
+        ]
     events = shell_events(state="failed" if case == "dead-input" else "done")
     output = (
         "ready\nNo release line received.\n"
@@ -297,8 +315,7 @@ print(json.dumps(dict(exit=result.get("exit"), out=result.get("out"))))
     assert check(
         tmp_path,
         "task-fold-recover",
-        start,
-        fold,
+        *blocks,
         host={
             "events": events,
             "shells": [
@@ -309,7 +326,7 @@ print(json.dumps(dict(exit=result.get("exit"), out=result.get("out"))))
                 }
             ],
         },
-    ) is (case in {"unpack", "iterator", "filter", "dict", "attach"})
+    ) is (case in {"unpack", "iterator", "filter", "dict", "attach", "split"})
 
 
 def test_host_capture_uses_only_the_trial_session_journal_and_questions(tmp_path):
