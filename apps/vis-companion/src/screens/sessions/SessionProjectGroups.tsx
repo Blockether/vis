@@ -357,10 +357,11 @@ function SetHeader({
     };
   }, [label]);
 
+  // A set with nothing under its header adds no rule: the rule after it closes the set.
   return (
     <div
       ref={headerRef}
-      className={`sticky top-[var(--project-header-height,3.5rem)] z-5 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong pl-4 mouse:static mouse:min-h-8 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
+      className={`sticky top-[var(--project-header-height,3.5rem)] z-5 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0 border-t border-b border-b-edge-strong last:border-b-0 pl-4 mouse:static mouse:min-h-8 ${label === 'Groups' ? 'border-t-set-groups-border bg-set-groups' : 'border-t-set-sessions-border bg-set-sessions'}`}
     >
       <span className="font-mono text-ui font-medium text-white">{label}</span>
       {isArchived && <span className="font-mono text-ui text-white">Archived</span>}
