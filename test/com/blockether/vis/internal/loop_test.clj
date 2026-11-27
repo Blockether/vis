@@ -4641,7 +4641,7 @@
               (expect (= ["t1/request" "t1/closing"] (mapv first trailer)))
               (expect (str/includes? (trailer-text trailer "t1/request") "keep = {this: input}"))
               (expect (str/includes? (trailer-text trailer "t1/closing")
-                                     "you produced NO answer")))))))
+                                     "<turn_interrupted>No answer was given.")))))))
   (it "prices a prior turn's request and closing messages as that turn's weight"
       (let [payload
             (apply str (repeat 1000 "ą中42={x:17};\n"))
@@ -4792,7 +4792,7 @@
             (expect (= ["t1/request" "i1" "t1/closing"] (mapv first trailer)))
             (expect (= ["user"] (mapv :role (:turn/messages (trailer-entry trailer "t1/closing")))))
             (expect (str/includes? (trailer-text trailer "t1/closing")
-                                   "you produced NO answer"))))))
+                                   "<turn_interrupted>No answer was given."))))))
   (it "a fold over earlier folds leaves one checkpoint for every covered turn"
       (with-history-fixture
         [{:id "t1"

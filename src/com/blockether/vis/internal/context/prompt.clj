@@ -99,23 +99,16 @@
      notice
      (when-not answer
        (cond
-         forked? (str
-                   "<turn_forked>This session was forked while this turn still ran in the source "
-                   "session. Completed tool calls and their persisted results remain valid; do not "
-                   "repeat settled work. The unfinished edge did not run here. Follow the latest "
-                   "user request.</turn_forked>")
+         forked?
+         "<turn_forked>Forked mid-turn. Completed tool results stay valid.</turn_forked>"
          leader-cancelled?
-         (str "<turn_cancelled>The leader cancelled this turn. Completed tool calls and their "
-              "persisted results remain valid; do not repeat settled work. The unfinished edge "
-              "was aborted. Follow the latest request.</turn_cancelled>")
+         "<turn_cancelled>Cancelled by the leader. Completed tool results stay valid.</turn_cancelled>"
          cancelled?
-         (str "<turn_cancelled>The user cancelled this turn. Completed tool calls and their "
-              "persisted results remain valid; do not repeat settled work. The unfinished edge "
-              "was aborted. Follow the latest user request.</turn_cancelled>")
+         "<turn_cancelled>Cancelled by the user. Completed tool results stay valid.</turn_cancelled>"
          interrupted?
          (if partial-answer
-           "⚠ this turn was INTERRUPTED before it finished — the answer above is only what you had said by then. The work above is unfinished; continue it."
-           "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))]
+           "<turn_interrupted>The answer above is partial. Continue the work.</turn_interrupted>"
+           "<turn_interrupted>No answer was given. Continue the work.</turn_interrupted>")))]
 
     {:request [(with-meta {:role "user"
                            :content (str/join "\n\n"
