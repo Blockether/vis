@@ -234,10 +234,9 @@
       (when (child/claim-reply! peer id) (child/send-line! peer (assoc reply "id" id))))))
 
 (defn- fail-host-calls!
-  "Release only callbacks of the interrupted call, or all callbacks on a legacy stop."
-  [peer call reason]
-  (let [matches? (fn [[_ serving]] (or (nil? call) (= call (:call serving))))
-        [before _] (swap-vals! (:serving peer) #(into {} (remove matches?) %))
+  "Release matching callbacks that still owe a reply."
+  [peer matches? reason]
+  (let [[before _] (swap-vals! (:serving peer) #(into {} (remove matches?) %))
         claimed (filter matches? before)]
     (doseq [[id {:keys [^Thread thread]}] claimed]
       (.interrupt thread)
@@ -1262,14 +1261,20 @@
          "vis-python-interrupt"
          (bound-fn
            []
-           (try
-             (child/request! peer
-                              (cond-> {"op" "interrupt" "session" session}
-                                call (assoc "call" call "kind" (name kind))))
-             (finally
-               (fail-host-calls!
-                 peer call
-                 "the block was interrupted while this host call was still running; its result is discarded"))))
+           (let [;; A Task can start cleanup as soon as the exception lands.
+                 ;; Keep its new host calls out of the interrupt's reply claim.
+                 pending (when (= :cancel kind) @(:serving peer))
+                 matches? (fn [[id serving]]
+                            (and (or (nil? call) (= call (:call serving)))
+                                 (or (nil? pending) (contains? pending id))))]
+             (try
+               (child/request! peer
+                               (cond-> {"op" "interrupt" "session" session}
+                                 call (assoc "call" call "kind" (name kind))))
+               (finally
+                 (fail-host-calls!
+                   peer matches?
+                   "the block was interrupted while this host call was still running; its result is discarded")))))
          {:platform? true})]
 
       (try (let [reply (deref control INTERRUPT_REPLY_MS ::interrupt-timed-out)]
