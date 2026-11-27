@@ -2853,42 +2853,20 @@
      :name "shell"
      :result
      (str
-       "The first await gives a `ShellTask`. Await it for a `ShellResult` map: "
-       "`{stage, id, cwd, command, status, exit, out, duration_ms, timed_out, offset, next_offset, "
-       "is_eof, started_at, finished_at, log_path, cpu_ms, cpu_percent, rss_bytes, note, …}`. "
-       "Read a field by key or attribute. Serialize the result map, not the Task. A fresh run has "
-       "`exit=None`. A nonzero exit is data.\n\n"
-       "`out` is bounded text that combines stdout and stderr in terminal order. There is no `stderr` key. "
-       "An empty string means this result returned no output, not that the log is empty. Vis normalizes "
-       "terminal colors and controls in `out`. `log_path` names the raw terminal log.")
+       "The first await gives the running handle. `r = await sh` waits for the exit and gives the result. "
+       "`r.exit` is the exit code: `None` while the program runs, and a nonzero code is data. "
+       "`r.out` is bounded text with stdout and stderr in terminal order. `r.log_path` names the raw log.")
      :description
      (str
-       "Use `sh = await shell(command, cwd=dir)` to start one `bash -lc` command under a terminal. "
-       "The call starts a Task that gives the running process handle. `result = await sh` waits for the exit. "
-       "Use `sh.snapshot()` for current state. The Task fields give the start or final result. "
-       "Use `done, pending = await asyncio.wait([sh], timeout=seconds)` to wait up to a limit "
-       "without cancelling the process. `sh.cancel()` requests cancellation. "
-       "Use `await shell(op=\"attach\", id=alias)` to recover a live handle from the same trust origin "
-       "without starting a command. A new run requires a command. To reuse a live alias with a run, "
-       "use the same command and do not specify a different working directory.\n\n"
-       "`sh.logs()` reads the tail, even after cancellation. Read or save logs before you reuse the alias. "
-       "`sh.logs(-50)` gives the last 50 lines. "
-       "`sh.logs(0, lines=10)` reads ten lines from the start. `next(page)` continues from its cursor, "
-       "and `lines=-10` reads ten lines above an offset. `page.pages(max_pages=…)` includes the current "
-       "page, defaults to ten pages, and stops at the current end of the log. `page[-4000:]` slices "
-       "the text. `is_eof` marks the end of this snapshot. Read the log again for new output. Do not rerun "
-       "the command.\n\n"
-       "Standard input gives end of input by default. Use `stdin=\"tty\"` to let the program read "
-       "`sh.type(text)` or input from a person. `sh.type(text)` returns `sh`. "
-       "`sh.snapshot().waiting_for_input` is true when a program waits for input from its terminal (Linux only). "
-       "After 30 seconds, a process with little CPU use and no output can have a `note`.\n\n"
-       "Keep command output. Read or filter the log in Python instead of using `| head`, `| tail`, "
-       "`| grep`, `2>/dev/null`, or `> file` to trim it. A pipeline reports the exit of its last command.\n\n"
-       "`env` sets variables for this run over the project variables. Use a literal for a switch. "
-       "For a secret, use a source map with a `keychain`, `env`, `dotenv`, or `command` key. "
-       "A `command` source is an argv list, not a shell string. A literal stays in the transcript. "
-       "Use `None` to unset a variable.\n\n"
-       "```python\nsh = await shell(\"npm test\", env={\"NODE_ENV\": \"test\"})\nresult = await sh\n```")
+       "`sh = await shell(command, cwd=dir, env={...})` starts one `bash -lc` command under a terminal. "
+       "`sh.snapshot()` gives the current state. `sh.logs(-50)` reads the last 50 lines and "
+       "`sh.logs(0, lines=10)` the first ten; `next(page)` reads on. Read the log again for new output: "
+       "do not rerun the command. `await asyncio.wait([sh], timeout=2)` waits up to a limit and does not "
+       "cancel; `sh.cancel()` stops the process. `stdin=\"tty\"` lets the program read `sh.type(text)`. "
+       "`await shell(op=\"attach\", id=alias)` gets a live handle again.\n\n"
+       "Keep the command output and trim it in Python, not with `| head`, `| grep` or `2>/dev/null`. "
+       "For a secret in `env`, use a source map with a `keychain`, `env`, `dotenv` or `command` key; "
+       "a literal stays in the transcript, and `None` unsets a variable.")
      :params [{:name "id" :note "the live shell alias"} {:name "cwd"}
               {:name "op" :note "attach to a live alias without starting a command"}
               {:name "env" :note "THIS run's variables, over the project's"}
@@ -2964,15 +2942,15 @@
          shell-logs-symbol shell-type-symbol shell-snapshot-symbol]))
 
 (defn prompt
-  "Point to the shell contract while the shell layer is on."
+  "Show the common shell call while the shell layer is on."
   [env]
   (when (shell-enabled? env)
     (str "## Shell\n"
-         "Use `shell` to run programs. Use Python for file and data work. "
-         "`sh = await shell(cmd)` gives the running handle, not the result. "
-         "Use `sh.snapshot()` for current state. The Task fields give the start or final result. "
-         "Use `await asyncio.wait([sh], timeout=2)` to wait up to a limit without cancelling. "
-         "`await sh` waits for the exit. See `doc(\"shell\")`.")))
+         "Use `shell` only to run programs. Use Python for file and data work. "
+         "`sh = await shell(cmd, cwd=dir)` starts the program, and `r = await sh` waits for its exit. "
+         "Print `r.exit` and the part of `r.out` that you need. For a long program, "
+         "`sh.logs(-50)` gives the last 50 lines, `await asyncio.wait([sh], timeout=2)` waits up to a limit "
+         "and `sh.cancel()` stops it.")))
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live

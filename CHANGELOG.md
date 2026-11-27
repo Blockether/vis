@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Prompt: the core prompt is 4,038 characters, down from 4,871. The `## Calls` and `## Context` sections give each call one time. The Shell section shows the common shell call, so the agent no longer reads `doc("shell")` before its first command, and the `doc("shell")` page is 60% shorter.
 - Subagents: a new subagent gets the system rules and a short tail of the conversation of its parent: the newest requests, fold gists and complete answers, each one whole, in at most 2,000 tokens. Before, it got the whole conversation without tool work. It does not get the session block of the parent, the session introspection guide, or an extension prompt with `prompt_audience="leader"`. A subagent that lacks a fact asks its parent one time with `council.ask`, so put each fact that a task needs in the task. The experimental setting `subagent_handoff` is removed.
 - Session introspection: a printed row of `read_session`, `list_sessions` or `get_session` omits its empty fields. The fields stay in the data: `row["error"]` and `row.get("error")` still give `None`. The same applies to the nested maps of other tool results.
 - Logs: the svar stream progress profile records the time until the response headers arrived (`headers-ms`) and the provider request ID (`request-id`). A long wait before the first token now shows if the provider held the request or sent nothing on an open stream. Svar is pinned at 0.7.251.

@@ -533,10 +533,12 @@
              ;; The reported-symptom, reachable-service and change-limit rules grew it to 5900.
              ;; A CTB A/B run showed no gain from the long REPRODUCE and CHECK rules, so
              ;; they became one sentence each and the budget fell to 5000.
+             ;; A CTB round sent the core in each of 259 model calls: `## Calls` and `## Context`
+             ;; now give each call once, and the budget fell to 4200.
              (it "keeps the core prompt under its fixed size budget"
                  (let [text (var-get (ns-resolve 'com.blockether.vis.internal.context.prompt
                                                  'CORE_SYSTEM_PROMPT))]
-                   (expect (< (count text) 5000))))
+                   (expect (< (count text) 4200))))
              (it "pushes every REGISTERED shim's names, and its prose nowhere"
                  ;; The registry itself, not a fixture: the model gets exactly these names. The
                  ;; prose that used to ride along — one hand-written bullet per shim — now lives
