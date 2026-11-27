@@ -12,7 +12,7 @@ import {
 import agentsSchema from '../../../../packages/vis-contract/resources/vis-contract/schema/agents.json';
 import { mergeAgents, type GatewayClient } from '../lib/gateway';
 import type { Subagent, TeamClock, TranscriptIteration, TranscriptTurn } from '../lib/types';
-import { councilLine, councilMarkdown } from '../lib/council-markdown';
+import { councilLine, councilMarkdown, leadLine } from '../lib/council-markdown';
 import { SessionEventsContext } from '../lib/session-events';
 import { axisLabel, axisMarks, formatDuration as formatAgentTime } from '../lib/time-axis';
 export { axisMarks, formatAgentTime };
@@ -140,7 +140,7 @@ export function agentTime(agent: Subagent, now: number): number | undefined {
 
 /**
  * The update of a row. While the agent works: its newest progress note, the note that its
- * leader also reads, else its latest Activity line, else the first line of its task. After
+ * leader also reads, else its latest Activity line, else the lead line of its task. After
  * its task: its result, else the reason of its end. A note, a result and a task are Markdown,
  * so the row shows them without their markers.
  */
@@ -148,7 +148,7 @@ export function agentUpdate(agent: Subagent, agents: readonly Subagent[] = []): 
   if (!hasStarted(agent)) return waitLine(agent, agents);
   if (!isLive(agent)) return agent.result == null ? END_REASON[agent.status] : councilLine(agent.result);
   if (agent.note != null) return councilLine(agent.note);
-  return agent.activity ?? (councilLine(agent.task.trim().split('\n', 1)[0]) || undefined);
+  return agent.activity ?? (leadLine(agent.task) || undefined);
 }
 
 const marks = (values: readonly (number | null | undefined)[]) => values.filter((mark): mark is number => typeof mark === 'number');
@@ -385,8 +385,7 @@ export function storedLeaderLane(turn: TranscriptTurn): LeaderLane | undefined {
   const lane = end == null ? undefined : leaderLane(start, end, turn.iterations);
   if (!lane) return undefined;
   const answer = turn.content?.find((block) => block.type === 'prose' && block.markdown?.trim())?.markdown;
-  const firstLine = answer?.trim().split('\n', 1)[0];
-  const note = (firstLine && councilLine(firstLine)) || lane.note;
+  const note = (answer && leadLine(answer)) || lane.note;
   const isFailed = FAILED_TURN.has(turn.status ?? '') || turn.prior_outcome === 'cancelled';
   return { ...lane, note, ...(isFailed ? { isFailed } : {}) };
 }

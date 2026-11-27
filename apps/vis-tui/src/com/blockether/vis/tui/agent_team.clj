@@ -540,7 +540,13 @@
                    (or (number? (:duration-ms row)) (= "running" (:state row))))]
     (assoc (select-keys form [:started-at-ms]) :duration-ms (:duration-ms row))))
 
-(defn- first-line [text] (some #(when-not (str/blank? %) %) (str/split-lines (str text))))
+(defn- first-line
+  "The first line of Markdown `text` that says something. A heading only names a part, so the line
+   under it wins: `# Goal\nFix the parser.` gives `Fix the parser.`. Text of headings alone gives
+   its first heading."
+  [text]
+  (let [lines (remove str/blank? (str/split-lines (str text)))]
+    (or (first (remove #(re-find #"^ {0,3}#{1,6}(?:[ \t]|$)" %) lines)) (first lines))))
 
 (defn- leader-note
   "The newest line of a leader: the first line of its answer once its turn ended, else the prose

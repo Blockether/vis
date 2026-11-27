@@ -336,6 +336,11 @@ describe('agent row notes', () => {
   it('shows a Markdown note in its row without the markers', () => {
     expect(agentUpdate({ ...child, note: '## Done\n**Fixing** the `parser`' })).toBe('Done Fixing the `parser`');
   });
+
+  // User report 2026-11-27: a task that starts with `# Goal` showed only `Goal` in its row.
+  it('shows the line under the heading of a task, not the heading', () => {
+    expect(agentUpdate({ ...child, status: 'queued', task: '# Goal\nFix the **parser**.\n## Files\n- a.clj' })).toBe('Fix the parser.');
+  });
 });
 
 describe('team line', () => {

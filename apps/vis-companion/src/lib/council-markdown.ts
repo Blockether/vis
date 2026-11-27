@@ -48,6 +48,20 @@ export function councilMarkdown(text: string): string {
   return out.join('\n');
 }
 
+// An ATX heading line, such as `## Goal`.
+const HEADING = /^ {0,3}#{1,6}(?:[ \t]|$)/;
+
+/**
+ * The first line of Markdown `text` that says something, on one row without its markers. A
+ * heading only names a part, so the line under it wins: `# Goal\nFix the parser.` gives
+ * `Fix the parser.`. Text of headings alone gives its first heading.
+ */
+export function leadLine(text: string): string {
+  const lines = text.split(/\r\n?|\n/).filter((line) => line.trim());
+  const lead = lines.find((line) => !HEADING.test(line)) ?? lines[0];
+  return lead ? councilLine(lead) : '';
+}
+
 type MarkdownNode = { type: string; value?: string; alt?: string | null; children?: MarkdownNode[] };
 
 // The nodes that end a run of text on a one-line row.

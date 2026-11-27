@@ -1099,6 +1099,13 @@
                                "Fixing the `ping\\n`")))))
 
 (defdescribe
+  row-heading-test
+  ;; User report 2026-11-27: an answer that starts with `## Summary` showed only `Summary`.
+  (it "shows the line under a Markdown heading, not the heading"
+      (expect (= "Shipped the fix"
+                 (:now (team/leader-row {:start 1 :end 2 :steps [] :answer "## Summary\nShipped the fix"}))))))
+
+(defdescribe
   child-breadcrumb-test
   (it "names the path from the leader to the child session"
       (with-redefs [team/summary (constantly {:agents waiting-team})]
