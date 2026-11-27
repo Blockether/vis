@@ -96,8 +96,10 @@ class SubagentRecord:
     def __repr__(self) -> str:
         label = f"{self.id or self.session_id} {self.status}"
         if self.status == "asking":
-            kind = "budget" if self.budget_request is not None else (
-                "files" if self.files_request is not None else "question"
+            kind = (
+                "budget"
+                if self.budget_request is not None
+                else ("files" if self.files_request is not None else "question")
             )
             return f"{label} #{self.question_entry_id}; kind: {kind}"
         if self.error and self.error.get("code"):
@@ -107,7 +109,6 @@ class SubagentRecord:
         return label
 
     __str__ = __repr__
-
 
     @classmethod
     def from_wire(cls, value: dict[str, Any]) -> SubagentRecord:

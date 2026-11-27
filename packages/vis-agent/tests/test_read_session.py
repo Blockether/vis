@@ -22,10 +22,18 @@ def test_answers_the_host_read_as_one_string_keyed_dict(monkeypatch):
     assert vis.read_session() == data
     assert vis.read_session("vis_session_id#6fccb4a2") == data
     vis.read_session(view="blocks", turn=2, iteration=4, block=1, offset=2, limit=3)
-    assert [options["target"] for options in targets[:2]] == [None, "vis_session_id#6fccb4a2"]
+    assert [options["target"] for options in targets[:2]] == [
+        None,
+        "vis_session_id#6fccb4a2",
+    ]
     assert targets[2] == {
-        "target": None, "view": "blocks", "turn": 2, "iteration": 4,
-        "block": 1, "offset": 2, "limit": 3,
+        "target": None,
+        "view": "blocks",
+        "turn": 2,
+        "iteration": 4,
+        "block": 1,
+        "offset": 2,
+        "limit": 3,
     }
 
 

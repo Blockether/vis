@@ -23,13 +23,21 @@ def check(tmp_path, name, *blocks, host=None):
 
 
 def _council_trial(
-    leader, child, *, same_iteration=False, launch_operation="council.run", answer="done", **host
+    leader,
+    child,
+    *,
+    same_iteration=False,
+    launch_operation="council.run",
+    answer="done",
+    **host,
 ):
     launch = atif.block(
         "t1/i2/f1", activity=atif.receipt(atif.row("run", launch_operation))
     )
-    steps = [atif.step(1, leader, launch)] if same_iteration else (
-        [atif.step(1, leader), atif.step(2, launch)]
+    steps = (
+        [atif.step(1, leader, launch)]
+        if same_iteration
+        else ([atif.step(1, leader), atif.step(2, launch)])
     )
     document = atif.trajectory(*steps, answer=answer)
     document["subagent_trajectories"] = [child]
@@ -77,40 +85,58 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
     live = "LIVE-" + "b" * 32
     write = atif.block(
         "t1/i1/f1",
-        "open(os.path.join('.', 'answer.txt'), 'w').write(value)" if case == "join-path"
+        "open(os.path.join('.', 'answer.txt'), 'w').write(value)"
+        if case == "join-path"
         else "Path('answer.txt').write_text(value)",
     )
     child = atif.trajectory(
-        atif.step(1, write), answer="Written!" if case == "bang-answer" else "written",
+        atif.step(1, write),
+        answer="Written!" if case == "bang-answer" else "written",
         session_id="child",
     )
     child["steps"][0]["message"] = (
-        f"Write `{live}` into answer.txt." if case == "backticked-task"
-        else f"Write {live} into answer.txt. Use exactly {live}." if case == "value-twice"
+        f"Write `{live}` into answer.txt."
+        if case == "backticked-task"
+        else f"Write {live} into answer.txt. Use exactly {live}."
+        if case == "value-twice"
         else f"Write {live} into answer.txt."
     )
     if case == "decoy-in-child":
         child["steps"][-1]["message"] = f"written {decoy}"
     (tmp_path / "answer.txt").write_text(
-        decoy if case == "wrong-live-value" else live + ("\n\n" if case == "blank-line-after" else "")
+        decoy
+        if case == "wrong-live-value"
+        else live + ("\n\n" if case == "blank-line-after" else "")
     )
-    leader_form = """open('answer.txt', 'w').write(value)""" if case == "leader-wrote" else (
-        "task = 'Write the value into answer.txt'"
+    leader_form = (
+        """open('answer.txt', 'w').write(value)"""
+        if case == "leader-wrote"
+        else ("task = 'Write the value into answer.txt'")
     )
     marker = decoy.replace("STALE-", "STALE- ") if case == "spaced-print" else decoy
     trial = _council_trial(
         atif.block(
-            "t1/i1/f1", leader_form,
-            stdout=f"note={marker}" + {
-                "leader-printed-live": f"\nlive={live}", "leader-printed-bare": "\nvalue=" + "b" * 32,
+            "t1/i1/f1",
+            leader_form,
+            stdout=f"note={marker}"
+            + {
+                "leader-printed-live": f"\nlive={live}",
+                "leader-printed-bare": "\nvalue=" + "b" * 32,
             }.get(case, ""),
-        ), child,
+        ),
+        child,
         same_iteration=case == "same-iteration",
-        launch_operation="vis.council.run" if case == "noncanonical-launch" else "council.run",
-        answer=f"done, the value is {live}" if case == "leader-answered-live" else "done",
+        launch_operation="vis.council.run"
+        if case == "noncanonical-launch"
+        else "council.run",
+        answer=f"done, the value is {live}"
+        if case == "leader-answered-live"
+        else "done",
     )
     result = grade.grade_trial(
-        {"verify": str(E2E / "subagent-task-isolation/tests/verify.py")}, tmp_path, trial
+        {"verify": str(E2E / "subagent-task-isolation/tests/verify.py")},
+        tmp_path,
+        trial,
     )
     assert result.result["guards"]["task"] is passes
 
@@ -136,7 +162,9 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
         ("no-done", "The child must answer done."),
     ],
 )
-def test_ask_parent_requires_question_and_reply_before_the_child_write(tmp_path, case, problem):
+def test_ask_parent_requires_question_and_reply_before_the_child_write(
+    tmp_path, case, problem
+):
     code = "a" * 32
     output = tmp_path / "code.txt"
     output.write_text(code)
@@ -152,7 +180,8 @@ def test_ask_parent_requires_question_and_reply_before_the_child_write(tmp_path,
     if case == "one-block":
         # The natural form: the child awaits the reply and writes it in the same block.
         both = atif.block(
-            "t1/i1/f1", "code = await council.ask('Code?')\nPath('code.txt').write_text(code)",
+            "t1/i1/f1",
+            "code = await council.ask('Code?')\nPath('code.txt').write_text(code)",
             activity=atif.receipt(atif.row("ask", operation)),
         )
         both["tool_call"]["extra"].update(started_at_ms=4000, finished_at_ms=5500)
@@ -160,30 +189,49 @@ def test_ask_parent_requires_question_and_reply_before_the_child_write(tmp_path,
     elif case != "no-ask":
         steps.insert(0, atif.step(1, ask))
     child = atif.trajectory(
-        *steps, answer={"no-done": "I wrote it", "bang-answer": "Done!"}.get(case, "done"),
+        *steps,
+        answer={"no-done": "I wrote it", "bang-answer": "Done!"}.get(case, "done"),
         session_id="child",
     )
     if case in {"leaked-task", "leaked-upper"}:
         leaked = code.upper() if case == "leaked-upper" else code
-        child["steps"][0]["message"] = f"Write the release code into code.txt. The code is {leaked}."
+        child["steps"][0]["message"] = (
+            f"Write the release code into code.txt. The code is {leaked}."
+        )
     leader_form = (
-        "open('code.txt', 'w').write(code)" if case == "leader-wrote"
+        "open('code.txt', 'w').write(code)"
+        if case == "leader-wrote"
         else "task = 'Write the release code alone into code.txt'"
     )
-    marker = f"release-code= {code}" if case == "spaced-print" else f"release-code={code}"
+    marker = (
+        f"release-code= {code}" if case == "spaced-print" else f"release-code={code}"
+    )
     trial = _council_trial(
-        atif.block("t1/i1/f1", leader_form, stdout=marker), child,
+        atif.block("t1/i1/f1", leader_form, stdout=marker),
+        child,
         same_iteration=case == "same-iteration",
-        questions=[{
-            "session_id": "child", "entry_id": 1, "state": "replied",
-            "content": "" if case == "empty-question" else "What is the release code?",
-        }],
-        replies=[] if case == "no-reply" else [{
-            "entry_id": 2,
-            "reply_to": 1,
-            "created_at_ms": {"early-write": 4700, "early-reply": 3900}.get(case, 4300),
-            "content": code,
-        }],
+        questions=[
+            {
+                "session_id": "child",
+                "entry_id": 1,
+                "state": "replied",
+                "content": ""
+                if case == "empty-question"
+                else "What is the release code?",
+            }
+        ],
+        replies=[]
+        if case == "no-reply"
+        else [
+            {
+                "entry_id": 2,
+                "reply_to": 1,
+                "created_at_ms": {"early-write": 4700, "early-reply": 3900}.get(
+                    case, 4300
+                ),
+                "content": code,
+            }
+        ],
     )
     result = grade.grade_trial(
         {"verify": str(E2E / "subagent-ask-parent/tests/verify.py")}, tmp_path, trial
@@ -579,7 +627,12 @@ def test_host_capture_uses_only_the_trial_session_journal_and_replies(tmp_path):
             },
         ],
         "replies": [
-            {"entry_id": 5, "reply_to": 1, "content": "leader reply", "created_at_ms": 1004}
+            {
+                "entry_id": 5,
+                "reply_to": 1,
+                "content": "leader reply",
+                "created_at_ms": 1004,
+            }
         ],
     }
 
@@ -612,9 +665,7 @@ def test_shell_needs_live_control_and_real_terminal_events(tmp_path, case):
         "aliased": 'sh.get("out")',
         "logs-only": "sh.logs().out",
         "snapshot": "sh.snapshot().out",
-    }.get(
-        case, "sh.out"
-    )
+    }.get(case, "sh.out")
     running = {
         "hard-coded-running": "True",
         "contains": "pending.__contains__(sh)",

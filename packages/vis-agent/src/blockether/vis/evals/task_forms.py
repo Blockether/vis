@@ -96,7 +96,9 @@ def writes_file(code, filename):
             continue
         operation = name(call.func)
         receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
-        if operation in {"write_text", "write_bytes"} and is_target(receiver, call.lineno):
+        if operation in {"write_text", "write_bytes"} and is_target(
+            receiver, call.lineno
+        ):
             return True
         if operation == "open":
             if is_target(receiver, call.lineno):

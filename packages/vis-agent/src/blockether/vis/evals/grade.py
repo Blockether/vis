@@ -1078,9 +1078,7 @@ def stdout_recovery_failures(form_outputs, form_events, expected):
             and (goal_status is None or f"GOAL_STATUS: {goal_status}" in item["stdout"])
             for item in form_outputs
         ):
-            failures.append(
-                label + "no later session read verified the exact stdout"
-            )
+            failures.append(label + "no later session read verified the exact stdout")
     return failures
 
 

@@ -6048,7 +6048,14 @@ attach, list_attachments, get_attachment, read_attachment, show_attachment = (
 
 
 def read_session(
-    target=None, *, view="index", turn=None, iteration=None, block=None, offset=0, limit=None
+    target=None,
+    *,
+    view="index",
+    turn=None,
+    iteration=None,
+    block=None,
+    offset=0,
+    limit=None,
 ):
     """Read one session view, as in the sandbox.
 
@@ -6058,11 +6065,17 @@ def read_session(
     For block stdout, `offset` and `limit` count Unicode characters. Use
     `stdout_next_offset` for the next slice or `next_offset` for the next page.
     """
-    return _host.read_session({
-        "target": None if target is None else str(target),
-        "view": view, "turn": turn, "iteration": iteration, "block": block,
-        "offset": offset, "limit": limit,
-    })
+    return _host.read_session(
+        {
+            "target": None if target is None else str(target),
+            "view": view,
+            "turn": turn,
+            "iteration": iteration,
+            "block": block,
+            "offset": offset,
+            "limit": limit,
+        }
+    )
 
 
 def list_sessions(search=None, *, limit=50, cursor=None):
@@ -6071,10 +6084,13 @@ def list_sessions(search=None, *, limit=50, cursor=None):
     Use `search` for the TUI and app search order. Pass the last row's `id`
     as `cursor` to continue with the same search.
     """
-    return _host.list_sessions({
-        "search": None if search is None else str(search),
-        "limit": limit, "cursor": None if cursor is None else str(cursor),
-    })
+    return _host.list_sessions(
+        {
+            "search": None if search is None else str(search),
+            "limit": limit,
+            "cursor": None if cursor is None else str(cursor),
+        }
+    )
 
 
 # -- Live views ---------------------------------------------------------------
