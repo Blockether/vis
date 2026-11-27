@@ -1,9 +1,12 @@
 (ns com.blockether.vis.internal.inference.runtime-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.nativeresolver :as nr]
             [com.blockether.vis.internal.inference.runtime :as runtime]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io ByteArrayInputStream File]
+           [java.lang.foreign Arena Linker MemorySegment]
+           [java.lang.invoke MethodHandle]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -16,6 +19,15 @@
   (doseq [^File file (.listFiles dir)]
     (.delete file))
   (.delete dir))
+
+(defn- native-env
+  "The value that native code reads with getenv. System/getenv keeps a copy from JVM start."
+  [k]
+  (let [^MethodHandle getenv (nr/downcall (.defaultLookup (Linker/nativeLinker)) "getenv" (nr/fd :ptr :ptr))]
+    (with-open [arena (Arena/ofConfined)]
+      (let [^MemorySegment value (.invokeWithArguments getenv (object-array [(.allocateFrom arena ^String k)]))]
+        (when-not (zero? (.address value))
+          (.getString (.reinterpret value Long/MAX_VALUE) 0))))))
 
 (defdescribe
   shared-runtime-test
@@ -78,4 +90,8 @@
       (let [old-path (System/getProperty runtime/ort-native-path-property)]
         (with-redefs [runtime/platform-token (constantly "osx-x64")]
           (expect (= {:source :upstream :platform "osx-x64"} (runtime/ensure-ort!)))
-          (expect (= old-path (System/getProperty runtime/ort-native-path-property)))))))
+          (expect (= old-path (System/getProperty runtime/ort-native-path-property))))))
+  (it "turns off ONNX Runtime telemetry before the runtime loads"
+      (when (contains? runtime/shared-platforms (runtime/platform-token))
+        (runtime/ensure-ort!)
+        (expect (some? (native-env runtime/telemetry-env))))))

@@ -408,6 +408,14 @@
   "foreign": {
     "downcalls": [
       {
+        "returnType": "jint",
+        "parameterTypes": [
+          "void*",
+          "void*",
+          "jint"
+        ]
+      },
+      {
         "returnType": "void*",
         "parameterTypes": [
           "void*",

@@ -3,8 +3,12 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.paths :as paths]
             [clojure.string :as str]
-            [com.blockether.vis.internal.config.core :as config])
-  (:import [java.io File InputStream]))
+            [com.blockether.vis.internal.config.core :as config]
+            [com.blockether.nativeresolver :as nr]
+            [taoensso.telemere :as tel])
+  (:import [java.io File InputStream]
+           [java.lang.foreign Arena Linker]
+           [java.lang.invoke MethodHandle]))
 
 (set! *warn-on-reflection* true)
 
@@ -17,6 +21,34 @@
 (def ort-native-path-property "onnxruntime.native.path")
 
 (def sherpa-native-path-property "sherpa_onnx.native.path")
+
+(def telemetry-env
+  "ORT 1.30 starts Microsoft 1DS telemetry with its first environment unless this is set."
+  "ORT_DISABLE_TELEMETRY")
+
+(defn- disable-telemetry!
+  "Set [[telemetry-env]] in the native process environment before ORT loads.
+   On macOS the telemetry uploads through CFNetwork. CFNetwork writes the shared
+   `~/Library/Caches/net.java.openjdk.java/Cache.db` and logs SQLite disk I/O
+   errors to stderr. An explicit value stays."
+  []
+  (when-not (System/getenv telemetry-env)
+    (try
+      (let [^MethodHandle setenv
+            (nr/downcall (.defaultLookup (Linker/nativeLinker)) "setenv" (nr/fd :i32 :ptr :ptr :i32))]
+
+        (with-open [arena (Arena/ofConfined)]
+          (let [result
+                (.invokeWithArguments setenv
+                                      (object-array [(.allocateFrom arena ^String telemetry-env)
+                                                     (.allocateFrom arena "1") (int 0)]))]
+
+            (when-not (zero? (int result))
+              (throw (ex-info "setenv failed" {:name telemetry-env}))))))
+      (catch Throwable e
+        (tel/log! {:level :warn :id ::telemetry-not-disabled :data {:error (ex-message e)}})))))
+
+(def ^:private telemetry-disabled (delay (disable-telemetry!)))
 
 (def shared-platforms
   "Platforms built and tested with both ONNX Runtime Java and Sherpa JNI."
@@ -125,6 +157,7 @@
     (if-not (contains? shared-platforms token)
       {:source :upstream :platform token}
       (locking ort-native-path-property
+        @telemetry-disabled
         (let [[runtime jni _] (library-names)
               given (System/getProperty ort-native-path-property)]
 
