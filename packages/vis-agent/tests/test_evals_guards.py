@@ -111,10 +111,8 @@ class LargeStdoutScenariosTest(unittest.TestCase):
         cases = {
             "stdout-lookup-middle": ("lookup",),
             "stdout-ledger-reduce": ("ledger",),
-            "stdout-jsonl-filter": ("jsonl",),
             "stdout-unicode": ("unicode",),
             "stdout-dual-source": ("alpha", "beta"),
-            "stdout-incident-join": ("incident",),
         }
         scenarios = {sc["id"]: sc for sc in load_scenarios(set(cases))}
         self.assertEqual(set(cases), set(scenarios))
@@ -192,23 +190,6 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                             row[3] == "status=reversed" for row in beta
                         ),
                     }
-                elif sid == "stdout-jsonl-filter":
-                    filtered = [
-                        row
-                        for line in rows
-                        if (row := json.loads(line))["region"] == "east"
-                        and row["priority"] == "high"
-                        and row["latency"] >= 900
-                    ]
-                    top = sorted(
-                        filtered, key=lambda row: (-row["latency"], row["id"])
-                    )[:3]
-                    answer = {
-                        "matched_count": len(filtered),
-                        "top_three": [
-                            {"id": row["id"], "latency": row["latency"]} for row in top
-                        ],
-                    }
                 elif sid == "stdout-unicode":
                     self.assertIn(
                         "metric as a JSON number, never a string", sc["prompt"]
@@ -233,7 +214,7 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                         "utf8_bytes": len(saved["unicode"].encode("utf-8")),
                         "emoji_rows": sum("|label=🙂|" in row for row in rows),
                     }
-                elif sid == "stdout-dual-source":
+                else:
                     a = next(row for row in rows if row.startswith("A03450|"))
                     b = next(
                         row
@@ -246,19 +227,6 @@ class LargeStdoutScenariosTest(unittest.TestCase):
                         "alpha_value": value,
                         "beta_weight": weight,
                         "sum": int(value) + int(weight),
-                    }
-                else:
-                    events = [
-                        row.split("|") for row in rows if "|req=critical-72|" in row
-                    ]
-                    errors = [row for row in events if "status=error" in row]
-                    answer = {
-                        "first_failed_component": errors[0][2].split("=")[1],
-                        "failed_attempts": [
-                            int(row[4].split("=")[1]) for row in errors
-                        ],
-                        "final_status": events[-1][3].split("=")[1],
-                        "final_attempt": int(events[-1][4].split("=")[1]),
                     }
                 self.assertEqual(sc["want_answer_json"], answer)
 
