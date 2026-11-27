@@ -1504,7 +1504,8 @@ export function ProviderRows({ auth, focusId }: { auth: ProviderAuth; focusId?: 
   }, [isFocusShown]);
 
   return (
-    <div className="divide-y divide-dialog-edge">
+    // No rows leave this div empty; hidden, it adds no second rule under its band's divider.
+    <div className="divide-y divide-dialog-edge empty:hidden">
       {rows.map((provider) => {
         const status = providerStatusMark(provider);
         const authed = isProviderAuthed(provider);
