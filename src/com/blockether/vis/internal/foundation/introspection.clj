@@ -1664,8 +1664,9 @@
      :result
      (str "String-keyed map with `session`, `session_id`, `view` and view data. `index` pages turn "
           "previews newest first. `blocks` reads `transcript.turns[].iterations[].blocks[]`; use "
-          "`offset` and `limit` for stdout character slices (4096 by default), and continue at "
-          "`stdout_next_offset`. `diagnosis` includes the failures; `usage` tool rows overlap. "
+          "`offset` and `limit` for stdout character slices (4096 by default, 65536 at most), and "
+          "continue at `stdout_next_offset`. The last slice and the last page have no next offset "
+          "key. `diagnosis` includes the failures; `usage` tool rows overlap. "
           "`council` pages attributed entries. `events` pages typed journal rows with first and last "
           "retained sequence numbers; false `is_complete` means missing events are possible. "
           "Use `next_offset` to continue index, Council and event pages. `full` reads lean history, "

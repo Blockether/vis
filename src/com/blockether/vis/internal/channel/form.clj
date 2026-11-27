@@ -269,7 +269,8 @@
                (pr-str scope)
                " and b.get(\"svar_tool_call_id\") == "
                (pr-str call-id)
-               "); print(b[\"stdout\"]) # use offset= for more")
+               "); print(b[\"stdout\"]) # next slice: offset=b.get(\"stdout_next_offset\")"
+               " (None at the end), limit<=65536")
           "# To see more, slice or filter the result in the sandbox and print less.")
 
         preview
