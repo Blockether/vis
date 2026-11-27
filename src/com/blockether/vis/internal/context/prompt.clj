@@ -123,10 +123,15 @@
                                                     [(prompt-block "turn-system-context"
                                                                    (str "session[\"turn\"] = "
                                                                         turn)) request-block]))}
-                 {::parts (when request-block [{:label "User requests" :content request-block}])})]
+                 (cond-> {::parts (when request-block [{:label "User requests" :content request-block}])}
+                   request-block (assoc :vis.handoff/kind :request)))]
+     ;; Only a complete answer is narrative for a child handoff.
      :closing (cond-> []
-                (or answer partial-answer)
-                (conj {:role "assistant" :content (or answer partial-answer)})
+                answer
+                (conj (with-meta {:role "assistant" :content answer} {:vis.handoff/kind :answer}))
+
+                (and (not answer) partial-answer)
+                (conj {:role "assistant" :content partial-answer})
 
                 notice
                 (conj {:role "user" :content notice}))}))
@@ -311,7 +316,8 @@
                       text
                       (map #(svar/image (:base64 %) (:media-type %)) attached-images))
                     {:role "user" :content text})
-         {::parts (when user-block [{:label "User requests" :content user-block}])})]
+         (cond-> {::parts (when user-block [{:label "User requests" :content user-block}])}
+           user-block (assoc :vis.handoff/kind :request)))]
       [])))
 
 (def ^:private PROGRESS_NOTE_RULES

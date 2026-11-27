@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.router :as loop-router]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.internal.loop.turn :as turn]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -165,6 +166,50 @@
             (finally (loop-env/dispose-environment! child))))
         (finally (loop-env/dispose-environment! parent))))))
 
+;; Review of #520: a request base that resumes from the provider cache holds the answer of the
+;; provider, not the canonical answer. Without a mark, a child lost the last answer of its parent.
+(defdescribe
+  cached-parent-answer-handoff-test
+  (it
+    "keeps the complete answer of the parent when its next request resumes from the provider cache"
+    (let [parent (loop-env/create-environment (router) {:db :memory})
+          context {:id "handoff-test" :fixed-prefix-weight 0}]
+      (try
+        (with-redefs [svar/provider-prompt-cache (constantly {:ttl-ms 600000})
+                      svar/ask-code!
+                      (fn [_ _]
+                        {:stop-reason :end
+                         :content "Accepted cache answer"
+                         :prompt-cache-context context
+                         :usage {:input-tokens 100 :output-tokens 10}
+                         :assistant-message
+                         {:role "assistant"
+                          :content [{:type "thinking" :thinking "Not parent narrative"}
+                                    {:type "text" :text "Accepted cache answer"}]}})]
+          (turn/run-turn! parent "The parent request" {})
+          (let [{:keys [route entry] :as state}
+                (transcript/load-prompt-cache-state (:db-info parent) (:session/state-id parent))
+
+                [provider model]
+                route
+
+                completed
+                (:completed-turn entry)
+
+                base
+                (transcript/resumable-prompt-message-base
+                  state provider model context 2 (:summaries completed)
+                  (vec (take (:stable-message-count completed) (:messages entry)))
+                  [{:role "user" :content "The next request"}])
+
+                text
+                (str (:content (peek (agents/handoff (:messages base) "gpt-4o"))))]
+
+            (expect (true? (:resumed? base)))
+            (expect (str/includes? text ";; -- PARENT-ANSWER --\nAccepted cache answer"))
+            (expect (not (str/includes? text "Not parent narrative")))))
+        (finally (loop-env/dispose-environment! parent))))))
+
 ;; Regression: a child copied the parent's turns. A fold rebuilt the child's request from those
 ;; copies, so the parent's raw requests replaced the handoff and its end marker.
 (defdescribe
@@ -172,12 +217,29 @@
   (it
     "keeps the parent handoff as the child's base after a fold, without copied turns"
     (let [parent (loop-env/create-environment (router) {:db :memory})]
-      (try (with-redefs [svar/ask-code! (fn [_ _]
-                                          {:stop-reason :end :content "Parent result"})]
-             (turn/run-turn! parent "Parent request that the child must not own" {}))
-           (let [handoff (agents/handoff (:agent-checkpoint (ctx-loop/read-turn-state parent)))
+      (try (let [requests (atom 0)]
+             (with-redefs [svar/ask-code!
+                           (fn [_ _]
+                             (case (swap! requests inc)
+                               1 (code-response "print('Raw parent evidence')")
+                               2 (code-response
+                                   "print(fold_session(f\"-t{session['turn']}/i1\", 'Parent gist'))")
+                               3 {:stop-reason :end :content "Parent result"}
+                               4 {:stop-reason :end :content "Second parent result"}
+                               {:stop-reason :end :content "Third parent result"}))]
+               (turn/run-turn! parent "Parent request that the child must not own" {})
+               (turn/run-turn! parent "Second parent request" {})
+               (turn/run-turn! parent "Third parent request" {})))
+           (let [handoff (agents/handoff (:agent-checkpoint (ctx-loop/read-turn-state parent)) "gpt-4o")
+                 inherited (str/join "\n" (map message-text handoff))
                  child (child-environment parent handoff 4 nil)
                  calls (atom [])]
+
+             ;; The real prompt builder marks requests, complete answers and fold gists.
+             (expect (str/includes? inherited ";; -- PARENT-ANSWER --\nSecond parent result"))
+             (expect (str/includes? inherited ";; -- PARENT-REQUEST --\nThird parent request"))
+             (expect (re-find #";; -- PARENT-FOLD-GIST --\n[^;]*Parent gist" inherited))
+             (expect (not (str/includes? inherited "Raw parent evidence")))
 
              (try (with-redefs
                     [svar/ask-code!
@@ -199,6 +261,8 @@
                                         (mapv message-text (take (count handoff) messages))))
                             "Every request starts with the handoff"))
                   (let [after-fold (str/join "\n" (map message-text (last @calls)))]
+                    (expect (str/includes? after-fold ";; -- PARENT-REQUEST --"))
+                    (expect (str/includes? after-fold "Parent request that the child must not own"))
                     (expect (str/includes? after-fold "END-OF-PARENT-CONVERSATION"))
                     (expect (str/includes? after-fold "Child gist"))
                     (expect (not (str/includes? after-fold "Raw child evidence"))))

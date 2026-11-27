@@ -1636,7 +1636,7 @@
       ;; gist line as plain text (conversation-suffix drops its assistant +
       ;; tool_result pair, so there is no tool_use to answer here).
       (:collapsed? iter-record) (when-let [body (not-empty (str/join "\n" summary-lines))]
-                                  {:role "user" :content body})
+                                  (with-meta {:role "user" :content body} {:vis.handoff/kind :gist}))
       ;; Native/tool-call iteration: emit ONE `tool_result` per `tool_use` (the
       ;; API requires every call be answered), each carrying ITS OWN forms'
       ;; output. One of the calls may be py3, the rest direct
@@ -1774,10 +1774,11 @@
                     (seq named)
                     (str "\n\n[Attached files not sent as images: " (str/join ", " named) "]"))]
 
-              (cond (seq images) {:role "user"
-                                  :content (into [{:type "text" :text text}]
-                                                 (map attachment->image-block images))}
-                    (not (str/blank? text)) {:role "user" :content text}))))
+              (some-> (cond (seq images) {:role "user"
+                                          :content (into [{:type "text" :text text}]
+                                                         (map attachment->image-block images))}
+                            (not (str/blank? text)) {:role "user" :content text})
+                      (with-meta {:vis.handoff/kind :request})))))
         user-input))
 
 (defn persisted-user-input

@@ -3904,7 +3904,10 @@
                         :turn-position (or turn-position 1)
                         :summaries (transcript/current-session-summaries environment)
                         :stable-message-count (count stable-prompt-messages)
-                        :assistant-message (:assistant-message iteration-result)})))
+                        ;; A resumed request base holds this message, not the canonical answer:
+                        ;; the mark keeps the complete answer in a child handoff.
+                        :assistant-message (some-> (:assistant-message iteration-result)
+                                                   (vary-meta assoc :vis.handoff/kind :answer))})))
         :else
         (if (and (empty? blocks) (not goal-continuation))
           (let [empty-streak (inc (long (or (:empty-iteration-streak loop-state) 0)))]

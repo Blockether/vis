@@ -9190,15 +9190,15 @@
               fallback
               (when (seq models) (first (remove #{pair} (filter (set allowed) models))))
 
-              full-handoff
-              (agents/handoff checkpoint)]
+              handoff
+              (agents/handoff checkpoint (:model pair))]
 
           (when-not (and (council/enabled?)
                          (= (get-in (ctx-loop/read-turn-state env) [:council :activation-id])
                             (:activation-id (get (council/runtime db) sid)))
                          (get (council/runtime db) sid))
             (agents/fail! :inactive-session "Spawn requires an active parent with Council enabled"))
-          (when-not (and through (seq full-handoff))
+          (when-not (and through (seq handoff))
             (agents/fail! :no-checkpoint
                           "Spawn requires the parent's complete model-input checkpoint"))
           (when (and (= "queued" status)
@@ -9217,7 +9217,7 @@
                 (agent-files env current (:files opts))
 
                 checkpoint
-                (agents/handoff-checkpoint checkpoint (agents/handoff-mode db sid) (:model pair) full-handoff)
+                handoff
 
                 ws
                 (:id (workspace/create-trunk-at! db (or (:root current) (workspace/trunk-root))))
