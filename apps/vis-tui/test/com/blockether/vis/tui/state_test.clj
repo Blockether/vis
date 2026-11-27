@@ -1829,10 +1829,45 @@
                            {:turn-id "gw-old" :client-id "cid-old" :started-at-ms 123}])
           (expect (= ["s1" "gw-old"] (deref cancelled 1000 :timeout)))
           (expect (= "gw-old" (:gateway-turn-id @state/app-db)))
-          (expect (nil? (:cancel-awaiting-client-id @state/app-db)))))))
+          (expect (nil? (:cancel-awaiting-client-id @state/app-db))))))
+  (it "quick cancel plus identical resend cancels only the delayed old start"
+      (let [handle (fn [db [id :as event]] ((:fn (get @@#'state/event-registry id)) db event))
+            idle {:session {:id "s1"} :active-tab-id :main :workspace {"root" "."}
+                  :messages [] :input-history [] :pastes {}}
+            submit #(handle % [:send-message "same text" nil])
+            old (:db (submit idle))
+            old-id (:live-turn-client-id old)
+            stopping (:db (handle old [:cancel-turn]))
+            refused (:db (handle stopping [:gateway-cancel-result (:cancelling-at-ms stopping)
+                                           {"accepted" false "reason" "no_running_turn"}]))
+            queued (:db (submit refused))
+            settled (:db (handle queued [:sync-turn-terminal :main
+                                         {:turn-id "gw-old" :client-id old-id :status "completed"}]))
+            ;; The enqueue can fail before the old turn settles. Drain submits the
+            ;; locally staged row after settlement instead of reusing the old id.
+            staged (handle settled [:stage-queued-locally :main (first (:pending-sends queued))])
+            drained (handle staged [:drain-pending :main])
+            resent (:db (handle (:db drained) (second (first (:fx drained)))))
+            new-id (:live-turn-client-id resent)
+            start (fn [db tid cid ms]
+                    (handle db [:sync-turn-clock :main {:turn-id tid :client-id cid :started-at-ms ms}]))
+            late (start resent "gw-old" old-id 123)
+            fresh (start (:db late) "gw-new" new-id 456)]
+        (expect (= old-id (:live-turn-client-id queued)))
+        (expect (= ["same text"] (mapv :text (:pending-sends queued))))
+        (expect (string? new-id))
+        (expect (not= old-id new-id))
+        (expect (= [[:gateway-cancel-turn "s1" "gw-old"]] (:fx late)))
+        (expect (nil? (:gateway-turn-id (:db late))))
+        (expect (= (:turn-start-ms resent) (:turn-start-ms (:db late))))
+        (expect (= (:messages resent) (:messages (:db late))))
+        (expect (nil? (:cancel-awaiting-client-id (:db late))))
+        (expect (= "gw-new" (get-in fresh [:db :gateway-turn-id])))
+        (expect (= 456 (get-in fresh [:db :turn-start-ms])))
+        (expect (empty? (:fx fresh))))))
 
 (defdescribe cancel-turn-stale-gateway-test
-  (it "reads the turn record after the gateway refuses to stop an ended turn"
+  (it "clears stale cancelling state when gateway turn is already terminal"
       (let [cancelled (atom nil)
             reads (atom [])
             task (atom nil)
@@ -1860,7 +1895,10 @@
           (expect (= [["s1" "turn-1"]] @reads))
           (expect (false? (:loading? @state/app-db)))
           (expect (false? (:cancelling? @state/app-db)))
-          (expect (nil? (:gateway-turn-id @state/app-db)))))))
+          (expect (nil? (:cancel-token @state/app-db)))
+          (expect (nil? (:gateway-turn-id @state/app-db)))
+          (expect (nil? (:progress @state/app-db)))
+          (expect (nil? (:turn-start-ms @state/app-db)))))))
 
 (defdescribe
   cancel-gateway-confirmation-test
@@ -2002,7 +2040,7 @@
                                 (get-in acked [:messages 1 :traces])))
                      (expect (input/input-empty? (:input acked)))
                      (expect (nil? (:submitted-input acked)))))
-                (it "keeps the queue and the completed reply when the gateway refuses a late cancel"
+                (it "does not retract queued sends when the gateway refuses a late cancel"
                     (let [queued [{:turn-id "queued-turn" :mine? true :text "next"}]
                           before (assoc (cancelling-db []) :pending-sends queued)
                           local (:db ((handler :message-received) before
@@ -2143,8 +2181,9 @@
         (let [result (heal db [:cancel-self-heal-tick 9500])]
           (expect (= (assoc db :cancelling-at-ms 9500) (:db result)))
           (expect (= [[:gateway-cancel-active "s1" "turn-1" 9500 "c1" :main]] (:fx result)))))
-    (it "does not retry a recent or settled stop"
-        (expect (= {:db db} (heal db [:cancel-self-heal-tick 2000])))
+    (it "no-ops while the pending cancel is younger than the timeout"
+        (expect (= {:db db} (heal db [:cancel-self-heal-tick 2000]))))
+    (it "never fires when no cancel is pending, even with a stale timestamp"
         (let [settled (assoc db :cancelling? false)]
           (expect (= {:db settled} (heal settled [:cancel-self-heal-tick 9500])))))))
 
