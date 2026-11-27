@@ -1654,6 +1654,8 @@
      :inject-env? true
      :tag :observation
      :call {:opt-pos ["target"] :rest :auto}
+     :params [{:name "target"} {:name "view" :note "index, blocks, diagnosis, usage, council, events or full"}
+              {:name "turn"} {:name "iteration"} {:name "block"} {:name "offset"} {:name "limit"}]
      :description
      (str "Read one session. Pass a bare id, a unique prefix or a copied `vis_session_id#<uuid>` marker. "
           "With no target, read the current session. Select `view`: `index` (default), `blocks`, "
@@ -1700,6 +1702,7 @@
      :inject-env? true
      :tag :observation
      :call {:opt-pos ["search"] :rest :auto}
+     :params [{:name "search"} {:name "limit"} {:name "cursor" :note "the last row's id"}]
      :description
      (str "Read one page of sessions, newest first, or use `search` to keep the TUI and app search order. "
           "`limit` defaults to 50 (maximum 200). Pass the last row's `id` as `cursor` to continue "

@@ -132,15 +132,16 @@
       [out
        (check-result
          {"op" "read_session"
+          "view" "full"
           "session_id" "demo"
           "session" {"id" "demo" "title" "Fixture" "turn_count" 2}
-          "failures" [{"message" "failure"}]
+          "diagnosis" {"failure_count" 1 "failures" [{"message" "failure"}]}
           "transcript" {"turns" [{"iterations" [{"blocks" [{"stdout" "private history"}]}]}]}}
          "q = r\ndel r\nassert q['transcript']['turns'][0]['iterations'][0]['blocks'][0]['stdout'] == 'private history'\nprint(q)")]
       (expect (str/includes? out "read_session demo"))
       (expect (str/includes? out "Fixture"))
-      (expect (str/includes? out "1 failures"))
-      (expect (str/includes? out "['transcript']['turns']"))
+      (expect (str/includes? out "Failures: 1"))
+      (expect (str/includes? out "diagnosis, transcript"))
       (expect (not (str/includes? out "r['transcript']")))
       (expect (not (str/includes? out "private history")))))
   (it "reports missing sessions and leaves unfamiliar result shapes unchanged"

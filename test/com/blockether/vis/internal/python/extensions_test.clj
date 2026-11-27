@@ -2008,8 +2008,8 @@
 
           (expect (= (str sid) (get-in data ["session" "id"])))
           (expect (= [[1 "Fix the typo."]]
-                     (mapv (juxt #(get % "position") #(get % "user_request"))
-                           (get-in data ["transcript" "turns"]))))
+                     (mapv (juxt #(get % "position") #(get % "request_preview"))
+                           (get data "turns"))))
           (expect (= #{(str sid) (str other)} (set (map #(get % "id") (call list-door nil)))))
           (expect (= [(str other)] (mapv #(get % "id") (call list-door "Release"))))
           (expect (= [:session-not-bound :session-not-bound]

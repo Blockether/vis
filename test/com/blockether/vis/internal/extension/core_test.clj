@@ -1262,9 +1262,10 @@
         (expect (str/starts-with? (get sigs 'council.publish) "(content, *, group_id=..., "))))
   (it "describes closed session and agent calls without imaginary keyword options"
       (let [sigs (extension/sandbox-symbol-signatures)]
-        (doseq [[sym expected] {'read-session "(target=None)"
+        (doseq [[sym expected] {'read-session
+                                "(target=None, *, view=..., turn=..., iteration=..., block=..., offset=..., limit=..., **kwargs)"
                                 'get-session "(target=None)"
-                                'list-sessions "(search=None)"
+                                'list-sessions "(search=None, *, limit=..., cursor=..., **kwargs)"
                                 'council.run "(tasks)"}]
           (expect (= expected (get sigs sym)) (str sym)))
         (expect (not-any? #(contains? sigs %) '[_shell-wait _shell-stop council.wait council.cancel]))
