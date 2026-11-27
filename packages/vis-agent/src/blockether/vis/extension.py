@@ -1406,8 +1406,9 @@ class Extension:
         kind: Optional extension kind understood by the host.
         activation: Optional host activation callback.
         prompt: Instructions as text or a host callback.
-        prompt_audience: `"all"` (the default) or `"leader"`. A subagent does not
-            get a `"leader"` prompt.
+        prompt_audience: `"all"` (the default), `"leader"` or `"subagent"`. A
+            subagent does not get a `"leader"` prompt. A leader does not get a
+            `"subagent"` prompt.
         slash_commands: `SlashCommand` declarations.
         keybindings: `Keybinding` declarations: TUI keys after C-x.
         session_app: One `SessionApp`: an app that each session lists before

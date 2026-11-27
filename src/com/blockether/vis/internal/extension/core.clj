@@ -709,8 +709,8 @@
        (optional-field? x :ext/source-nses #(vector-of? symbol? %))
        (optional-field? x :ext/kind non-blank-string?)
        (every? #(optional-field? x % fn?)
-               [:ext/activation-fn :ext/prompt-fn :ext/leader-prompt-fn :ext/ctx-fn :ext/doctor-fn
-                :ext/app-hook-fn])
+               [:ext/activation-fn :ext/prompt-fn :ext/leader-prompt-fn :ext/subagent-prompt-fn
+                :ext/ctx-fn :ext/doctor-fn :ext/app-hook-fn])
        (optional-field? x :ext/hooks #(vector-of? hook? %))
        (optional-field? x :ext/op-hooks #(every? op-hook? %))
        (optional-field? x :ext/retire-op-hooks-fn ifn?)
@@ -1296,12 +1296,20 @@
         :else (throw (ex-info ":ext/prompt-fn must be a string or (fn [env] string)"
                               {:got (type prompt)}))))
 
+(defn prompt-key
+  "The extension key of the prompt for `audience`, a `prompt_audience` of the gateway schema."
+  [audience]
+  (case audience
+    "leader" :ext/leader-prompt-fn
+    "subagent" :ext/subagent-prompt-fn
+    :ext/prompt-fn))
+
 (defn- normalize-prompts
-  "Normalize the prompt for each session and the prompt that only a leader gets."
+  "Normalize the prompt for each session, for a leader only and for a subagent only."
   [ext]
   (reduce (fn [ext k] (cond-> ext (contains? ext k) (update k normalize-prompt)))
           ext
-          [:ext/prompt-fn :ext/leader-prompt-fn]))
+          [:ext/prompt-fn :ext/leader-prompt-fn :ext/subagent-prompt-fn]))
 
 (defn- extension-symbol-op-keyword
   [ext sym-entry]

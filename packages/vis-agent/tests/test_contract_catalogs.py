@@ -491,9 +491,9 @@ def test_an_extension_takes_the_prompt_audiences_of_the_schema(monkeypatch):
         "gateway", "client_extensions", "properties", "extensions", "items"
     )["properties"]["prompt_audience"]
     # The engine reads this field of the manifest. Without it, each session gets the prompt.
-    assert ClientExtensions([declaration("leader")]).manifest[0]["prompt_audience"] == (
-        "leader"
-    )
+    for audience in ("leader", "subagent"):
+        manifest = ClientExtensions([declaration(audience)]).manifest[0]
+        assert manifest["prompt_audience"] == audience
     assert "prompt_audience" not in ClientExtensions([declaration("all")]).manifest[0]
     monkeypatch.setitem(audiences, "enum", ["all"])
     with pytest.raises(ValueError, match="prompt_audience must be one of: all$"):

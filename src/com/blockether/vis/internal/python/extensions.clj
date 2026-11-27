@@ -3350,7 +3350,7 @@ for __vis_name__ in [__vis_n__ for __vis_n__, __vis_m__ in __vis_open__
         (get reg "prompt")
 
         prompt-key
-        (if (= "leader" (get reg "prompt_audience")) :ext/leader-prompt-fn :ext/prompt-fn)
+        (extension/prompt-key (get reg "prompt_audience"))
 
         ctx-fn
         (get reg "ctx")

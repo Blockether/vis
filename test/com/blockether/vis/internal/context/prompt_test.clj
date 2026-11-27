@@ -441,7 +441,7 @@
                    (expect (not (str/includes? text "\n\n\n")))))
              ;; #520: a subagent got each prompt of its leader, also the rules that only a
              ;; leader can use, such as the rules for a memory across sessions.
-             (it "gives a leader-only extension prompt to a leader and not to a subagent"
+             (it "gives an extension prompt only to the sessions of its audience"
                  (let [kernel
                        {:ext/name "test.kernel"
                         :ext/engine {:ext.engine/alias 'kernel :ext.engine/builtin? true}
@@ -453,11 +453,22 @@
                         :ext/engine {:ext.engine/alias 'memory}
                         :ext/leader-prompt-fn (constantly "Memory rules.")}
 
+                       worker
+                       {:ext/name "test.worker"
+                        :ext/engine {:ext.engine/alias 'worker}
+                        :ext/subagent-prompt-fn (constantly "Worker rules.")}
+
+                       active
+                       [kernel memory worker]
+
                        build
                        (fn [opts]
-                         (prompt/assemble-stable-prompt-messages
-                           {:extensions (atom [kernel memory])}
-                           (assoc opts :active-extensions [kernel memory])))
+                         (prompt/assemble-stable-prompt-messages {:extensions (atom active)}
+                                                                 (assoc opts :active-extensions active)))
+
+                       ;; A child that starts from the handoff of its parent gets this message.
+                       handoff-extra
+                       (prompt/subagent-extensions-message {:extensions (atom active)} active)
 
                        leader
                        (prompt/stable-prompt-text (build {}))
@@ -468,8 +479,18 @@
                    (doseq [rule ["Kernel rules." "Kernel history rules."
                                  ";; -- EXTENSION memory --\nMemory rules."]]
                      (expect (str/includes? leader rule)))
-                   (expect (str/includes? child "Kernel rules."))
+                   (expect (not (re-find #"Worker rules|EXTENSION worker" leader)))
+                   (doseq [rule ["Kernel rules." ";; -- EXTENSION worker --\nWorker rules."]]
+                     (expect (str/includes? child rule)))
                    (expect (not (re-find #"history rules|Memory rules|EXTENSION memory" child)))
+                   (expect (= "system" (:role handoff-extra)))
+                   (expect (str/includes? (:content handoff-extra)
+                                          ";; -- EXTENSION worker --\nWorker rules."))
+                   (expect (not (re-find #"Kernel|Memory" (:content handoff-extra))))
+                   (expect (= [["Extension: worker (subagent)" :subagent]]
+                              (mapv (juxt :label :audience) (::prompt/parts (meta handoff-extra)))))
+                   (expect (nil? (prompt/subagent-extensions-message {:extensions (atom [kernel])}
+                                                                    [kernel])))
                    ;; The handoff to a child reads this mark to drop the part.
                    (expect (= [["Built-in tools and rules" nil]
                                ["Built-in tools and rules (leader)" :leader]

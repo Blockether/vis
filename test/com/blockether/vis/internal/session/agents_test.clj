@@ -1633,6 +1633,20 @@
           (expect (str/starts-with? turn (str ";; -- TURN-SYSTEM-CONTEXT --\n;; -- EXTENSIONS --\n" other)))
           (expect (str/includes? turn "## Shell\nRun programs.\n\n## Council: child"))
           (expect (not (str/includes? turn "Old leader guide.")))))
+    ;; #520: the prompt of the parent has no text for subagents only, so the handoff has none.
+    (it "puts the subagent message after the inherited system messages, before the parent tail"
+        (let [db (h/store)
+              leader (str (h/store-session! db {:channel :api}))
+              child (child! db leader {:checkpoint (agents/handoff [{:role "system" :content "Rules"}
+                                                                    (marked :request "user" "Ship it")]
+                                                                   "gpt-4o")})
+              env {:db-info db :session-id child}
+              extra {:role "system" :content ";; -- SUBAGENT-EXTENSIONS --\nWorker rules."}
+              prefix (agents/stable-prefix env "session = {}" extra)]
+          (expect (= ["system" "system" "user" "user"] (mapv (comp name :role) prefix)))
+          (expect (= extra (second prefix)))
+          (expect (= (agents/stable-prefix env "session = {}")
+                     (into [(first prefix)] (drop 2 prefix))))))
     (it "replaces the leader guide in the inherited system message"
         (let [db (h/store)
               leader (str (h/store-session! db {:channel :api}))

@@ -281,6 +281,39 @@
                   (finally (loop-env/dispose-environment! child))))
            (finally (loop-env/dispose-environment! parent))))))
 
+;; #520: the prompt of the parent has no text for subagents only, so the handoff has none.
+(defdescribe
+  subagent-only-extension-prompt-test
+  (it "gives a child the extension prompt for subagents, and the leader none"
+      (let [parent (loop-env/create-environment (router) {:db :memory})
+            calls (atom [])
+            answer (fn [content]
+                     (fn [_ opts]
+                       (swap! calls conj (mapv message-text (:messages opts)))
+                       {:stop-reason :end :content content}))]
+        (extension/register-extension! (extension/build-extension
+                                         {:ext/name "test-worker"
+                                          :ext/description "Rules for delegated work."
+                                          :ext/subagent-prompt-fn "Worker rules."}))
+        (try (with-redefs [svar/ask-code! (answer "Parent result")]
+               (turn/run-turn! parent "Parent request" {}))
+             (let [handoff (agents/handoff (:agent-checkpoint (ctx-loop/read-turn-state parent)) "gpt-4o")
+                   child (child-environment parent handoff 2 nil)]
+               (try (with-redefs [svar/ask-code! (answer "Child result")]
+                      (turn/run-turn! child "Child task" {}))
+                    (let [[leader-request child-request] @calls
+                          at (fn [text]
+                               (first (keep-indexed (fn [i m] (when (str/includes? m text) i))
+                                                    child-request)))]
+                      (expect (= 2 (count @calls)))
+                      (expect (not-any? #(str/includes? % "Worker rules.") leader-request))
+                      (expect (some? (at ";; -- EXTENSION test-worker --\nWorker rules.")))
+                      (expect (< (long (at "Worker rules."))
+                                 (long (at "END-OF-PARENT-CONVERSATION")))))
+                    (finally (loop-env/dispose-environment! child))))
+             (finally (extension/deregister-extension! "test-worker")
+                      (loop-env/dispose-environment! parent))))))
+
 (defdescribe
   subagent-file-grant-test
   (it

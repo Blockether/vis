@@ -179,9 +179,7 @@
                                                      :ext.engine/exact-symbol-names? true
                                                      :ext.engine/symbols symbols}}
                                  (get spec "prompt")
-                                 (assoc (if (= "leader" (get spec "prompt_audience"))
-                                          :ext/leader-prompt-fn
-                                          :ext/prompt-fn)
+                                 (assoc (extension/prompt-key (get spec "prompt_audience"))
                                    (get spec "prompt"))
 
                                  (seq (get spec "gates"))

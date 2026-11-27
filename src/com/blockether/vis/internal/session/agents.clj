@@ -472,19 +472,26 @@ Do only the current task. The parent history is a short tail: it is context, not
 
 (defn stable-prefix
   "The stable prompt prefix of a child: the parent handoff, then the child's own session block.
-   Each request of the child starts with it, also after a fold or in a later turn. Nil for a leader."
-  [env session-context]
-  (let [db
-        (:db-info env)
+   Each request of the child starts with it, also after a fold or in a later turn. Nil for a leader.
+   `subagent-message` is a system message that the parent did not have, or nil. It goes after
+   the system messages of the handoff."
+  ([env session-context] (stable-prefix env session-context nil))
+  ([env session-context subagent-message]
+   (let [db
+         (:db-info env)
 
-        sid
-        (:session-id env)]
+         sid
+         (:session-id env)]
 
-    (when-let [checkpoint (and (info db sid) (not-empty (ps/db-agent-checkpoint db sid)))]
-      (cond-> (mapv child-system-message checkpoint)
-        (not (str/blank? session-context))
-        (conj {:role "user"
-               :content (str ";; -- CURRENT-SUBAGENT-CONTEXT --\n" session-context)})))))
+     (when-let [checkpoint (and (info db sid) (not-empty (ps/db-agent-checkpoint db sid)))]
+       (let [[system tail] (split-with #(= "system" (name (:role %)))
+                                       (map child-system-message checkpoint))]
+         (cond-> (-> (vec system)
+                     (cond-> subagent-message (conj subagent-message))
+                     (into tail))
+           (not (str/blank? session-context))
+           (conj {:role "user"
+                  :content (str ";; -- CURRENT-SUBAGENT-CONTEXT --\n" session-context)})))))))
 
 (defn claim-iteration!
   "Reserve one model iteration. A child budget is durable across replies, turns and restarts.

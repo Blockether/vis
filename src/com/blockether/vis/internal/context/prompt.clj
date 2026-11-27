@@ -725,53 +725,68 @@
              body
              (when-not (str/ends-with? body "\n") "\n"))))))
 
+(defn- extension-prompt-parts
+  "The labeled prompt fragments of each active extension for `audiences`, built-ins first.
+   An audience is nil for the prompt that each session gets, `:leader` or `:subagent`. Each
+   prompt is `(fn [env] -> string)` (normalized at registration). A blank result gives no part.
+
+   Returns `[{:label … :content …}]` with one part per fragment, so the context breakdown
+   separates built-in rules from each installed extension instead of billing them as one
+   opaque runtime row. A part for one audience has `:audience`, so a handoff to a child can
+   drop a leader part."
+  [environment active-extensions audiences]
+  (let [fragment
+        (fn [ext audience]
+          (let [k (extension/prompt-key (some-> audience
+                                                name))]
+            (when-let [f (get ext k)]
+              (try (let [result (call-extension-callback ext f environment)]
+                     (when (util/non-blank-string? result)
+                       (when-let [body (extension-prompt-fragment ext result)]
+                         (cond-> {:label (str (if (extension/ext-builtin? ext)
+                                                "Built-in tools and rules"
+                                                (str "Extension: " (extension-prompt-id ext)))
+                                              (when audience (str " (" (name audience) ")")))
+                                  :content body}
+                           audience
+                           (assoc :audience audience)))))
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::extension-prompt-error
+                                :data {:ext (:ext/name ext) :key k :error (ex-message t)}}
+                               "Extension prompt fn threw")
+                     nil)))))]
+
+    ;; Built-ins first so the core kernel prompt (foundation) leads the
+    ;; block, header-less, before any third-party `;; -- EXTENSION --`.
+    (vec (for [ext (sort-by (complement extension/ext-builtin?) (or active-extensions []))
+               audience audiences
+               :let [part (fragment ext audience)]
+               :when part]
+           part))))
+
 (defn- extensions-prompt-block
-  "Collect prompt text from every active extension that declares
-   `:ext/prompt-fn` or `:ext/leader-prompt-fn`. Each prompt is
-   `(fn [env] -> string)` (normalized at registration). Non-blank results are
-   normalized, wrapped as labeled extension fragments, then joined into one
-   extension context block. A subagent gets no `:ext/leader-prompt-fn` text.
+  "The extension context block of one session: for each active extension, the prompt
+   that each session gets, then the prompt for the role of this session.
 
-   Returns `{:content <block> :parts [{:label … :content …}]}` with one part per
-   fragment, so the context breakdown separates built-in rules from each
-   installed extension instead of billing them as one opaque runtime row. A
-   leader-only part has `:audience :leader`, so a handoff to a child can drop it."
+   Returns `{:content <block> :parts [{:label … :content …}]}`."
   [environment active-extensions subagent?]
-  (let [;; Built-ins first so the core kernel prompt (foundation) leads the
-        ;; block, header-less, before any third-party `;; -- EXTENSION --`.
-        active-extensions
-        (sort-by (complement extension/ext-builtin?) (or active-extensions []))
+  (when-let [parts (seq (extension-prompt-parts environment
+                                                active-extensions
+                                                [nil (if subagent? :subagent :leader)]))]
+    {:content (prompt-block "extensions" (str/join "\n\n" (map :content parts)))
+     :parts (vec parts)}))
 
-        fragment
-        (fn [ext k leader?]
-          (when-let [f (get ext k)]
-            (try (let [result (call-extension-callback ext f environment)]
-                   (when (util/non-blank-string? result)
-                     (when-let [body (extension-prompt-fragment ext result)]
-                       (cond-> {:label (str (if (extension/ext-builtin? ext)
-                                              "Built-in tools and rules"
-                                              (str "Extension: " (extension-prompt-id ext)))
-                                            (when leader? " (leader)"))
-                                :content body}
-                         leader?
-                         (assoc :audience :leader)))))
-                 (catch Throwable t
-                   (tel/log! {:level :warn
-                              :id ::extension-prompt-error
-                              :data {:ext (:ext/name ext) :key k :error (ex-message t)}}
-                             "Extension prompt fn threw")
-                   nil))))
-
-        fragments
-        (mapcat (fn [ext]
-                  (keep identity
-                        [(fragment ext :ext/prompt-fn false)
-                         (when-not subagent? (fragment ext :ext/leader-prompt-fn true))]))
-                active-extensions)]
-
-    (when (seq fragments)
-      {:content (prompt-block "extensions" (str/join "\n\n" (map :content fragments)))
-       :parts (vec fragments)})))
+(defn subagent-extensions-message
+  "The system message with each extension prompt that only a subagent gets, or nil.
+   A child that starts from the handoff of its parent needs it: the prompt of the parent
+   has no such text."
+  [environment active-extensions]
+  (when-let [parts (seq (extension-prompt-parts environment active-extensions [:subagent]))]
+    (with-meta {:role "system"
+                :content (prompt-block "subagent-extensions"
+                                       (str/join "\n\n" (map :content parts)))}
+      {::parts (vec parts)})))
 
 (defn- sandbox-shims-prompt-block
   "Advertise Python's execution boundary and the exact model-facing modules Vis

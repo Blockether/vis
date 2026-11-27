@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.extension.client-test
   (:require [lazytest.core :refer [defdescribe expect it]]
+            [com.blockether.vis.contract.document :as contract]
             [com.blockether.vis.internal.extension.client :as client]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.host :as python-host])
@@ -266,24 +267,37 @@
 
 ;; #520: an application had no way to keep the prompt of its extension from a subagent.
 (defdescribe
-  client-prompt-for-the-leader-test
-  (it "gives a prompt for the leader only to the leader"
-      (let [sid
-            (str (UUID/randomUUID))
+  client-prompt-audience-test
+  (it "gives the prompt of each audience of the schema its own extension key"
+      (let [audiences
+            (get-in (contract/schema-document "gateway")
+                    ["$defs" "client_extensions" "properties" "extensions" "items" "properties"
+                     "prompt_audience" "enum"])
 
-            env
-            {:extensions (atom [])}
+            prompt-keys
+            (mapv extension/prompt-key audiences)]
 
-            [entry]
-            (client/register! sid
-                              "owner"
-                              (assoc-in (payload "lookup") ["extensions" 0 "prompt_audience"] "leader")
-                              (constantly true)
-                              env)]
+        (expect (apply distinct? prompt-keys))
+        (doseq [audience audiences]
+          (let [sid
+                (str (UUID/randomUUID))
 
-        (try (expect (nil? (:ext/prompt-fn entry)))
-             (expect (= "Use application data." ((:ext/leader-prompt-fn entry) env)))
-             (finally (client/detach! sid))))))
+                env
+                {:extensions (atom [])}
+
+                [entry]
+                (client/register! sid
+                                  "owner"
+                                  (assoc-in (payload "lookup")
+                                            ["extensions" 0 "prompt_audience"]
+                                            audience)
+                                  (constantly true)
+                                  env)]
+
+            (try (expect (= [(extension/prompt-key audience)] (filterv #(contains? entry %) prompt-keys)))
+                 (expect (= "Use application data."
+                            ((get entry (extension/prompt-key audience)) env)))
+                 (finally (client/detach! sid))))))))
 
 (defdescribe detached-adapters-stay-inactive-after-owner-registers-again
              (it "detached adapters stay inactive after owner registers again"

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Extensions: `vis.Extension(prompt_audience="leader")` keeps the prompt of an extension out of each subagent. Use it for instructions that only the session of the person can follow, such as the rules of a memory across sessions. The default `"all"` gives the prompt to each session. An application extension of the SDK can set it too.
+- Extensions: `vis.Extension(prompt_audience="leader")` keeps the prompt of an extension out of each subagent. Use it for instructions that only the session of the person can follow, such as the rules of a memory across sessions. `prompt_audience="subagent"` gives the prompt only to subagents, for instructions about delegated work. The default `"all"` gives the prompt to each session. An application extension of the SDK can set it too.
 
 ### Changed
 

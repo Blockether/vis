@@ -6427,10 +6427,11 @@
                 "maxLength": 32768
               },
               "prompt_audience": {
-                "description": "Which sessions get the prompt. A subagent does not get a `leader` prompt.",
+                "description": "Which sessions get the prompt. A subagent does not get a `leader` prompt. A leader does not get a `subagent` prompt.",
                 "enum": [
                   "all",
-                  "leader"
+                  "leader",
+                  "subagent"
                 ]
               },
               "version": {

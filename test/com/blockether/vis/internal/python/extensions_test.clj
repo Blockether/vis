@@ -3964,16 +3964,18 @@ vis.register_extension(vis.Extension(
                                 (expect (= "counter_ surface active."
                                            ((:ext/prompt-fn (registered "counter")) {}))))))
              ;; #520: an extension had no way to keep its prompt from a subagent.
-             (it "a prompt for the leader becomes :ext/leader-prompt-fn"
-                 (with-loaded {"counter.py" (str/replace counter-py
-                                                         "prompt=\"counter_ surface active.\","
-                                                         (str "prompt=\"counter_ surface active.\","
-                                                              " prompt_audience=\"leader\","))}
-                              (fn [_ _]
-                                (let [ext (registered "counter")]
-                                  (expect (nil? (:ext/prompt-fn ext)))
-                                  (expect (= "counter_ surface active."
-                                             ((:ext/leader-prompt-fn ext) {})))))))
+             (it "a prompt for one audience becomes the prompt key of that audience"
+                 (doseq [[audience prompt-key] {"leader" :ext/leader-prompt-fn
+                                                "subagent" :ext/subagent-prompt-fn}]
+                   (with-loaded {"counter.py" (str/replace counter-py
+                                                           "prompt=\"counter_ surface active.\","
+                                                           (str "prompt=\"counter_ surface active.\","
+                                                                " prompt_audience=\"" audience "\","))}
+                                (fn [_ _]
+                                  (let [ext (registered "counter")]
+                                    (expect (nil? (:ext/prompt-fn ext)))
+                                    (expect (= "counter_ surface active."
+                                               ((get ext prompt-key) {}))))))))
              (it "vis.slash run-fns receive the slim ctx and map vis.ok to :slash/*"
                  (with-loaded
                    {"counter.py" counter-py}

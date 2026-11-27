@@ -2362,14 +2362,18 @@
         ;; rebuilds the same prefix, never from a copy of the parent's turns.
         stable-prompt-messages-for
         (fn [session-context]
-          (or (agents/stable-prefix environment session-context)
-              (prompt/assemble-stable-prompt-messages environment
-                                                      {:system-prompt system-prompt
-                                                       :active-extensions active-exts
-                                                       :session-context session-context
-                                                       :subagent? (some? (agents/info
-                                                                           (:db-info environment)
-                                                                           (:session-id environment)))})))
+          (let [subagent? (some? (agents/info (:db-info environment) (:session-id environment)))]
+            ;; Only a child runs the prompts that are for a subagent.
+            (or (when subagent?
+                  (agents/stable-prefix environment
+                                        session-context
+                                        (prompt/subagent-extensions-message environment
+                                                                            active-exts)))
+                (prompt/assemble-stable-prompt-messages environment
+                                                        {:system-prompt system-prompt
+                                                         :active-extensions active-exts
+                                                         :session-context session-context
+                                                         :subagent? subagent?}))))
 
         stable-prompt-messages
         (stable-prompt-messages-for static-context-str)
