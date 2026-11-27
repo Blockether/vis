@@ -12,7 +12,12 @@
                      (when t
                        (expect (theme/valid-theme? t))
                        (expect (= (set (keys theme/light-palette)) (set (keys palette))))
-                       (expect (every? #{[0 0 0] [255 255 255]} (vals palette)))
+                       ;; Ink and paper are pure; only the content surfaces take a grey wash.
+                       (expect (every? #{[0 0 0] [255 255 255]}
+                                       (vals (dissoc palette :user-bubble-bg :iteration-header-bg
+                                                     :code-block-bg :result-bg))))
+                       ;; User report: a message had no ground of its own on the page.
+                       (expect (not= (:terminal-bg palette) (:user-bubble-bg palette)))
                        (doseq [[fg bg] [[:text-fg :terminal-bg] [:dialog-fg :dialog-bg]
                                         [:dialog-title-fg :dialog-title-bg]
                                         [:header-active-tab-fg :header-active-tab-bg]

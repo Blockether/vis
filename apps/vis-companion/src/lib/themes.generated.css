@@ -189,7 +189,7 @@
   --button-fg: #ffffff;
   --cancelled-bg: #000000;
   --cancelled-fg: #ffffff;
-  --code-bg: #000000;
+  --code-bg: #1c1c1c;
   --code-border: #ffffff;
   --code-duration: #ffffff;
   --code-err-bg: #000000;
@@ -225,7 +225,7 @@
   --footer-warning: #ffffff;
   --hover: #000000;
   --input-field-bg: #000000;
-  --iteration-header-bg: #000000;
+  --iteration-header-bg: #1c1c1c;
   --iteration-header-fg: #ffffff;
   --level-machine: #000000;
   --level-project: #000000;
@@ -247,7 +247,7 @@
   --panel2: #000000;
   --primary: #ffffff;
   --primary-fg: #000000;
-  --result-bg: #000000;
+  --result-bg: #1c1c1c;
   --result-highlight-fg: #ffffff;
   --result-path-bg: #000000;
   --result-path-fg: #ffffff;
@@ -255,7 +255,7 @@
   --surface: #000000;
   --turn-separator-bg: #000000;
   --turn-separator-fg: #ffffff;
-  --user-bubble-bg: #000000;
+  --user-bubble-bg: #1c1c1c;
   --user-bubble-fg: #ffffff;
   --user-role-fg: #ffffff;
   --warning: #ffffff;
@@ -280,7 +280,7 @@
   --button-fg: #000000;
   --cancelled-bg: #ffffff;
   --cancelled-fg: #000000;
-  --code-bg: #ffffff;
+  --code-bg: #f2f2f2;
   --code-border: #000000;
   --code-duration: #000000;
   --code-err-bg: #ffffff;
@@ -316,7 +316,7 @@
   --footer-warning: #000000;
   --hover: #ffffff;
   --input-field-bg: #ffffff;
-  --iteration-header-bg: #ffffff;
+  --iteration-header-bg: #f2f2f2;
   --iteration-header-fg: #000000;
   --level-machine: #ffffff;
   --level-project: #ffffff;
@@ -338,7 +338,7 @@
   --panel2: #ffffff;
   --primary: #000000;
   --primary-fg: #ffffff;
-  --result-bg: #ffffff;
+  --result-bg: #f2f2f2;
   --result-highlight-fg: #000000;
   --result-path-bg: #ffffff;
   --result-path-fg: #000000;
@@ -346,7 +346,7 @@
   --surface: #ffffff;
   --turn-separator-bg: #ffffff;
   --turn-separator-fg: #000000;
-  --user-bubble-bg: #ffffff;
+  --user-bubble-bg: #f2f2f2;
   --user-bubble-fg: #000000;
   --user-role-fg: #000000;
   --warning: #000000;

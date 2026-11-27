@@ -935,14 +935,21 @@
   "tokyonight.nvim Storm theme."
   (make-theme "tokyonight-storm" "Tokyo Storm" :dark tokyonight-storm-palette))
 
+(def ^:private monochrome-wash-keys
+  "Content surfaces that a monochrome theme sets apart with its wash."
+  [:user-bubble-bg :iteration-header-bg :code-block-bg :result-bg])
+
 (defn- monochrome-palette
-  "Two inks, with explicit inverse selections. No hue carries a state.
-   This is a palette, not a display refresh policy: channels own update cadence."
-  [paper ink]
+  "Two inks, with explicit inverse selections, and one grey wash under the
+   content surfaces, so a message or a block stands out from the page.
+   No hue carries a state. This is a palette, not a display refresh policy:
+   channels own update cadence."
+  [paper ink wash]
   (merge (into {}
                (map (fn [k]
                       [k (if (str/ends-with? (name k) "-bg") paper ink)]))
                (keys light-palette))
+         (zipmap monochrome-wash-keys (repeat wash))
          {:header-active-tab-bg ink
           :header-active-tab-fg paper
           :header-tab-number-fg paper
@@ -952,14 +959,14 @@
 
 (def paper
   "Black ink on white paper, for high contrast and e-ink palette exploration."
-  (assoc-in (make-theme "paper" "Paper" :light (monochrome-palette [255 255 255] [0 0 0]))
+  (assoc-in (make-theme "paper" "Paper" :light (monochrome-palette [255 255 255] [0 0 0] [242 242 242]))
     [:settings "HIGH_CONTRAST"]
     true))
 
 (def high-contrast-dark
   "White ink on black; the inverse accessibility choice, not an e-ink default."
   (assoc-in (make-theme "high-contrast-dark" "High Contrast Dark"
-                        :dark (monochrome-palette [0 0 0] [255 255 255]))
+                        :dark (monochrome-palette [0 0 0] [255 255 255] [28 28 28]))
     [:settings "HIGH_CONTRAST"]
     true))
 
