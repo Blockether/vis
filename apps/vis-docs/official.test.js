@@ -9,6 +9,7 @@ const officialSources = [
   ['Blockether/vis-decisions', '', 'vis-decisions'],
   ['Blockether/vis-lang-clojure', 'extension', 'vis-lang-clojure'],
   ['Blockether/vis-lang-interface', '', 'vis-lang-interface'],
+  ['Blockether/vis-lang-javascript', '', 'vis-lang-javascript'],
   ['Blockether/vis-lang-python', '', 'vis-lang-python'],
   ['Blockether/vis-music', '', 'vis-music'],
   ['Blockether/vis-optmem', '', 'vis-optmem'],

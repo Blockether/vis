@@ -21,6 +21,11 @@ const officialExtensions = [
     name: 'vis-lang-clojure',
   },
   { repository: 'blockether/vis-lang-interface', subdirectory: '', name: 'vis-lang-interface' },
+  {
+    repository: 'blockether/vis-lang-javascript',
+    subdirectory: '',
+    name: 'vis-lang-javascript',
+  },
   { repository: 'blockether/vis-lang-python', subdirectory: '', name: 'vis-lang-python' },
   { repository: 'blockether/vis-music', subdirectory: '', name: 'vis-music' },
   { repository: 'blockether/vis-optmem', subdirectory: '', name: 'vis-optmem' },
