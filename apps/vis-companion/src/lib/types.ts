@@ -1623,11 +1623,11 @@ export interface CouncilRequestEntry {
   author_session_id?: string;
   source?: string;
   reply_required?: boolean;
+  note?: string;
 }
 
 /** Durable Council entries linked to the turn; never inferred from request text. */
 export interface CouncilRequest extends CouncilRequestEntry {
-  note?: string;
   /** All entries in arrival order when the turn took more than one. */
   entries?: readonly CouncilRequestEntry[];
 }

@@ -1415,6 +1415,7 @@ export function SessionScreen({
   // really ended, so a stale `live` session row must never reopen their bubbles.
   const endedTurnIdsRef = useRef(new Set<string>());
   const probeTurnOnWakeRef = useRef<(() => void) | null>(null);
+  const reconcileRefusedStopRef = useRef<(() => void) | null>(null);
   // turn id -> what THIS device authored for a message it queued behind the running
   // turn. A user cancel drops the whole pre-cancel backlog server-side
   // (`drop-cancelled-backlog!`), so without a local copy the text, its pastes and its
@@ -2647,10 +2648,11 @@ export function SessionScreen({
         try {
           const restored = await client.turnTrace(sid, tid);
           const current = runningTurnRef.current;
-          if (!cancelled && current?.id === tid && current.status === 'running' && restored.length) {
-            const repaired = repairRunningTrace(current, before, restored);
-            runningTurnRef.current = repaired;
-            setRunningTurn(repaired);
+          if (!cancelled && current?.id === tid && current.status === 'running') {
+            const { turn, complete } = repairRunningTrace(current, before, restored);
+            runningTurnRef.current = turn;
+            setRunningTurn(turn);
+            if (!complete) return false;
           }
         } catch {
           return false;
@@ -2684,6 +2686,11 @@ export function SessionScreen({
         }
       }
     };
+    const reconcileGap = () => {
+      repairRevision++;
+      void reconcile();
+    };
+    reconcileRefusedStopRef.current = reconcileGap;
     // A safety net, not the feed: a live session stream carries every turn and status
     // change, so a tick then only repairs a missed frame and runs every 30 s. With the
     // stream down it is the only source, and runs every 5 s.
@@ -2745,6 +2752,10 @@ export function SessionScreen({
     const stopReady = subscriptions.subscribeSession(
       sid,
       (event) => {
+        if (event.type === 'event.elided' && event.reason === 'replay_unavailable') {
+          reconcileGap();
+          return;
+        }
         if (event.type !== 'subscription.ready' || typeof event.is_live !== 'boolean') return;
         const nextSession = client.noteSessionGoal(sid, event.goal);
         if (nextSession) setSession(nextSession);
@@ -2788,6 +2799,7 @@ export function SessionScreen({
     );
     return () => {
       cancelled = true;
+      if (reconcileRefusedStopRef.current === reconcileGap) reconcileRefusedStopRef.current = null;
       window.clearInterval(timer);
       if (repairTimer !== null) window.clearTimeout(repairTimer);
       if (wakeGeometryFrame !== null) window.cancelAnimationFrame(wakeGeometryFrame);
@@ -3540,7 +3552,16 @@ export function SessionScreen({
       // watchdog below measures SILENCE, and a reconnect is exactly when a frozen
       // stream has to stay visibly silent. The `subscription.ready` listener above
       // is the one that acts on it.
-      if (event.type === 'subscription.ready') return;
+      if (event.type === 'subscription.ready' || event.type === 'task.refreshed') return;
+      if (event.type === 'event.elided') {
+        // A rewind starts a new cursor range. Drop frames queued in the old range.
+        if (typeof event.cursor === 'number' && event.cursor < enqueuedSeq) {
+          eventQueue.length = 0;
+          enqueuedSeq = event.cursor;
+          lastRunningTurnSeqRef.current = event.cursor;
+        }
+        return;
+      }
       if (event.type === 'turn.started') {
         const tid = eventString(event, 'turn_id');
         if (
@@ -4760,6 +4781,7 @@ export function SessionScreen({
     // intent ("stop that, run THIS"), survives the drop server-side and drains on
     // its own — stealing it into the composer would send it twice.
     const backlog = queued;
+    const reconcileRefusedStop = reconcileRefusedStopRef.current;
     setRunningTurn((turn) => {
       const next = turn ? { ...turn, cancelling: true, progress: undefined } : turn;
       runningTurnRef.current = next;
@@ -4780,6 +4802,7 @@ export function SessionScreen({
           runningTurnRef.current = next;
           return next;
         });
+        reconcileRefusedStop?.();
         return;
       }
       // The gateway dropped these rows when it accepted the stop. Take them out of the

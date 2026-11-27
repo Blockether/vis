@@ -90,6 +90,17 @@ describe('Council transcript requests', () => {
     }
   });
 
+  it('shows the notes of each Council entry when the batch is opened', async () => {
+    const turn = councilWake.turns.find(({ turn_id }) => turn_id === 't5')!;
+    renderSessionScreen({ client: { transcript: async () => [{ ...turn, status: 'done' }] } });
+    const disclosure = await screen.findByRole('button', { name: 'Show Council messages' });
+    fireEvent.click(disclosure);
+    for (const entry of turn.council.entries!) {
+      expect(screen.getByText(entry.note)).toBeVisible();
+    }
+    expect(screen.getByText('All parser tests pass.')).toBeVisible();
+  });
+
   it('shows a live Council wake before the first iteration without attributing it to the user', async () => {
     const { turn_id, request, council } = councilWake.turns[0];
     renderSessionScreen({
@@ -1054,11 +1065,11 @@ describe('gateway recovery while a turn is visible', () => {
     await act(async () => {
       finishTrace([
         { position: 7, assistant_prose: 'Recovered iteration.', forms: [] },
-        { position: 8, assistant_prose: 'Older snapshot text.', forms: [] },
+        { position: 8, assistant_prose: 'The ', forms: [] },
       ]);
     });
     expect(await screen.findByText('Recovered iteration.')).toBeInTheDocument();
-    expect(screen.getByText('Newer live iteration.')).toBeInTheDocument();
+    expect(screen.getByText('The Newer live iteration.')).toBeInTheDocument();
     act(() => {
       for (const listener of listeners) {
         listener({
@@ -1074,7 +1085,7 @@ describe('gateway recovery while a turn is visible', () => {
         });
       }
     });
-    expect(await screen.findByText('Newer live iteration. Continued.')).toBeInTheDocument();
+    expect(await screen.findByText('The Newer live iteration. Continued.')).toBeInTheDocument();
   });
 
   it('continues repaired iteration text from its full stream offset', async () => {
@@ -1119,6 +1130,38 @@ describe('gateway recovery while a turn is visible', () => {
     expect(await screen.findByText('abcdefgh')).toBeInTheDocument();
   });
 
+  it('repairs a replay gap and accepts lower-sequence deltas for the same painted turn', async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    renderSessionScreen({
+      session: live,
+      client: {
+        cachedRunningTurn: () => ({ ...cachedRunningTurn(), seq: 28 }),
+        turnTrace: async () => [{ position: 7, assistant_prose: 'Recovered', forms: [] }],
+      },
+      subscriptions: {
+        subscribeSession: (_sid: string, on: (event: Record<string, unknown>) => void) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+    expect(await screen.findByText('Still working.')).toBeInTheDocument();
+    const emit = async (event: Record<string, unknown>) => {
+      await act(async () => {
+        for (const listener of listeners) listener({ session_id: 's1', ...event });
+      });
+    };
+    await emit({ type: 'event.elided', reason: 'replay_unavailable', event_type: 'replay', cursor: 8 });
+    expect(await screen.findByText('Recovered')).toBeInTheDocument();
+    const delta = {
+      type: 'content.block.delta', turn_id: 't-live', iteration: 7,
+      block_id: 't-live:assistant-prose:7', field: 'markdown',
+    };
+    await emit({ ...delta, seq: 9, offset: 0, text: 'Rec' });
+    await emit({ ...delta, seq: 10, offset: 9, text: ' and continued.' });
+    expect(await screen.findByText('Recovered and continued.')).toBeInTheDocument();
+  });
+
   it('retries a failed trace repair without a second repair frame', async () => {
     const listeners = new Set<(event: Record<string, unknown>) => void>();
     const turnTrace = vi.fn()
@@ -1152,16 +1195,36 @@ describe('gateway recovery while a turn is visible', () => {
 
   it('keeps a queued draft in the tray when a late stop is refused', async () => {
     const queued = { turnId: 'q1', request: 'Queued words', preview: 'Queued words', attachments: [] };
-    const cancelTurn = vi.fn(async () => ({ accepted: false, reason: 'not_running' }));
+    let ended = false;
+    const cancelTurn = vi.fn(async () => {
+      ended = true;
+      return { accepted: false, reason: 'not_running', turn_status: 'completed' };
+    });
+    const complete: TranscriptTurn = {
+      turn_id: 't-live',
+      request: 'keep working',
+      status: 'done',
+      completed_at: Date.now(),
+      content: [{ id: 'answer', type: 'prose', markdown: 'The real answer.' }],
+      iterations: [],
+    };
     renderSessionScreen({
       session: live,
-      client: { cachedRunningTurn, cachedQueuedTurns: () => [queued], cancelTurn },
+      client: {
+        cachedRunningTurn,
+        cachedQueuedTurns: () => [queued],
+        cancelTurn,
+        session: async () => ended ? sessionFixture({ live: false }) : live,
+        transcript: async () => ended ? [complete] : [],
+      },
     });
     const stop = await screen.findByRole('button', { name: 'Stop response' });
     await act(async () => {
       fireEvent.click(stop);
     });
     expect(cancelTurn).toHaveBeenCalledWith('s1', 't-live');
+    expect(await screen.findByText('The real answer.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Stop response' })).toBeNull();
     expect(screen.getByRole('region', { name: 'Queued messages' })).toHaveTextContent('Queued words');
     expect(screen.getByLabelText('Message Vis')).toHaveValue('');
   });

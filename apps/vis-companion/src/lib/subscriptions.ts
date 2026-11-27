@@ -221,6 +221,23 @@ export class SessionSubscriptionHub {
     return this.background.get(sid)?.rows;
   }
 
+  /** Refresh one Task without replacing newer stream updates or its siblings. */
+  async refreshTask(sid: string, id: string): Promise<void> {
+    const before = this.tasks(sid)?.find((row) => row.id === id);
+    if (!before) return;
+    const row = await this.client.readTask(sid, id);
+    const current = this.background.get(sid);
+    const index = current?.rows.findIndex((task) => task.id === id) ?? -1;
+    if (!current || current.rows[index] !== before) return;
+    const rows = current.rows.slice();
+    if (row?.state === 'running') rows[index] = row;
+    else rows.splice(index, 1);
+    this.background.set(sid, { ...current, rows });
+    for (const listener of this.sessionListeners.get(sid) ?? []) {
+      listener({ type: 'task.refreshed', session_id: sid });
+    }
+  }
+
   private noteTasks(sid: string, event: SseEvent): void {
     if (event.type === 'subscription.ready') {
       const cursor = event.tasks_seq ?? event.cursor;

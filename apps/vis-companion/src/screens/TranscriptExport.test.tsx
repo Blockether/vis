@@ -96,7 +96,12 @@ it('opens the full contents of a Council batch from its one-line note', async ()
   const row = screen.getByText(turn.council.note!).closest<HTMLElement>('[data-turn-id]')!;
   expect(within(row).queryByText('All parser tests pass.')).toBeNull();
   await userEvent.click(within(row).getByRole('button', { name: 'Show Council messages' }));
-  expect(row).toHaveTextContent(turn.request.replace(/\s+/g, ' '));
+  for (const entry of turn.council.entries!) {
+    expect(within(row).getByText(entry.note)).toBeVisible();
+    for (const line of entry.content.split('\n')) {
+      expect(within(row).getByText(line)).toBeVisible();
+    }
+  }
 });
 
 describe('the subagent rows of an HTML export', () => {

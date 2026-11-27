@@ -187,6 +187,34 @@ describe('GatewayClient event-stream hard deadline', () => {
     }
   });
 
+  it('repairs a ready cursor rewind before delivering lower-sequence frames', async () => {
+    vi.useFakeTimers();
+    const ready = { type: 'subscription.ready', session_id: 's1', cursor: 8 };
+    const frames = [ready, { type: 'turn.started', session_id: 's1', seq: 9 }];
+    const fetches = vi.fn(async (input: string) => input.includes('/events-since?')
+      ? Response.json({ events: [{ ...ready, cursor: 10 }] })
+      : new Response(frames.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('')));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const cursors = new Map([['s1', 28]]);
+    const seen: [string, number | undefined, boolean | undefined][] = [];
+    const stop = new GatewayClient(conn).streamSessionEvents(cursors, (event) => {
+      seen.push([event.type, typeof event.cursor === 'number' ? event.cursor : event.seq, event.is_repair]);
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen).toEqual([
+        ['event.elided', 8, undefined],
+        ['subscription.ready', 8, undefined],
+        ['subscription.ready', 10, true],
+        ['turn.started', 9, undefined],
+      ]);
+      expect(cursors.get('s1')).toBe(9);
+    } finally {
+      stop();
+    }
+  });
+
   it('retries a failed snapshot after advancing past the elision', async () => {
     vi.useFakeTimers();
     let streams = 0;

@@ -147,6 +147,10 @@ import {
 } from './diagnostics';
 import { checkForegroundClock } from './wake';
 
+export type TaskCancelOutcome =
+  | { requested: true }
+  | { requested: false; reason: (typeof taskSchema.$defs.cancel.properties.reason.enum)[number] };
+
 export type TurnCancelOutcome =
   | { accepted?: true; status: 'cancelling'; turn_id?: string; also_cancelled?: string[] }
   | { accepted: false; reason: 'no_running_turn' | 'not_running'; turn_id?: string; turn_status?: string };
@@ -6391,11 +6395,24 @@ export class GatewayClient {
     });
   }
 
-  async cancelTask(sid: string, id: string): Promise<boolean> {
-    const result = await this.request<{ requested: boolean }>(
+  cancelTask(sid: string, id: string): Promise<TaskCancelOutcome> {
+    return this.request(
       'POST', `/v1/sessions/${encodeURIComponent(sid)}/tasks/${encodeURIComponent(id)}/cancel`,
     );
-    return result.requested;
+  }
+
+  async readTask(sid: string, id: string): Promise<BackgroundTask | null> {
+    try {
+      const { task } = await this.request<{ task: unknown }>(
+        'GET', `/v1/sessions/${encodeURIComponent(sid)}/tasks/${encodeURIComponent(id)}`,
+      );
+      const row = taskFromWire(task);
+      if (row?.session_id === sid && row.id === id) return row;
+      throw new GatewayError(0, 'Unexpected Task row');
+    } catch (error) {
+      if (error instanceof GatewayError && error.status === 404) return null;
+      throw error;
+    }
   }
 
   // ── Queue (shared server-side backlog, same as the TUI) ─────────
@@ -6875,10 +6892,8 @@ export class GatewayClient {
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
           for (const sid of pendingRepairs) await repair(sid, attemptSignal);
-          const spec = Array.from(
-            cursors,
-            ([sid, cursor]) => `${sid}:${this.resumeCursor(sid, cursor)}`,
-          ).join(',');
+          const requested = new Map([...cursors].map(([sid, cursor]) => [sid, this.resumeCursor(sid, cursor)]));
+          const spec = [...requested].map(([sid, cursor]) => `${sid}:${cursor}`).join(',');
           // An older gateway ignores scope=both and still serves sessions. Fleet
           // stays unready, so the list keeps its existing polling safety net.
           const scope = opts.includeFleet ? '&scope=both' : '';
@@ -6927,13 +6942,22 @@ export class GatewayClient {
                   // handler failed must replay on reconnect, never be skipped.
                   // Fleet frames use an independent sequence, even when they name
                   // a watched session. Only session frames own replay cursors.
+                  const rewind = event.type === 'subscription.ready' && event.scope !== 'fleet' &&
+                    cursors.has(sid) && typeof event.cursor === 'number' && event.cursor < (requested.get(sid) ?? -1);
+                  if (rewind) {
+                    pendingRepairs.add(sid);
+                    onEvent({
+                      type: 'event.elided', session_id: sid, cursor: event.cursor,
+                      event_type: 'replay', reason: 'replay_unavailable',
+                    });
+                  }
                   if (event.type !== 'event.elided') onEvent(event);
                   if (event.scope !== 'fleet') {
                     if (
                       sid &&
                       cursors.has(sid) &&
                       (event.type === 'subscription.ready' ||
-                        (event.type === 'event.elided' && event.event_type === 'subscription.ready')) &&
+                        event.type === 'event.elided') &&
                       typeof event.cursor === 'number'
                     ) {
                       cursors.set(sid, event.cursor);
@@ -6947,7 +6971,9 @@ export class GatewayClient {
                   if (event.type === 'event.elided') {
                     if (sid && event.scope !== 'fleet') pendingRepairs.add(sid);
                     onEvent(event);
-                    if (pendingRepairs.has(sid)) return repair(sid, attemptSignal);
+                  }
+                  if ((rewind || event.type === 'event.elided') && pendingRepairs.has(sid)) {
+                    return repair(sid, attemptSignal);
                   }
                 } catch {
                   // Ignore one malformed frame without ending sibling sessions.

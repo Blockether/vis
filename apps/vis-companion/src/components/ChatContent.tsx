@@ -5475,7 +5475,12 @@ export const UserMessage = memo(function UserMessage({
               <div className="truncate">{councilNote}</div>
               {!!council?.entries?.length && (
                 <div id={councilDetailsId} hidden={!councilOpen}>
-                  {councilOpen && <div className="mt-2">{councilContent}</div>}
+                  {councilOpen && council.entries.map((entry) => (
+                    <div key={entry.entry_id} className="mt-2">
+                      {entry.note !== undefined && <div className="font-bold">{entry.note}</div>}
+                      <CouncilRequestBody>{entry.content}</CouncilRequestBody>
+                    </div>
+                  ))}
                 </div>
               )}
             </>

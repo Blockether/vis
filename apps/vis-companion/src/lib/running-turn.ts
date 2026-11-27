@@ -115,9 +115,8 @@ export interface RunningTurn {
 }
 
 /**
- * Block text after one `content.block.delta`. A frame inside the known span keeps the
- * text before its offset and appends, so a repeated frame changes nothing. Any other
- * frame starts a new span: a gap shows the newest text, and a replay rebuilds it all.
+ * Block text after one `content.block.delta`. A delta that matches known text leaves
+ * it in place. Other deltas replace from their offset or start a new span after a gap.
  */
 export function applyBlockDelta(
   current: string,
@@ -128,7 +127,8 @@ export function applyBlockDelta(
   const offset = typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
   const text = eventString(event, 'text');
   if (offset >= base && offset <= base + current.length) {
-    return { text: current.slice(0, offset - base) + text, base };
+    const index = offset - base;
+    return { text: current.startsWith(text, index) ? current : current.slice(0, index) + text, base };
   }
   return { text, base: offset };
 }
@@ -308,35 +308,89 @@ export function withStoredSteps(turn: RunningTurn, row: TranscriptTurn | undefin
   };
 }
 
-/** Restore full iteration text and its offset bases together. */
+function changedTraceFields<T extends Record<string, unknown>>(live: T, before: T | undefined): Partial<T> {
+  return Object.fromEntries(Object.entries(live).filter(([key, value]) => !Object.is(value, before?.[key]))) as Partial<T>;
+}
+
+function repairTraceForms(
+  snapshot: TranscriptIteration,
+  live: TranscriptIteration,
+  before: TranscriptIteration | undefined,
+): TranscriptForm[] | undefined {
+  if (!live.forms?.length) return snapshot.forms;
+  const key = (form: TranscriptForm) => form.block_id == null ? undefined : String(form.block_id);
+  const forms = [...(snapshot.forms ?? [])];
+  const positions = new Map(forms.map((form, index) => [key(form), index]));
+  const old = new Map(before?.forms?.map((form) => [key(form), form]));
+  for (const form of live.forms) {
+    const id = key(form);
+    const index = id === undefined ? undefined : positions.get(id);
+    if (index === undefined) forms.push(form);
+    else forms[index] = { ...form, ...forms[index], ...changedTraceFields(form, old.get(id)) };
+  }
+  return forms;
+}
+
+/** Restore the trace and apply only live changes made since the read began. */
 export function repairRunningTrace(
   current: RunningTurn,
   before: RunningTurn,
   restored: TranscriptIteration[],
-): RunningTurn {
+): { turn: RunningTurn; complete: boolean } {
   const key = (iteration: TranscriptIteration) => iteration.position ?? iteration.id;
   const beforeByKey = new Map(before.iterations.map((iteration) => [key(iteration), iteration]));
-  const snapshotKeys = new Set(restored.map(key));
-  // Keep rows that arrived during the read or that the trace does not cover.
-  const live = current.iterations.filter(
-    (iteration) => !snapshotKeys.has(key(iteration)) || beforeByKey.get(key(iteration)) !== iteration,
-  );
-  const liveKeys = new Set(live.map(key));
-  const repaired = restored.filter((iteration) => !liveKeys.has(key(iteration)));
-  const streamBases = current.streamBases && { ...current.streamBases };
-  if (streamBases) {
-    for (const { position } of repaired) {
-      // Gateway iteration blocks are named <turn>:<phase>:<position>.
-      // The snapshot text starts at zero. Keep the bases for untouched live blocks.
-      delete streamBases[`${current.id}:reasoning:${position}`];
-      delete streamBases[`${current.id}:assistant-prose:${position}`];
+  const liveByKey = new Map(current.iterations.map((iteration) => [key(iteration), iteration]));
+  const rows = new Map(restored.map((iteration) => [key(iteration), iteration]));
+  const streamBases = { ...current.streamBases };
+  for (const [id, live] of liveByKey) {
+    const snapshot = rows.get(id);
+    if (!snapshot) {
+      rows.set(id, live);
+      continue;
     }
+    const old = beforeByKey.get(id);
+    const row: TranscriptIteration = {
+      ...snapshot,
+      ...changedTraceFields(live, old),
+      forms: repairTraceForms(snapshot, live, old),
+    };
+    for (const [field, phase] of [['thinking', 'reasoning'], ['assistant_prose', 'assistant-prose']] as const) {
+      const block = `${current.id}:${phase}:${live.position}`;
+      const base = streamBases[block] ?? 0;
+      const prefix = snapshot[field];
+      const text = live[field];
+      const changed = text !== old?.[field] || base !== (before.streamBases?.[block] ?? 0);
+      if (base > (prefix?.length ?? 0)) {
+        // The two spans do not touch yet. Keep the suffix and retry the trace read.
+        row[field] = text;
+        continue;
+      }
+      const suffix = text ?? '';
+      // A snapshot can already include the live span and more text after it.
+      const coversLive = text !== undefined && prefix?.startsWith(text, base);
+      const liveExtendsPrefix = base === 0 && prefix !== undefined && suffix.startsWith(prefix);
+      const needsLive = changed || liveExtendsPrefix || (base > 0 && base + suffix.length > (prefix?.length ?? 0));
+      row[field] = needsLive && !coversLive
+        ? (base > 0 ? (prefix ?? '').slice(0, base) + suffix : text)
+        : prefix;
+      delete streamBases[block];
+    }
+    rows.set(id, row);
   }
+  const complete = ![...rows.values()].some(({ position }) =>
+    [
+      streamBases[`${current.id}:reasoning:${position}`],
+      streamBases[`${current.id}:assistant-prose:${position}`],
+    ].some((base) => base > 0),
+  );
   return {
-    ...current,
-    iterations: [...repaired, ...live].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
-    iterationsOffset: undefined,
-    streamBases,
+    turn: {
+      ...current,
+      iterations: [...rows.values()].sort((a, b) => (a.position ?? 0) - (b.position ?? 0)),
+      iterationsOffset: restored.length ? undefined : current.iterationsOffset,
+      streamBases,
+    },
+    complete,
   };
 }
 
@@ -488,10 +542,20 @@ export function reduceRunningTurnEvent(
     const promoted = next.iterations.find(
       (iteration) => iteration.position === position,
     )?.assistant_prose;
+    const streamBases = next.streamBases && { ...next.streamBases };
+    if (streamBases) {
+      if (Object.prototype.hasOwnProperty.call(event, 'thinking')) {
+        delete streamBases[`${turn.id}:reasoning:${position}`];
+      }
+      if (Array.isArray(event.presentation_content) || eventString(event, 'assistant_prose')) {
+        delete streamBases[`${turn.id}:assistant-prose:${position}`];
+      }
+    }
     return {
       ...next,
       answer: promoted ? '' : turn.answer,
       progress: undefined,
+      streamBases,
     };
   }
 

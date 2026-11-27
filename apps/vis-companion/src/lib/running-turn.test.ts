@@ -5,6 +5,7 @@ import activityFixture from '../../../../packages/vis-contract/resources/vis-con
 import {
   providerWaitDetail,
   reduceRunningTurnEvent,
+  repairRunningTrace,
   withStoredSteps,
   type RunningTurn,
   type ProviderWait,
@@ -50,6 +51,55 @@ function completed(thinking: string | null): SseEvent {
 function thought(turn: ReturnType<typeof reduceRunningTurnEvent>): string | undefined {
   return turn?.iterations[0]?.thinking;
 }
+
+it('keeps repair pending until recovered text touches the live suffix', () => {
+  const live = reduceRunningTurnEvent(runningTurn, { ...reasoning('world!'), offset: 6 })!;
+  const repair = repairRunningTrace(live, runningTurn, [{ position: 0, thinking: 'hel' }]);
+  expect(repair.complete).toBe(false);
+  expect(thought(repair.turn)).toBe('world!');
+  const retry = repairRunningTrace(repair.turn, repair.turn, [{ position: 0, thinking: 'hello ' }]);
+  expect(retry.complete).toBe(true);
+  expect(thought(retry.turn)).toBe('hello world!');
+});
+
+it('keeps the text after a live delta when the recovered snapshot already includes it', () => {
+  const live = reduceRunningTurnEvent(runningTurn, { ...reasoning('world'), offset: 6 })!;
+  const repair = repairRunningTrace(live, runningTurn, [{ position: 0, thinking: 'hello world!' }]);
+  expect(repair.complete).toBe(true);
+  expect(thought(repair.turn)).toBe('hello world!');
+});
+
+it('restores missing forms while retaining concurrent text and form updates', () => {
+  const before: RunningTurn = {
+    ...runningTurn,
+    iterations: [{ position: 0, thinking: 'hello ', forms: [{ block_id: '2', code: 'print(2)' }] }],
+  };
+  const withText = reduceRunningTurnEvent(before, { ...reasoning('world!'), offset: 6 })!;
+  const live = reduceRunningTurnEvent(withText, event({
+    type: 'block.output', iteration: 0, form_index: 2, stdout: '2',
+  }))!;
+  const repair = repairRunningTrace(live, before, [{
+    position: 0,
+    thinking: 'hello ',
+    forms: [
+      { block_id: '1', code: 'print(1)', stdout: '1' },
+      { block_id: '2', code: 'print(2)', duration_ms: 12 },
+    ],
+  }]);
+  expect(repair.complete).toBe(true);
+  expect(thought(repair.turn)).toBe('hello world!');
+  expect(repair.turn.iterations[0].forms).toMatchObject([
+    { block_id: '1', code: 'print(1)', stdout: '1' },
+    { block_id: '2', code: 'print(2)', stdout: '2', duration_ms: 12 },
+  ]);
+});
+
+it('does not shorten complete live text when the trace only supplies an agreeing prefix', () => {
+  const live = reduceRunningTurnEvent(runningTurn, reasoning('hello world!'))!;
+  const repair = repairRunningTrace(live, live, [{ position: 0, thinking: 'hello ' }]);
+  expect(repair.complete).toBe(true);
+  expect(thought(repair.turn)).toBe('hello world!');
+});
 
 describe('Council request provenance', () => {
   it('preserves the actual entry and kind from the live event', () => {

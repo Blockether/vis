@@ -21,10 +21,10 @@ export function BackgroundTasks({ client, subscriptions, sid, views, onOpenView 
     setError(null);
     setPending((current) => new Set(current).add(id));
     try {
-      if (!await client.cancelTask(sid, id)) {
-        if (subscriptions.tasks(sid)?.some((task) => task.id === id && !task.cancel_reason)) {
-          setError(`Could not cancel ${name}.`);
-        }
+      const outcome = await client.cancelTask(sid, id);
+      if (!outcome.requested) {
+        // The cancel request succeeded. If the read fails, the stream still owns the row.
+        await subscriptions.refreshTask(sid, id).catch(() => undefined);
       }
     } catch {
       setError(`Could not cancel ${name}.`);
