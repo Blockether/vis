@@ -77,6 +77,7 @@ def _council_trial(
         ("leader-printed-live", False),
         ("leader-printed-bare", False),
         ("join-path", True),
+        ("guarded-path", True),
         ("value-twice", True),
         ("bang-answer", True),
         ("answer-evidence", True),
@@ -91,9 +92,12 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
     live = "LIVE-" + "b" * 32
     write = atif.block(
         "t1/i1/f1",
-        "open(os.path.join('.', 'answer.txt'), 'w').write(value)"
-        if case == "join-path"
-        else "Path('answer.txt').write_text(value)",
+        {
+            "join-path": "open(os.path.join('.', 'answer.txt'), 'w').write(value)",
+            # Paid run for #520: the child chose the path with a conditional expression.
+            "guarded-path": "p = root / 'answer.txt' if root.is_dir() else root\n"
+            "p.write_text(value)",
+        }.get(case, "Path('answer.txt').write_text(value)"),
     )
     child = atif.trajectory(
         atif.step(1, write),

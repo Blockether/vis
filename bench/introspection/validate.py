@@ -45,7 +45,8 @@ def check_task(task, cp, tmp):
     work = task.path / "environment/workspace"
     checks = load(tests / "checks.json")
     expected = checks["want_answer_json"]
-    kind = load(tests / "fixture.json")["kind"]
+    fixture = load(tests / "fixture.json")
+    kind = fixture["kind"]
     assert task.instruction and task.agent_timeout_sec and task.verifier_timeout_sec
     assert work.is_dir() and os.access(tests / "test.sh", os.X_OK)
     assert not check_problems(checks)
@@ -101,7 +102,8 @@ def check_task(task, cp, tmp):
         root.mkdir()
         env = dict(os.environ, VIS_BENCH_CHECK_SEED="1", VIS_BENCH_DB=str(root / "vis.mdb"),
                    VIS_HOME=str(root / "home"),
-                   VIS_BENCH_ROOT=str(work), VIS_BENCH_KIND=kind, VIS_BENCH_SID=SID)
+                   VIS_BENCH_ROOT=str(work), VIS_BENCH_KIND=kind, VIS_BENCH_SID=SID,
+                   VIS_BENCH_ANSWER=fixture.get("answer", ""))
         if journal(kind):
             write_fallback(work, root / "home", kind)
         seed = ["clojure", "-Scp", cp, "-M", "-e", f'(load-file "{HERE / "seed.clj"}")']
@@ -113,9 +115,11 @@ def check_task(task, cp, tmp):
             if kind == "handoff":
                 assert projected["early_has_value"] and not projected["later_has_value"]
                 assert projected["later_tokens"] >= 6000, projected
+                # The tail that a child inherits has 2,000 tokens: a long answer stays out of it.
+                assert (projected["early_tokens"] > 2500) == (fixture.get("answer") == "long"), projected
                 check_handoff(tests, root)
                 actual = expected
-                print(f'  Handoff: {projected["later_tokens"]} later tokens (Svar/gpt-4o)')
+                print(f'  Handoff: {projected["early_tokens"]} early and {projected["later_tokens"]} later tokens (Svar/gpt-4o)')
             else:
                 assert projected == expected, (task.name, projected, expected)
                 if actual is None:

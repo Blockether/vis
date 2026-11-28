@@ -61,6 +61,8 @@ def link_sign_in(home, auth_home):
 class InspectionAgent(VisAgent):
     """Seed once before the first measured model call and capture its accounting."""
 
+    answer = ""
+
     @property
     def include_handoff_evidence(self):
         return self.kind == "handoff"
@@ -71,7 +73,7 @@ class InspectionAgent(VisAgent):
     def process_env(self, instruction, runtime, **kwargs):
         values = super().process_env(instruction, runtime, **kwargs)
         home = runtime / "home"
-        values.update(VIS_HOME=str(home), VIS_BENCH_KIND=self.kind)
+        values.update(VIS_HOME=str(home), VIS_BENCH_KIND=self.kind, VIS_BENCH_ANSWER=self.answer)
         if self.kind == "handoff" and "VIS_HARBOR_SESSION_ID" not in values:
             values["VIS_HARBOR_SESSION_ID"] = SID
         write_fallback(self.workspace, home, self.kind)
@@ -89,7 +91,9 @@ class InspectionAgent(VisAgent):
     async def setup(self, environment):
         await super().setup(environment)
         task = environment.environment_dir.parent / "tests" / "fixture.json"
-        self.kind = json.loads(task.read_text(encoding="utf-8"))["kind"]
+        fixture = json.loads(task.read_text(encoding="utf-8"))
+        self.kind = fixture["kind"]
+        self.answer = fixture.get("answer", "")
         self.workspace = environment.workspace
         auth_home = os.environ.get("VIS_BENCH_AUTH_HOME")
         self.auth_home = Path(auth_home).expanduser().resolve(strict=True) if auth_home else None

@@ -79,6 +79,11 @@
              :tool_calls (when (< i 3) (nippy/freeze [{:src "print('verification generated')"
                                                        :tool-name "py3" :stdout body :success? true}]))}))))
 
+(def ^:private long-answer? (= "long" (System/getenv "VIS_BENCH_ANSWER")))
+
+(defn- minute [i]
+  (format "Release board minute %d: the members reviewed freight schedule %d and recorded no objection." i (* 7 i)))
+
 (defn- seed-handoff! [db root]
   (row! db :workspace {:id ws :repo_id "benchmark" :root root :created_at now})
   (row! db :session_soul {:id sid :created_at now :claimed_at now})
@@ -88,7 +93,14 @@
           :let [turn (ident 1 n) run (ident 2 n) created (+ now (* n 10000))
                 request (if (= n 1) "Which transfer value did the release board approve?"
                           (str "Summarize inventory batch " n ". Keep the rows in their original order."))
-                answer (if (= n 1) "The release board approved the transfer value: VIOLET-9231-ORBIT."
+                answer (cond
+                         ;; The long answer does not fit in the tail that a child inherits.
+                         (and (= n 1) long-answer?)
+                         (str/join "\n" (concat (map minute (range 1 91))
+                                                ["The release board approved the transfer value: VIOLET-9231-ORBIT."]
+                                                (map minute (range 91 181))))
+                         (= n 1) "The release board approved the transfer value: VIOLET-9231-ORBIT."
+                         :else
                          (str/join "\n" (for [i (range 24)]
                                             (format "Inventory batch %d row %d: sealed container, inspection complete, no change." n i))))]]
     (row! db :session_turn_soul {:id turn :session_state_id st :position n
@@ -153,6 +165,7 @@
                                                                msg (:turn/messages entry)]
                                                            (:content msg)))]
                                {:early_has_value (str/includes? early "VIOLET-9231-ORBIT")
+                                :early_tokens (svar/count-tokens "gpt-4o" early)
                                 :later_has_value (str/includes? later "VIOLET-9231-ORBIT")
                                 :later_tokens (svar/count-tokens "gpt-4o" later)})
                              (answer db kind))]

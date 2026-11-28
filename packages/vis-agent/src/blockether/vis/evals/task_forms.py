@@ -83,6 +83,10 @@ def writes_file(code, filename):
             return is_target(argument(value, 0, "path"), value.lineno)
         if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Div):
             return is_target(value.right, value.lineno)
+        if isinstance(value, ast.IfExp):
+            return is_target(value.body, value.lineno) or is_target(
+                value.orelse, value.lineno
+            )
         if isinstance(value, ast.Call) and name(value.func) == "join" and value.args:
             return is_target(value.args[-1], value.lineno)
         return (

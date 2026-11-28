@@ -18,7 +18,7 @@ Each folder is named `introspection-<case>`. Read `instruction.md` for the exact
 | `engine-log-cause` | Log-only negative control: provider wait is nearby but not the worker cause. |
 | `council-resume` | Live follow-up prompt and whether one reused assistant retains the right task boundary. |
 | `handoff-recall` | A new child must use a value from the first answer of the leader. More than 6,000 tokens of history follow that answer. The leader can give the value in the task. |
-| `handoff-pull` | The child must recover the same value. The leader can give it only in a reply to a child question. |
+| `handoff-pull` | The child must recover the same value. The leader can give it only in a reply to a child question. The value is in the middle of a long first answer, which does not fit in the tail that the child inherits. Thus the child must read the session of its parent or ask. |
 
 ## Layout and isolation
 
