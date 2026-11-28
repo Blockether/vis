@@ -806,7 +806,7 @@ export function MachineRows({
               <div
                 id={panelId}
                 hidden={!isOpen}
-                className={`min-w-0 ${isFleet ? 'border-l-2 border-dialog-edge' : ''}`}
+                className={`min-w-0 ${isFleet ? 'border-l border-dialog-edge' : ''}`}
               >
                 {renderPanel(conn)}
               </div>
