@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [v0.6.0] - 2026-11-28
+
 ### Added
 
 - Configuration: `python.dependency_sync: never` keeps a prepared Python environment unchanged. The Python language tools then install nothing before they start project Python. The default `auto` installs the dependencies of the project. Extensions read the value with `vis.python_dependency_sync()`.
@@ -20,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Session introspection: a printed row of `read_session`, `list_sessions` or `get_session` omits its empty fields. The fields stay in the data: `row["error"]` and `row.get("error")` still give `None`. The same applies to the nested maps of other tool results.
 - Logs: the svar stream progress profile records the time until the response headers arrived (`headers-ms`) and the provider request ID (`request-id`). A long wait before the first token now shows if the provider held the request or sent nothing on an open stream. Svar is pinned at 0.7.251.
 - Models: OpenAI Codex accepts an explicit `gpt-6.1-sol` again, with a 272K prompt budget. Model lists still hide it as an older model. GPT-6 Astra and older Codex models stay retired. Svar is pinned at 0.7.252.
+- Extensions: vis-lang-interface is pinned at 4.3.1, vis-lang-clojure at 1.20.29, vis-lang-python at 1.19.1 and vis-lang-javascript at 0.2.7. Vis lists vis-music and vis-lang-javascript as official extensions.
 - Evals: the check keys `max_patch_calls_per_file` and `max_patch_refusals` are removed, because the `patch` tool no longer exists. The grader now refuses a `checks.json` that has them. `grade.json` no longer has `used_patch` and `edit_path`.
 
 ### Fixed
