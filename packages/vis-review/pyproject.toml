@@ -6,8 +6,8 @@ keywords = ["review", "diff", "undo", "development"]
 requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2",
-  "vis-agent>=0.5.35.dev0",
-  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v4.3.1",
+  "vis-agent>=0.6.0",
+  "vis-lang-interface @ git+https://github.com/Blockether/vis-lang-interface@v4.3.2",
 ]
 
 [tool.vis]
