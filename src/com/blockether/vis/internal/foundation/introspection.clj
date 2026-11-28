@@ -1573,6 +1573,7 @@
          children (when (and (not error) (or (= "council" view) (= "index" view)))
                     (session-children db target-id))]
      (merge result
+            (when (and (seq selected) (not= "index" view)) {:selected-turn position})
             (when (or (seq children) (= "council" view)) {:children (or children [])})
             (cond
               error {:error error}
@@ -1769,7 +1770,8 @@
           "`council` gives entries and child results. The index also shows child results. "
           "`events` gives typed journal rows and retained sequence coverage. "
           "Use `offset` and `limit` for index, Council, and event pages. `next_offset` is None "
-          "on the last page. All views accept `turn`. Only `blocks` and `council` accept `iteration`. "
+          "on the last page. All views accept `turn`; a view other than `index` then gives "
+          "`selected_turn`. Only `blocks` and `council` accept `iteration`. "
           "Only `blocks` accepts `block`. `diagnosis` gives failures. `usage` tool rows overlap. "
           "`full` gives history, diagnosis, usage, forks, and retries. It uses stdout slice limits. "
           "A session read does not restore folded steps.")}))

@@ -693,7 +693,14 @@
             (get-in base [:process-jail :allow-read-write])]
 
         (expect (seq former))
-        (expect (every? #(= "read" (get modes (paths/abbreviate-home %))) former)))))
+        (expect (every? #(= "read" (get modes (paths/abbreviate-home %))) former)))
+      ;; Paid bench for #520: a grant of one file listed that file as a working directory,
+      ;; and each child then used one step on a path that does not exist.
+      (let [file (policy/restrict base {:write ["src/**" "answer.txt"]})
+            listed (into #{} (map #(get % "cwd")) (one-list file "/elsewhere"))]
+        (expect (some #{(str root "/answer.txt")} (get-in file [:process-jail :allow-read-write])))
+        (expect (contains? listed (paths/abbreviate-home (str root "/src"))))
+        (expect (not (contains? listed (paths/abbreviate-home (str root "/answer.txt"))))))))
   (it
     "never gives a child more than its parent: the parent's deny rules survive a wide grant"
     (let [root

@@ -54,7 +54,7 @@
                               opts)))))
 
 (defn publish
-  "Publish a Council entry. Choose individual pings, all, or none.
+  "Publish a Council entry. Give `ping=[session_id, ...]` or `ping=\"all\"`. For no ping, omit `ping`.
 
    `title` is optional for a new thread. With `thread_id` or `reply_to`, Council ignores `title`.
    Validation and idempotency checks use the request without this field. The existing thread title

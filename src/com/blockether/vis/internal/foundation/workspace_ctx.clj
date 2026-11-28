@@ -21,8 +21,9 @@
 (defn- project-filesystem-roots
   "Merge registrations and access facts into ONE list of filesystem roots. A process
    read-only grant of `policy` is in the list with `\"mode\" \"read\"`, so is a root that a
-   subagent write grant left readable only. Only facts that differ from the default
-   (read/write, searched) are written."
+   subagent write grant left readable only. A file that a subagent write grant names is
+   not a root: `session[\"access\"]` gives it as a write rule. Only facts that differ from
+   the default (read/write, searched) are written."
   [root filesystem-roots project-paths policy]
   (let [mappings
         (sort-by (comp count :root) > filesystem-roots)
@@ -52,12 +53,18 @@
         (fn [entry]
           (and (false? (:jail-enabled policy)) (nil? (.getParent (io/file (:root entry))))))
 
-        catalog
-        (remove #(or (host-root? %) (= root (:root %)) (contains? registered (:root %)))
-          filesystem-roots)
-
         jail
         (:process-jail policy)
+
+        ;; A literal write rule opens one path. Only a directory is a place to work in.
+        granted-file?
+        (fn [entry]
+          (and (some #{(:root entry)} (:write-rules jail))
+               (not (.isDirectory (io/file (:root entry))))))
+
+        catalog
+        (remove #(or (host-root? %) (granted-file? %) (= root (:root %)) (contains? registered (:root %)))
+          filesystem-roots)
 
         listed
         (into (conj registered root) (map :root) catalog)

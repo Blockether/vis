@@ -120,6 +120,30 @@ def _routes(steps):
     return routes
 
 
+def _answer(turn):
+    """The answer of one turn; a long answer also says how to read all of it."""
+    held = turn["answer"]
+    shown = _one_line(held, 480)
+    chars = turn.get("answer_chars") or len(held)
+    following = turn.get("answer_next_offset")
+    if following is None and len(shown) == len(" ".join(held.split())):
+        return ["Answer: " + shown]
+    lines = [f"Answer ({chars} chars, clipped): {shown}"]
+    if following is None and len(held) == chars:
+        lines.append("Whole answer: ['turn']['answer'] on this result.")
+    elif chars <= 65536:
+        lines.append(
+            f"Whole answer: read again with offset=0, limit={chars}; "
+            "then use ['turn']['answer']."
+        )
+    elif following is not None:
+        lines.append(
+            f"This result holds {len(held)} chars in ['turn']['answer']. "
+            f"Next page: offset={following}, limit=65536."
+        )
+    return lines
+
+
 def _turn_detail(turn):
     lines = [f"Turn {turn['position']}: {turn.get('outcome') or turn.get('status')}"]
     if turn.get("user_request"):
@@ -131,9 +155,7 @@ def _turn_detail(turn):
         lines.append(f"Request: Council, {len(entries)} {noun}")
         lines.extend("Request: " + _council_row(entry) for entry in entries[:4])
     if turn.get("answer"):
-        lines.append("Answer: " + _one_line(turn["answer"], 480))
-        if turn.get("answer_next_offset") is not None:
-            lines.append(f"Next answer offset: {turn['answer_next_offset']}")
+        lines.extend(_answer(turn))
     steps = turn.get("iterations", [])
     step_lines = [
         f"i{step['position']} {step.get('status')} ({step['block_count']} blocks)"
@@ -254,6 +276,8 @@ def _session(result):
     title = _one_line(session.get("title") or "untitled", 82)
     turn = result.get("turn")
     scope = f"turn {turn['position']}" if turn and view == "index" else view
+    if result.get("selected_turn") is not None:
+        scope += f", turn {result['selected_turn']}"
     lines = [f"read_session {ident} ({scope}): {title}"]
     current = result.get("current_turn") or {}
     if current.get("status"):

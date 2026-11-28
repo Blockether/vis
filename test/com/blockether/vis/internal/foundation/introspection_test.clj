@@ -139,6 +139,10 @@
             (expect (= 22 (get turn "answer_chars")))
             (expect (= 21 (get turn "answer_next_offset")))
             (expect (= 1 (get-in turn ["iterations" 0 "block_count"])))
+            ;; A view of one turn names that turn; the index gives it in `turn`.
+            (expect (= 1 (get (:result (introspection/read-session env {"view" "events" "turn" 1}))
+                              "selected_turn")))
+            (expect (not (contains? data "selected_turn")))
             ;; A false selector is an error, not the index.
             (expect (= "turn must be a positive integer."
                        (get (:result (introspection/read-session env {"turn" false})) "error"))))

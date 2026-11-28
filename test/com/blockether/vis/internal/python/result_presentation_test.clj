@@ -169,6 +169,7 @@
                                                                          "stdout" "Code: GLASS-713\n"
                                                                          "stdout_chars" 16
                                                                          "stdout_next_offset" nil}]}]}]}})
+          selected (show {"view" "events" "selected_turn" 2 "coverage" {"is_complete" true} "events" []})
           turn (show {"view" "index"
                       "turn" {"position" 2 "status" "done" "request_kind" "council"
                               "council" {"entry_id" 11 "author_session_id" "peer" "content" "Begin."}
@@ -181,8 +182,29 @@
       (expect (str/includes? block "t2/i3/b1 py3 ok; stdout 16 chars\nCode: GLASS-713"))
       (expect (str/includes? turn "Request: Council #11 from peer: \"Begin.\""))
       (expect (str/includes? turn "Route: selected openai/demo-large, actual anthropic/demo-mini (fallback)"))
+      ;; Paid bench for #520: the model read the events of one turn a second time, because
+      ;; the print did not name the turn.
+      (expect (str/includes? selected "read_session demo (events, turn 2): Fixture"))
       (doseq [out [usage events block turn]]
         (expect (< (count out) 400)))))
+  (it
+    "tells how to read all of an answer that the print clips"
+    ;; Paid bench for #520: three children parsed the print and paged by offset to find a
+    ;; value in the middle of a 17,080-character answer.
+    (let [show (fn [turn]
+                 (check-result {"op" "read_session" "session_id" "demo" "view" "index"
+                                "session" {"id" "demo" "title" "Fixture"}
+                                "turn" (merge {"position" 1 "status" "done"} turn)}
+                               "print(r)"))
+          long-answer (str/join " " (repeat 400 "row"))
+          page (show {"answer" (subs long-answer 0 1000) "answer_chars" 1599 "answer_next_offset" 1000})
+          whole (show {"answer" long-answer "answer_chars" 1599 "answer_next_offset" nil})
+          short (show {"answer" "Approved." "answer_chars" 9 "answer_next_offset" nil})]
+      (expect (str/includes? page "Answer (1599 chars, clipped): row row"))
+      (expect (str/includes? page "Whole answer: read again with offset=0, limit=1599; then use ['turn']['answer']."))
+      (expect (str/includes? whole "Whole answer: ['turn']['answer'] on this result."))
+      (expect (str/includes? short "Answer: Approved.\n"))
+      (expect (not (str/includes? short "Whole answer")))))
   (it "reports missing sessions and leaves unfamiliar result shapes unchanged"
       (expect (str/includes? (check-result {"op" "read_session" "session" nil "transcript" nil}
                                            "print(r)")
