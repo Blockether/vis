@@ -388,3 +388,20 @@ export function voiceProgressLabel(progress: VoiceProgress | null): string {
       return 'Transcribing…';
   }
 }
+
+/** The percent of the phase that `voiceProgressLabel` names, or null when that phase has none. */
+export function voiceProgressPercent(progress: VoiceProgress | null): number | null {
+  if (!progress) return null;
+  const percent = Math.max(0, Math.min(100, Math.round(progress.progress || 0)));
+  switch (progress.phase) {
+    case 'uploading':
+    case 'transcribing':
+      return percent;
+    case 'preparing':
+      return percent > 0 ? percent : null;
+    case 'done':
+      return 100;
+    default:
+      return null;
+  }
+}

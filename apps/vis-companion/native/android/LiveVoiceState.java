@@ -29,15 +29,30 @@ final class LiveVoiceState {
         final String state;
         final boolean muted;
         final String task;
+        /** The label of a transcription phase, from the composer. */
+        final String detail;
+        /** The percent of a transcription phase, or -1 when the phase is not measured. */
+        final int progress;
 
-        Display(String state, boolean muted, String task) {
-            if (!java.util.Arrays.asList("connecting", "listening", "speaking", "muted", "waiting", "recording")
-                    .contains(state)
-                    || (task != null && !java.util.Arrays.asList("running", "queued", "cancelling").contains(task)))
+        Display(String state, boolean muted, String task) { this(state, muted, task, null, -1); }
+
+        private Display(String state, boolean muted, String task, String detail, int progress) {
+            if (!java.util.Arrays.asList("connecting", "listening", "speaking", "muted", "waiting", "recording",
+                    "transcribing").contains(state)
+                    || (task != null && !java.util.Arrays.asList("running", "queued", "cancelling").contains(task))
+                    || progress < -1 || progress > 100
+                    || (detail != null && detail.length() > 80))
                 throw new IllegalArgumentException("Invalid voice status.");
             this.state = state;
             this.muted = muted;
             this.task = task;
+            this.detail = detail;
+            this.progress = progress;
+        }
+
+        /** The transcription of a stopped dictation. It has no control. */
+        static Display transcribing(String detail, Integer progress) {
+            return new Display("transcribing", false, null, detail, progress == null ? -1 : progress);
         }
 
         String title() {
@@ -47,12 +62,14 @@ final class LiveVoiceState {
                 case "muted": return "Microphone muted";
                 case "waiting": return "Needs your answer";
                 case "recording": return "Recording";
+                case "transcribing": return "Transcribing";
                 default: return "Connecting";
             }
         }
 
         String text() {
             if (state.equals("recording")) return "Dictation";
+            if (state.equals("transcribing")) return detail != null ? detail : "Your words go to the message";
             if (state.equals("waiting")) return "Open Vis to answer";
             if (state.equals("muted")) return "Vis cannot hear you";
             if ("running".equals(task)) return "Voice session, task running";
@@ -65,6 +82,7 @@ final class LiveVoiceState {
         String[] controls() {
             if (state.equals("connecting")) return new String[] {"end"};
             if (state.equals("recording")) return new String[] {"stop_recording"};
+            if (state.equals("transcribing")) return new String[0];
             return new String[] {muted ? "unmute" : "mute", "stop_speech", "end"};
         }
 

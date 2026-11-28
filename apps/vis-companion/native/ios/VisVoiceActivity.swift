@@ -33,23 +33,37 @@ struct VisVoiceAttributes: ActivityAttributes {
     var task: String?
     /// False when unmute needs a new microphone start, which needs the open app.
     var resumable: Bool
+    /// The percent of a transcription phase, or nil when the phase is not measured.
+    var progress: Int?
+    /// The label of a transcription phase, from the composer.
+    var note: String?
 
-    init?(state: String?, muted: Bool, speaking: Bool, task: String?, resumable: Bool) {
+    init?(
+      state: String?, muted: Bool, speaking: Bool, task: String?, resumable: Bool,
+      progress: Int? = nil, note: String? = nil
+    ) {
       guard let state,
-        ["connecting", "listening", "speaking", "muted", "waiting", "recording", "transcribing"]
-          .contains(state),
-        task == nil || ["running", "queued", "cancelling"].contains(task)
+        [
+          "connecting", "listening", "speaking", "muted", "waiting", "recording", "transcribing",
+          "transcribed",
+        ]
+        .contains(state),
+        task == nil || ["running", "queued", "cancelling"].contains(task),
+        progress.map({ (0...100).contains($0) }) ?? true,
+        (note?.count ?? 0) <= 80
       else { return nil }
       self.state = state
       self.muted = muted
       self.speaking = speaking
       self.task = task
       self.resumable = resumable
+      self.progress = progress
+      self.note = note
     }
 
     var connecting: Bool { state == "connecting" }
     /// A dictation in the composer, not a voice session.
-    var dictation: Bool { state == "recording" || state == "transcribing" }
+    var dictation: Bool { ["recording", "transcribing", "transcribed"].contains(state) }
 
     var title: String {
       switch state {
@@ -59,13 +73,15 @@ struct VisVoiceAttributes: ActivityAttributes {
       case "waiting": return "Needs your answer"
       case "recording": return "Recording"
       case "transcribing": return "Transcribing"
+      case "transcribed": return "Transcribed"
       default: return "Connecting"
       }
     }
 
     var detail: String? {
       if state == "recording" { return "Stop puts your words in the message" }
-      if state == "transcribing" { return "Your words go to the message" }
+      if state == "transcribing" { return note ?? "Your words go to the message" }
+      if state == "transcribed" { return "Your words are in the message" }
       if state == "waiting" { return "Open Vis to answer" }
       if state == "muted" { return resumable ? "Vis cannot hear you" : "Open Vis to unmute" }
       switch task {
@@ -84,6 +100,7 @@ struct VisVoiceAttributes: ActivityAttributes {
       case "waiting": return "exclamationmark.bubble.fill"
       case "recording": return "record.circle"
       case "transcribing": return "text.bubble.fill"
+      case "transcribed": return "checkmark.circle.fill"
       default: return "ellipsis"
       }
     }

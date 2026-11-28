@@ -32,8 +32,13 @@ export type NativeVoicePlayed = {
 };
 export type NativeVoiceFailure = { sessionId: string; message: string };
 export type NativeVoiceControl = { sessionId: string; control: string };
-/** The phase of a web dictation. Idle removes it from the lock screen and the notice. */
-export type NativeDictationState = 'recording' | 'transcribing' | 'idle';
+/**
+ * The phase of a web dictation. Idle removes it from the lock screen and the notice. Transcribed
+ * confirms a shown dictation, and the native side removes it after a few seconds.
+ */
+export type NativeDictationState = 'recording' | 'transcribing' | 'transcribed' | 'idle';
+/** A transcription in progress: the composer's own label and a percent, or null when unmeasured. */
+export type NativeDictationProgress = { detail: string; progress: number | null };
 
 /** Generations reject stale calls. PCM is mono signed 16-bit little-endian, encoded as base64. */
 export interface NativeLiveVoicePlugin {
@@ -57,7 +62,7 @@ export interface NativeLiveVoicePlugin {
   /** Display only. The lock screen and the voice notice show this state. */
   setStatus(options: { sessionId: string } & LiveVoiceStatus): Promise<void>;
   /** Display only. The lock screen and the notice show a dictation and its Stop control. */
-  setDictation(options: { state: NativeDictationState }): Promise<void>;
+  setDictation(options: { state: NativeDictationState } & Partial<NativeDictationProgress>): Promise<void>;
   addListener(
     event: 'capture',
     listener: (frame: NativeVoiceCapture) => void,

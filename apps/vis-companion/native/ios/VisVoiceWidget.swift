@@ -30,6 +30,7 @@ struct VisVoiceLiveActivity: Widget {
             }
           }
         }
+        TranscriptionProgress(state: context.state)
         VoiceControls(state: context.state)
       }
       .foregroundStyle(.white)
@@ -52,7 +53,10 @@ struct VisVoiceLiveActivity: Widget {
             }
           }
         }
-        DynamicIslandExpandedRegion(.bottom) { VoiceControls(state: context.state) }
+        DynamicIslandExpandedRegion(.bottom) {
+          TranscriptionProgress(state: context.state)
+          VoiceControls(state: context.state)
+        }
       } compactLeading: {
         VoiceIcon(state: context.state)
       } compactTrailing: {
@@ -73,6 +77,17 @@ private struct VoiceIcon: View {
     Image(systemName: state.symbol)
       .foregroundStyle(state.muted ? Color.gray : voiceAccent)
       .accessibilityLabel(state.title)
+  }
+}
+
+/// The bar of a measured transcription phase.
+private struct TranscriptionProgress: View {
+  let state: VisVoiceAttributes.ContentState
+
+  var body: some View {
+    if state.state == "transcribing", let progress = state.progress {
+      ProgressView(value: Double(progress), total: 100).tint(voiceAccent)
+    }
   }
 }
 

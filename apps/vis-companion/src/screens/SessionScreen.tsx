@@ -218,6 +218,7 @@ import type {
 import {
   startWavRecording,
   voiceProgressLabel,
+  voiceProgressPercent,
   type WavRecording,
 } from '../lib/voice';
 import { showDictation } from '../lib/dictation-notice';
@@ -2958,10 +2959,15 @@ export function SessionScreen({
     });
   }, []);
 
+  // True after a transcription put words in the composer. The lock screen (iOS) and the
+  // notice (Android) then say "Transcribed" until the next transcription starts.
+  const [voiceTranscribed, setVoiceTranscribed] = useState(false);
+
   // Turn captured audio into composer text. Kept apart from the mic button
   // because the button is no longer the only thing that ends a recording.
   const transcribeVoice = useCallback(
     async (wav: Blob, options: { isOutboxRetry?: boolean } = {}) => {
+      setVoiceTranscribed(false);
       // Durable BEFORE a new request, never only after it fails: iOS tears the
       // webview down mid-flight (reclaim, crash, reload) and audio that lives in
       // this closure alone dies with it. A retry uses the row already there;
@@ -2982,6 +2988,7 @@ export function SessionScreen({
         // silently is what makes the button feel dead.
         if (text) {
           setPrompt((current) => `${current.trimEnd()}${current.trim() ? ' ' : ''}${text}`);
+          setVoiceTranscribed(true);
           // Show the TAIL of the dictation, not its opening line.
           revealComposerEnd();
         } else {
@@ -3051,11 +3058,21 @@ export function SessionScreen({
     finishVoiceRef.current = finishVoice;
   });
 
-  // The lock screen (iOS) and the notice (Android) show a dictation. Their Stop finishes it.
+  // The lock screen (iOS) and the notice (Android) show a dictation, the progress of its
+  // transcription and its outcome. Their Stop finishes the dictation.
   const [dictationOwner] = useState(() => ({}));
   useEffect(() => {
-    showDictation(dictationOwner, voicePhase, () => void finishVoiceRef.current());
-  }, [dictationOwner, voicePhase]);
+    if (voicePhase === 'transcribing') {
+      showDictation(dictationOwner, voicePhase, undefined, {
+        detail: voiceProgressLabel(voiceProgress),
+        progress: voiceProgressPercent(voiceProgress),
+      });
+    } else if (voicePhase === 'idle' && voiceTranscribed) {
+      showDictation(dictationOwner, 'transcribed');
+    } else {
+      showDictation(dictationOwner, voicePhase, () => void finishVoiceRef.current());
+    }
+  }, [dictationOwner, voicePhase, voiceProgress, voiceTranscribed]);
   useEffect(() => () => showDictation(dictationOwner, 'idle'), [dictationOwner]);
 
   // iOS background dictation requires both audio background mode and a play-and-record

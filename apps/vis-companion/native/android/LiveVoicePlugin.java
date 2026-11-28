@@ -179,7 +179,9 @@ public class LiveVoicePlugin extends Plugin {
 
     /**
      * Display of a web dictation. The web view records, and this service keeps its microphone
-     * behind a locked screen. A transcription needs no microphone, so it ends the notice.
+     * behind a locked screen. The service stays while the recording uploads and transcribes, and
+     * its notice shows the progress. Transcribed ends the service and shows the outcome briefly.
+     * A transcription and its outcome only update a shown dictation, so an outbox retry shows none.
      */
     @PluginMethod
     public synchronized void setDictation(PluginCall call) {
@@ -194,7 +196,19 @@ public class LiveVoicePlugin extends Plugin {
                 dictating = true;
                 call.resolve();
             } catch (Exception error) { call.reject(error.getMessage()); }
-        } else if ("transcribing".equals(next) || "idle".equals(next)) {
+        } else if ("transcribing".equals(next)) {
+            try {
+                if (dictating) LiveVoiceService.show(getContext(), LiveVoiceState.Display.transcribing(
+                        call.getString("detail"), call.getInt("progress")));
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        } else if ("transcribed".equals(next)) {
+            if (dictating) {
+                endDictation();
+                LiveVoiceService.transcribed(getContext());
+            }
+            call.resolve();
+        } else if ("idle".equals(next)) {
             endDictation();
             call.resolve();
         } else {

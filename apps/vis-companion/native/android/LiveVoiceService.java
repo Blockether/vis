@@ -26,6 +26,7 @@ public class LiveVoiceService extends Service {
     private static final String MICROPHONE = "microphone";
     private static final String CONTROL = "live-voice.control.";
     private static final int ID = 7701;
+    private static final int OUTCOME_ID = 7702;
     // The class lock guards these. Never call the plugin while it is held.
     private static Controls controls;
     private static LiveVoiceState.Display display = LiveVoiceState.Display.CONNECTING;
@@ -56,6 +57,25 @@ public class LiveVoiceService extends Service {
         if (shown) context.getSystemService(NotificationManager.class).notify(ID, notice(context));
     }
 
+    /**
+     * Says that a dictation's words are in the message. A plain notice, not the service's, so it
+     * stays after the service stops and goes away by itself.
+     */
+    static void transcribed(Context context) {
+        Notification.Builder notice = new Notification.Builder(context, CHANNEL)
+                .setSmallIcon(context.getApplicationInfo().icon)
+                .setContentTitle("Transcribed")
+                .setContentText("Your words are in the message")
+                .setOnlyAlertOnce(true)
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setTimeoutAfter(4000);
+        Intent open = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        if (open != null)
+            notice.setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE));
+        context.getSystemService(NotificationManager.class).notify(OUTCOME_ID, notice.build());
+    }
+
     private static Notification notice(Context context) {
         Notification.Builder notice = new Notification.Builder(context, CHANNEL)
                 .setSmallIcon(context.getApplicationInfo().icon)
@@ -68,6 +88,8 @@ public class LiveVoiceService extends Service {
                 // The text has no transcript and no session name, so a locked screen can show it.
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setOngoing(true);
+        if (display.state.equals("transcribing"))
+            notice.setProgress(100, Math.max(display.progress, 0), display.progress < 0);
         Intent open = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (open != null)
             notice.setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE));

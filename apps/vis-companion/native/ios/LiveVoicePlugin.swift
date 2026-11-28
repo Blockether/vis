@@ -644,12 +644,13 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
     }
   }
 
-  /// Shows a web dictation on the lock screen. Display only. A transcription only
-  /// updates a shown dictation, so an outbox retry does not start an activity.
+  /// Shows a web dictation on the lock screen. Display only. A transcription and its
+  /// outcome only update a shown dictation, so an outbox retry does not start an activity.
+  /// Transcribed shows the outcome for a few seconds, then removes the activity.
   @objc public func setDictation(_ call: CAPPluginCall) {
     command(call) {
       guard let state = call.getString("state"),
-        ["recording", "transcribing", "idle"].contains(state)
+        ["recording", "transcribing", "transcribed", "idle"].contains(state)
       else { throw LiveVoiceState.Failure.invalid }
       if state == "transcribing" { self.holdDictationTime() }
       if state == "idle" || self.sessionId != nil {
@@ -657,13 +658,19 @@ public final class LiveVoicePlugin: CAPPlugin, CAPBridgedPlugin {
       } else if #available(iOS 17.0, *),
         state == "recording" || self.dictation != nil,
         let status = VisVoiceAttributes.ContentState(
-          state: state, muted: false, speaking: false, task: nil, resumable: false)
+          state: state, muted: false, speaking: false, task: nil, resumable: false,
+          progress: call.getInt("progress"), note: call.getString("detail"))
       {
         let activity = self.dictation as? VoiceActivity ?? VoiceActivity()
-        self.dictation = activity
-        activity.show(status)
+        if state == "transcribed" {
+          self.dictation = nil
+          activity.finish(status)
+        } else {
+          self.dictation = activity
+          activity.show(status)
+        }
       }
-      if state == "idle" { self.releaseDictationTime() }
+      if state == "idle" || state == "transcribed" { self.releaseDictationTime() }
       self.routeControls()
       call.resolve()
     }
@@ -762,6 +769,7 @@ private final class VoiceActivity {
   private var activity: Activity<VisVoiceAttributes>?
   private var pending: Task<Void, Never>?
   private let startedAt = Date()
+  private var outcomeTime = UIBackgroundTaskIdentifier.invalid
 
   /// iOS starts an activity only for a foreground app. A refused start tries again
   /// at the next state.
@@ -787,6 +795,32 @@ private final class VoiceActivity {
       await previous?.value
       await activity.end(nil, dismissalPolicy: .immediate)
     }
+  }
+
+  /// Shows a last state for a few seconds, then ends. The background task lets a
+  /// locked phone remove it on time.
+  func finish(_ state: VisVoiceAttributes.ContentState) {
+    guard let activity else { return }
+    self.activity = nil
+    let content = ActivityContent(state: state, staleDate: nil)
+    releaseOutcomeTime()
+    outcomeTime = UIApplication.shared.beginBackgroundTask(withName: "vis-dictation-outcome") {
+      [weak self] in self?.releaseOutcomeTime()
+    }
+    let previous = pending
+    pending = Task { @MainActor [self] in
+      await previous?.value
+      await activity.update(content)
+      try? await Task.sleep(nanoseconds: 3_000_000_000)
+      await activity.end(content, dismissalPolicy: .immediate)
+      releaseOutcomeTime()
+    }
+  }
+
+  private func releaseOutcomeTime() {
+    guard outcomeTime != .invalid else { return }
+    UIApplication.shared.endBackgroundTask(outcomeTime)
+    outcomeTime = .invalid
   }
 
   static func endAll() {

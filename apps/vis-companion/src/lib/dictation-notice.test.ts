@@ -35,6 +35,23 @@ describe('dictation notice', () => {
     ]);
   });
 
+  it('shows the transcription progress and keeps the confirmation after idle', () => {
+    const h = harness();
+    const screen = {};
+    h.show(screen, 'recording', vi.fn());
+    h.show(screen, 'transcribing', undefined, { detail: 'Sending recording · 40%', progress: 40 });
+    h.show(screen, 'transcribing', undefined, { detail: 'Sending recording · 40%', progress: 40 });
+    h.show(screen, 'transcribing', undefined, { detail: 'Transcribing · 90%', progress: 90 });
+    h.show(screen, 'transcribed');
+    h.show(screen, 'idle');
+    expect(h.bridge.setDictation.mock.calls).toEqual([
+      [{ state: 'recording' }],
+      [{ state: 'transcribing', detail: 'Sending recording · 40%', progress: 40 }],
+      [{ state: 'transcribing', detail: 'Transcribing · 90%', progress: 90 }],
+      [{ state: 'transcribed' }],
+    ]);
+  });
+
   it('keeps the dictation of one screen when another screen is idle', () => {
     const h = harness();
     const stop = vi.fn();
