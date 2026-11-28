@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -21,7 +22,9 @@ from blockether.vis.evals.grade import (
     verifier_failures,
 )
 from blockether.vis.evals.harbor import read_tasks
-from compare import comparison, trials
+from blockether.vis.evals.task_evidence import capture
+from blockether.vis.evals.task_forms import writes_file
+from compare import comparison, handoff_sources, trials
 from harbor.models.agent.context import AgentContext
 
 
@@ -31,9 +34,9 @@ def load(path):
 
 def check_dataset(checkout, tmp):
     tasks = [task for task in read_tasks(TASKS) if task.name.startswith("introspection-")]
-    assert len(tasks) == 9
+    assert len(tasks) == 11
     cp = source_classpath("clojure", checkout)
-    with ThreadPoolExecutor(max_workers=3) as workers:
+    with ThreadPoolExecutor(max_workers=1) as workers:
         list(workers.map(lambda task: check_task(task, cp, tmp), tasks))
 
 
@@ -48,7 +51,7 @@ def check_task(task, cp, tmp):
     assert not check_problems(checks)
     assert not structured_failures(checks, work, json.dumps(expected), [])
     assert structured_failures(checks, work, '{"wrong":true}', [])
-    if kind != "resume":
+    if kind not in {"resume", "handoff"}:
         # Allow selected saved facts, plus the entire documented fallback if needed.
         diagnostics = work / "diagnostics"
         fallback = diagnostics / ("vis.log" if kind == "log" else f"{SID}.ndjson")
@@ -94,7 +97,7 @@ def check_task(task, cp, tmp):
                 line = next(line for line in (work / "diagnostics/vis.log").read_text().splitlines()
                             if SID in line and " turn=2 " in line)
                 actual = {"reason": re.search(r"reason=(\w+)$", line)[1]}
-        root = tmp / kind
+        root = tmp / task.name
         root.mkdir()
         env = dict(os.environ, VIS_BENCH_CHECK_SEED="1", VIS_BENCH_DB=str(root / "vis.mdb"),
                    VIS_HOME=str(root / "home"),
@@ -107,11 +110,119 @@ def check_task(task, cp, tmp):
             raise AssertionError(proc.stderr)
         if proc.stdout.strip():
             projected = json.loads(proc.stdout.strip().splitlines()[-1])
-            assert projected == expected, (task.name, projected, expected)
-            if actual is None:
-                actual = projected
+            if kind == "handoff":
+                assert projected["early_has_value"] and not projected["later_has_value"]
+                assert projected["later_tokens"] >= 6000, projected
+                check_handoff(tests, root)
+                actual = expected
+                print(f'  Handoff: {projected["later_tokens"]} later tokens (Svar/gpt-4o)')
+            else:
+                assert projected == expected, (task.name, projected, expected)
+                if actual is None:
+                    actual = projected
     assert actual == expected, (task.name, actual, expected)
     print(f"PASS {task.name}")
+
+
+def check_handoff(tests, root):
+    verifier = tests / "verify.py"
+    output = root / "transfer.txt"
+    value = "VIOLET-9231-ORBIT"
+    output.write_text(value)
+    child = SimpleNamespace(session_id=SID, tool_calls=[SimpleNamespace(
+        error=None, code='Path("transfer.txt").write_text(value)')])
+    trajectory = SimpleNamespace(subagent_trajectories=[child])
+    host = {"children": {"a1": SID}, "events": [
+        {"type": f"task.{event}", "task": {"id": "t1", "kind": "subagent", "state": state}}
+        for event, state in (("started", "running"), ("ended", "done"))]}
+    host.update(child_tasks={SID: {"task": "Write the approved value.", "title": "Write transfer",
+                                  "files": {"write": [str(output)]}}}, leader_messages=[])
+    trajectory.steps = []
+    child.steps = [SimpleNamespace(source="user", message="Write the approved value.")]
+    evidence = SimpleNamespace(trajectory=trajectory, host_evidence=host, workspace=root, forms=[])
+    assert not verifier_failures(verifier, evidence)
+    code = '''p = Path(session["workspace"]["filesystem_roots"][0]["cwd"]).expanduser()
+p.write_text(value)'''
+    assert not writes_file(code, "transfer.txt")
+    child.tool_calls[0].code = code
+    assert not verifier_failures(verifier, evidence)
+    del host["child_tasks"][SID]["files"]["write"]
+    assert verifier_failures(verifier, evidence) == ["The child must write transfer.txt."]
+    host["child_tasks"][SID]["files"]["write"] = [str(output)]
+    host["children"]["a2"] = "another-child"
+    assert verifier_failures(verifier, evidence)
+    del host["children"]["a2"]
+    output.write_text("wrong")
+    assert verifier_failures(verifier, evidence)
+    output.write_text(value)
+    evidence.forms = [f'Path("transfer.txt").write_text("{value}")']
+    assert verifier_failures(verifier, evidence)
+    raw_child = {"session_id": SID, "steps": [{"source": "user", "message": value}]}
+    assert handoff_sources({"subagent_trajectories": [raw_child]}, {}, True) == ["task-text"]
+    raw_child["steps"][0]["message"] = "Write the value."
+    assert handoff_sources({"subagent_trajectories": [raw_child]}, {}, True) == ["inherited-prefix-or-unobserved"]
+    host["questions"] = [{"session_id": SID, "entry_id": 1, "state": "replied"}]
+    host["replies"] = [{"reply_to": 1, "content": value}]
+    assert handoff_sources({"subagent_trajectories": [raw_child]}, host, True) == ["council.ask"]
+    if tests.parent.name == "introspection-handoff-pull":
+        evidence.forms = []
+        check_pull(verifier, evidence, host, child, value)
+
+
+def check_pull(verifier, evidence, host, child, value):
+    host.update(questions=[], replies=[])
+    assert not verifier_failures(verifier, evidence)
+    task = host["child_tasks"][SID]
+    for field in ("task", "title"):
+        prior = task[field]
+        task[field] = "Violet / 9231 / Orbit"
+        assert verifier_failures(verifier, evidence) == ["The task or title must not give the child the transfer value."]
+        task[field] = prior
+    prior = child.steps[0].message
+    child.steps[0].message = value
+    assert verifier_failures(verifier, evidence)
+    child.steps[0].message = prior
+    q = {"session_id": SID, "entry_id": 2, "state": "replied", "created_at_ms": 20}
+    reply = {"entry_id": 3, "reply_to": 2, "content": value, "created_at_ms": 30, "title": ""}
+    host.update(questions=[q], replies=[reply], leader_messages=[reply])
+    assert not verifier_failures(verifier, evidence)
+    host["leader_messages"].append({"entry_id": 1, "content": value, "created_at_ms": 19})
+    assert verifier_failures(verifier, evidence) == ["The leader must not give the transfer value in a Council note."]
+    host["leader_messages"].pop()
+    step = SimpleNamespace(source="agent", message=value, finished_at_ms=25,
+                           tool_calls=[SimpleNamespace(started_at_ms=15)])
+    evidence.trajectory.steps = [step]
+    assert verifier_failures(verifier, evidence) == ["The leader must not state the transfer value before the child asks."]
+    step.tool_calls[0].started_at_ms = 22
+    assert not verifier_failures(verifier, evidence)
+    reply["title"] = value
+    assert verifier_failures(verifier, evidence) == ["The leader must not give the transfer value in a Council note."]
+
+
+def check_host_capture(tmp):
+    database = tmp / "handoff-evidence.db"
+    with sqlite3.connect(database) as db:
+        db.executescript("""
+            CREATE TABLE session_agent (ordinal, session_id, parent_id, team_id, task, title, files);
+            CREATE TABLE council_entry (id, group_id, author_sid, content, title, created_at, reply_required, reply_to);
+            CREATE TABLE council_ping (entry_id, recipient_sid, state, reply_entry_id);
+            CREATE TABLE extension_aggregate (session_soul_id, extension_id, kind, index_data);
+            INSERT INTO session_agent VALUES (1, 'child', 'leader', 'team', 'Write the value.', 'Transfer', '{}');
+            INSERT INTO council_entry VALUES (1, 'team', 'leader', 'Delegate', 'Task', 10, 0, NULL);
+            INSERT INTO council_entry VALUES (2, 'team', 'child', 'What value?', NULL, 20, 1, NULL);
+            INSERT INTO council_entry VALUES (3, 'team', 'leader', 'Reply', NULL, 30, 0, 2);
+            INSERT INTO council_entry VALUES (4, 'team', 'another-author', 'Other', NULL, 40, 0, NULL);
+            INSERT INTO council_ping VALUES (2, 'leader', 'replied', 3);
+        """)
+        for table, column in [("session_agent", "parent_id"), ("council_entry", "author_sid"),
+                              ("council_ping", "recipient_sid")]:
+            db.execute(f"UPDATE {table} SET {column} = ? WHERE {column} = 'leader'", (SID,))
+    host = capture(SID, tmp, database, include_handoff=True)
+    assert host["questions"][0]["created_at_ms"] == 20 and host["replies"][0]["created_at_ms"] == 30
+    assert [m["entry_id"] for m in host["leader_messages"]] == [1, 3]
+    assert host["child_tasks"]["child"]["title"] == "Transfer"
+    assert "leader_messages" not in capture(SID, tmp, database)
+    print("PASS host capture: question times and Council entries from the measured leader")
 
 
 def write_json(path, value):
@@ -120,7 +231,7 @@ def write_json(path, value):
 
 
 def check_comparison(tmp):
-    for side, inp in [("baseline", 1800), ("candidate", 1400)]:
+    for side, inp in [("baseline", 1800), ("candidate", 1400), ("work", 1200)]:
         folder = tmp / side / "trial"
         write_json(folder / "result.json", {"trial_name": "trial", "task_name": "introspection-test",
                    "verifier_result": {"rewards": {"reward": 1}}})
@@ -134,20 +245,74 @@ def check_comparison(tmp):
             }
         code = ('await read_session("id"); Path("diagnostics/id.ndjson").read_text()'
                 if side == "baseline" else 'await read_session("id")')
-        write_json(folder / "agent/trajectory.json", trajectory(inp, code, [trajectory(250, 'await council.get(1)')]))
+        write_json(folder / "verifier/grade.json", {"provider_calls": inp // 200})
+        document = trajectory(inp, code, [trajectory(250, 'await council.get(1)')])
+        call = document["steps"][0]["tool_calls"][0]
+        call["extra"] = {"stdout_chars": 12, "activity": {"rows": [{"id": "1", "operation": "ls"}]}}
+        write_json(folder / "agent/trajectory.json", document)
         write_json(folder / "agent/prompt-accounting.json", {"requests": [{"projection": "prepared_request",
                    "input": inp, "parts": {"Vis core system prompt": 1250 if side == "baseline" else 1000}}],
                     "children": [{"handoff": {"source": "svar-estimate", "projection": "inherited-prefix",
                                                "model": "same-model", "tokens": 800 if side == "baseline" else 300}}]})
-    row = comparison(trials(tmp / "baseline"), trials(tmp / "candidate"))["introspection-test"]
-    assert row["correct"] == [1, 1]
+    row = comparison(*(trials(tmp / arm) for arm in ("baseline", "candidate", "work")))["introspection-test"]
+    assert row["correct"] == [1, 1, 1] and row["pass_rate"] == [1, 1, 1]
     delta = row["correct_trials_only"]
     assert delta["input_team"]["delta"] == -400 and delta["input_children"]["baseline_median"] == 250
     assert delta["estimated:Vis core system prompt"]["delta"] == -250
     assert delta["journal_read_blocks"]["delta"] == -1 and delta["council.get"]["candidate_median"] == 1
     assert delta["handoff_estimated_input_children"]["delta"] == -500
     assert delta["handoff_estimate_count"]["candidate_median"] == 1
-    print("PASS comparator: fixture team tokens, prompt accounting and fallback deltas")
+    assert delta["provider_calls"] == {"baseline_median": 9, "candidate_median": 7,
+                                       "work_median": 6, "delta": -2, "observed_n": [1, 1, 1]}
+    assert delta["read_session"]["work_median"] == 1
+    assert delta["uncached_input_leader"]["work_median"] == 1100
+    assert delta["tool_stdout_chars"]["work_median"] == 12
+    capped = tmp / "baseline/trial"
+    result = load(capped / "result.json")
+    result["verifier_result"]["rewards"]["reward"] = 0
+    write_json(capped / "result.json", result)
+    write_json(capped / "verifier/grade.json", {"provider_calls": 9, "converged": True, "errors": 0,
+                                               "guards": {"structured": True, "total_output": False}})
+    row = comparison(trials(tmp / "baseline"), trials(tmp / "candidate"))["introspection-test"]
+    assert row["correct"] == [0, 1] and row["correct_without_output_cap"] == [1, 0]
+    check_pull_comparison(tmp)
+    print("PASS comparator: fixture team tokens, prompt accounting and handoff paths")
+
+
+def check_pull_comparison(tmp):
+    for arm in ("prefix", "read", "ask"):
+        folder = tmp / arm / "pull-trial"
+        write_json(folder / "result.json", {"trial_name": arm, "task_name": "introspection-handoff-pull",
+                   "verifier_result": {"rewards": {"reward": 1}}})
+        metrics = {"total_prompt_tokens": 100, "total_cached_tokens": 40, "total_completion_tokens": 5}
+        def block(code):
+            return {"tool_calls": [{"function_name": "py3", "arguments": {"code": code}}]}
+        steps = []
+        if arm == "read":
+            steps = [block(f'parent = "{SID}"'), block(
+                f'await read_session(parent)\nawait read_session(target="vis_session_id#{SID}")\n'
+                'await read_session("other")\nawait read_session()')]
+        elif arm == "ask":
+            steps = [block('await council.ask("What value?")')]
+        write_json(folder / "agent/trajectory.json", {"session_id": SID,
+                   "final_metrics": metrics, "subagent_trajectories": [
+                       {"session_id": "child", "steps": steps, "final_metrics": metrics}]})
+        host = {"child_tasks": {"child": {"task": "Write the value.", "title": "Transfer"}}}
+        if arm == "ask":
+            host["questions"] = [{"session_id": "child", "entry_id": 2, "state": "replied", "created_at_ms": 15},
+                                 {"session_id": "other", "entry_id": 4, "state": "pending", "created_at_ms": 0}]
+            host["replies"] = [{"reply_to": 2, "content": "VIOLET-9231-ORBIT", "created_at_ms": 30}]
+            trace = [{"event": "trace-chunk", "payload": {"phase": "provider-call", "iteration": i,
+                       "started-at-ms": t}} for i, t in [(1, 10), (2, 20), (2, 21), (3, 25), (4, 35)]]
+            (folder / "agent/trace.jsonl").write_text("".join(json.dumps(row) + "\n" for row in trace))
+        write_json(folder / "agent/task-evidence.json", host)
+    row = comparison(*(trials(tmp / arm) for arm in ("prefix", "read", "ask")))["introspection-handoff-pull"]
+    assert row["handoff_sources"] == [{"inherited-prefix-or-unobserved": 1}, {"child-read-parent": 1}, {"council.ask": 1}]
+    paths = [arm[0] for arm in row["handoff_trials"]]
+    assert [r["handoff_child_parent_reads"] for r in paths] == [0, 2, 0]
+    assert [r["handoff_child_questions"] for r in paths] == [0, 0, 1]
+    assert [r["handoff_leader_question_requests"] for r in paths] == [0, 0, 2]
+    assert [r["cached_input_team"] for r in paths] == [80, 80, 80]
 
 
 def check_runner(checkout, tmp):
@@ -176,6 +341,21 @@ path.write_text(json.dumps({{'schema_version':'ATIF-v1.8', 'session_id':{SID!r},
     agent = InspectionAgent(logs, model_name="openai/smoke", command=shlex.join([sys.executable, str(stub)]))
     agent.workspace = workspace
     agent.kind = "block"
+    agent.auth_home = None
+    auth = tmp / "auth"
+    auth.mkdir()
+    sign_in = auth / "smoke-auth.json"
+    sign_in.touch()
+    agent.kind = "handoff"
+    agent.auth_home = auth
+    home = tmp / "oauth-runtime/home"
+    values = agent.process_env("fixture", home.parent)
+    assert values["VIS_HOME"] == str(home)
+    assert values["VIS_HARBOR_SESSION_ID"] == SID
+    assert (home / sign_in.name).is_symlink() and (home / sign_in.name).resolve() == sign_in.resolve()
+    assert "api_key" not in load(home / "config.yml")["providers"][0]
+    agent.kind = "block"
+    agent.auth_home = None
     agent.fixture_cp = source_classpath("clojure", checkout)
 
     async def exec_command(command, env):
@@ -206,4 +386,5 @@ if __name__ == "__main__":
         tmp = Path(scratch)
         check_dataset(args.checkout.resolve(), tmp)
         check_comparison(tmp)
+        check_host_capture(tmp)
         check_runner(args.checkout.resolve(), tmp)

@@ -214,6 +214,7 @@ class VisAgent(BaseAgent):
     """
 
     capabilities = AgentCapabilities(atif=True)
+    include_handoff_evidence = False
     options_model = VisOptions
 
     def __init__(self, logs_dir: Path, model_name: str | None = None, **kwargs) -> None:
@@ -412,7 +413,12 @@ class VisAgent(BaseAgent):
             return
         home = Path(self._setting("VIS_HOME") or "~/.vis").expanduser()
         try:
-            evidence = capture(session_id, home, runtime / "vis.mdb" / "vis.db")
+            evidence = capture(
+                session_id,
+                home,
+                runtime / "vis.mdb" / "vis.db",
+                include_handoff=self.include_handoff_evidence,
+            )
             (self.logs_dir / TASK_EVIDENCE_FILE).write_text(json.dumps(evidence) + "\n")
         except (OSError, sqlite3.Error) as failure:
             self.logger.warning("Cannot collect Task evidence: %s", failure)

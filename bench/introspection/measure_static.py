@@ -58,7 +58,9 @@ def main():
     checkout = args.checkout.resolve(strict=True)
     cp = source_classpath("clojure", checkout)
     render = runpy.run_path(str(checkout / "resources/vis-host-python/vis_results.py"))["_result_repr"]
-    tasks = sorted(path.parent for path in TASKS.glob("introspection-*/task.toml"))
+    # The recall case measures a live continuation, not a default session read.
+    tasks = sorted(path.parent for path in TASKS.glob("introspection-*/task.toml")
+                   if path.parent.name != "introspection-handoff-recall")
     with tempfile.TemporaryDirectory(prefix="vis-introspection-static-") as tmp:
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             cases = dict(pool.map(lambda task: run_fixture(task, Path(tmp), cp, render), tasks))

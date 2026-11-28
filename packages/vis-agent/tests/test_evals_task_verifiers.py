@@ -27,6 +27,7 @@ def _council_trial(
     child,
     *,
     same_iteration=False,
+    after_launch=None,
     launch_operation="council.run",
     answer="done",
     **host,
@@ -39,6 +40,8 @@ def _council_trial(
         if same_iteration
         else ([atif.step(1, leader), atif.step(2, launch)])
     )
+    if after_launch is not None:
+        steps.append(atif.step(3, after_launch))
     document = atif.trajectory(*steps, answer=answer)
     document["subagent_trajectories"] = [child]
     return atif.trial(
@@ -76,6 +79,9 @@ def _council_trial(
         ("join-path", True),
         ("value-twice", True),
         ("bang-answer", True),
+        ("answer-evidence", True),
+        ("completed-record", True),
+        ("two-children", False),
         ("blank-line-after", True),
         ("leader-answered-live", False),
     ],
@@ -91,7 +97,11 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
     )
     child = atif.trajectory(
         atif.step(1, write),
-        answer="Written!" if case == "bang-answer" else "written",
+        answer={
+            "bang-answer": "Written!",
+            "answer-evidence": "Written. File verified.",
+            "completed-record": f"Written. File holds {live}.",
+        }.get(case, "written"),
         session_id="child",
     )
     child["steps"][0]["message"] = (
@@ -114,6 +124,12 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
         else ("task = 'Write the value into answer.txt'")
     )
     marker = decoy.replace("STALE-", "STALE- ") if case == "spaced-print" else decoy
+    call = None
+    if case == "completed-record":
+        call = atif.block(
+            "t1/i3/f1", "print(record)", stdout=child["steps"][-1]["message"]
+        )
+        call["tool_call"]["extra"].update(started_at_ms=6000, finished_at_ms=6500)
     trial = _council_trial(
         atif.block(
             "t1/i1/f1",
@@ -126,6 +142,7 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
         ),
         child,
         same_iteration=case == "same-iteration",
+        after_launch=call,
         launch_operation="vis.council.run"
         if case == "noncanonical-launch"
         else "council.run",
@@ -133,6 +150,10 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
         if case == "leader-answered-live"
         else "done",
     )
+    if case == "completed-record":
+        trial.host_evidence["events"][-1]["task"]["ended_at"] = 5500
+    if case == "two-children":
+        trial.host_evidence["children"]["a2"] = "other"
     result = grade.grade_trial(
         {"verify": str(E2E / "subagent-task-isolation/tests/verify.py")},
         tmp_path,
@@ -145,8 +166,11 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
     "case, problem",
     [
         ("valid", None),
-        ("no-ask", "Expected one successful council.ask call."),
-        ("noncanonical-ask", "Expected one successful council.ask call."),
+        ("no-ask", "Expected one child question with a reply."),
+        ("publish-only", "Expected one council.ask in the child run."),
+        ("noncanonical-ask", None),
+        ("no-activity", None),
+        ("answer-evidence", None),
         ("no-reply", "The leader must reply to the child's question with the code."),
         ("early-write", "The child must write code.txt after the reply."),
         ("early-reply", "The leader must reply after the child asks."),
@@ -156,6 +180,7 @@ def test_task_isolation_checks_saved_child_and_its_own_value(tmp_path, case, pas
         ("copied-file", None),
         ("same-iteration", None),
         ("one-block", None),
+        ("one-block-early-write", "The child must write code.txt after the reply."),
         ("leaked-task", "The leader must not give the code before the child asks."),
         ("leaked-upper", "The leader must not give the code before the child asks."),
         ("bang-answer", None),
@@ -172,16 +197,26 @@ def test_ask_parent_requires_question_and_reply_before_the_child_write(
     mtime = 30 if case == "copied-file" else 5
     os.utime(output, (mtime, mtime))
     operation = "vis.council.ask" if case == "noncanonical-ask" else "council.ask"
-    ask = atif.block("t1/i1/f1", activity=atif.receipt(atif.row("ask", operation)))
+    ask = atif.block(
+        "t1/i1/f1",
+        "await council.publish('Code?', reply_required=True)"
+        if case == "publish-only"
+        else "code = await council.ask('Code?')",
+        activity=None
+        if case in {"no-activity", "publish-only"}
+        else atif.receipt(atif.row("ask", operation)),
+    )
     ask["tool_call"]["extra"].update(started_at_ms=4000, finished_at_ms=4500)
     write = atif.block("t1/i2/f1", "Path('code.txt').write_text(code)")
     write["tool_call"]["extra"].update(started_at_ms=4600, finished_at_ms=5500)
     steps = [atif.step(2, write)]
-    if case == "one-block":
+    if case in {"one-block", "one-block-early-write"}:
         # The natural form: the child awaits the reply and writes it in the same block.
         both = atif.block(
             "t1/i1/f1",
-            "code = await council.ask('Code?')\nPath('code.txt').write_text(code)",
+            "Path('code.txt').write_text(code)\ncode = await council.ask('Code?')"
+            if case == "one-block-early-write"
+            else "code = await council.ask('Code?')\nPath('code.txt').write_text(code)",
             activity=atif.receipt(atif.row("ask", operation)),
         )
         both["tool_call"]["extra"].update(started_at_ms=4000, finished_at_ms=5500)
@@ -190,7 +225,11 @@ def test_ask_parent_requires_question_and_reply_before_the_child_write(
         steps.insert(0, atif.step(1, ask))
     child = atif.trajectory(
         *steps,
-        answer={"no-done": "I wrote it", "bang-answer": "Done!"}.get(case, "done"),
+        answer={
+            "no-done": "I wrote it",
+            "bang-answer": "Done!",
+            "answer-evidence": "Done. File verified.",
+        }.get(case, "done"),
         session_id="child",
     )
     if case in {"leaked-task", "leaked-upper"}:
@@ -210,7 +249,9 @@ def test_ask_parent_requires_question_and_reply_before_the_child_write(
         atif.block("t1/i1/f1", leader_form, stdout=marker),
         child,
         same_iteration=case == "same-iteration",
-        questions=[
+        questions=[]
+        if case == "no-ask"
+        else [
             {
                 "session_id": "child",
                 "entry_id": 1,

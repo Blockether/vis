@@ -50,8 +50,20 @@ def write_fallback(workspace, home, kind):
         (base / "vis.log").write_bytes(source.read_bytes())
 
 
+def link_sign_in(home, auth_home):
+    """Link the provider sign-in files into the trial home; a token refresh writes the target."""
+    for source in auth_home.glob("*-auth.json*"):
+        target = home / source.name
+        if not target.is_symlink():
+            target.symlink_to(source)
+
+
 class InspectionAgent(VisAgent):
     """Seed once before the first measured model call and capture its accounting."""
+
+    @property
+    def include_handoff_evidence(self):
+        return self.kind == "handoff"
 
     def vis_arguments(self):
         return [*super().vis_arguments(), "--toggles", "introspection=true,council=true,subagents=true"]
@@ -60,11 +72,17 @@ class InspectionAgent(VisAgent):
         values = super().process_env(instruction, runtime, **kwargs)
         home = runtime / "home"
         values.update(VIS_HOME=str(home), VIS_BENCH_KIND=self.kind)
+        if self.kind == "handoff" and "VIS_HARBOR_SESSION_ID" not in values:
+            values["VIS_HARBOR_SESSION_ID"] = SID
         write_fallback(self.workspace, home, self.kind)
         # Config holds an environment reference, never a credential value.
         home.mkdir(parents=True, exist_ok=True)
-        config = {"providers": [{"id": self.provider, "api_key": "${VIS_BENCH_API_KEY}",
-                                 "models": [self.model]}]}
+        provider = {"id": self.provider, "models": [self.model]}
+        if self.auth_home is None:
+            provider["api_key"] = "${VIS_BENCH_API_KEY}"
+        else:
+            link_sign_in(home, self.auth_home)
+        config = {"providers": [provider]}
         (home / "config.yml").write_text(json.dumps(config) + "\n", encoding="utf-8")
         return values
 
@@ -73,8 +91,10 @@ class InspectionAgent(VisAgent):
         task = environment.environment_dir.parent / "tests" / "fixture.json"
         self.kind = json.loads(task.read_text(encoding="utf-8"))["kind"]
         self.workspace = environment.workspace
-        if not os.environ.get("VIS_BENCH_API_KEY"):
-            raise ValueError("Set VIS_BENCH_API_KEY for the paid trial route")
+        auth_home = os.environ.get("VIS_BENCH_AUTH_HOME")
+        self.auth_home = Path(auth_home).expanduser().resolve(strict=True) if auth_home else None
+        if self.auth_home is None and not os.environ.get("VIS_BENCH_API_KEY"):
+            raise ValueError("Set VIS_BENCH_API_KEY or VIS_BENCH_AUTH_HOME for the paid trial route")
         source = Path(os.environ["VIS_BENCH_SOURCE"]).resolve(strict=True)
         self.fixture_cp = source_classpath(self.clojure, source)
 
@@ -101,7 +121,8 @@ class InspectionAgent(VisAgent):
         db_dir = runtime / "vis.mdb"
         if sid is None:
             return
-        evidence = capture(sid, runtime / "home", db_dir / "vis.db")
+        evidence = capture(sid, runtime / "home", db_dir / "vis.db",
+                           include_handoff=self.include_handoff_evidence)
         (self.logs_dir / FILE).write_text(json.dumps(evidence) + "\n", encoding="utf-8")
         # The collector sees only the just-finished trial's DB; never copy it.
         command = shlex.split(self.harness_command("accounting.clj"))

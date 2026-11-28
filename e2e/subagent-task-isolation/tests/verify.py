@@ -1,9 +1,22 @@
 """Check first-attempt task completion without using the stale value."""
 
 import re
+from datetime import datetime
 
 from blockether.vis.evals.task_evidence import tasks
 from blockether.vis.evals.task_forms import writes_file
+
+
+def _finished_record(step, block, child, ended_at, live):
+    """Accept the child's own completed report, not a separate print of its value."""
+    end = block.finished_at_ms
+    if end is None and step.timestamp:
+        end = round(datetime.fromisoformat(step.timestamp).timestamp() * 1000)
+    lines = [line for line in block.stdout.splitlines() if live in line]
+    report = (child.final_answer or "").splitlines()
+    return type(ended_at) is int and end is not None and ended_at <= end and all(
+        line in report for line in lines
+    )
 
 
 def verify(evidence):
@@ -29,9 +42,16 @@ def verify(evidence):
     task = str(next((step.message for step in child.steps if step.source == "user"), ""))
     # The task can name the value more than one time.
     live = sorted(set(re.findall(r"\bLIVE-([0-9a-f]{32})\b", task)))
-    shown = [block.stdout for block in run.tool_calls] + [evidence.answer]
-    if len(live) == 1 and live != decoys and any(live[0] in text for text in shown):
-        return ["The leader must not print the live value."]
+    if len(live) == 1 and live != decoys:
+        value = live[0]
+        early_print = any(
+            value in block.stdout and not _finished_record(
+                step, block, child, attempts[0][1].get("ended_at"), value
+            )
+            for step in run.agent_steps for block in step.tool_calls
+        )
+        if early_print or value in (run.user_message or "") or value in evidence.answer:
+            return ["The leader must not print the live value."]
     output = evidence.workspace / "answer.txt"
     child_wrote = any(
         not block.error and writes_file(block.code, "answer.txt")
@@ -44,8 +64,8 @@ def verify(evidence):
         or not child_wrote
         or not output.is_file()
         or output.read_text().split() != [f"LIVE-{live[0]}"]
-        or not child.final_answer
-        or child.final_answer.strip().lower().rstrip(".!") != "written"
+        or not re.match(r"\s*written\b", child.final_answer or "", re.I)
+        or decoys[0] in child.final_answer.lower()
     ):
         return ["The child did not write the live value from its task and report success."]
     return []

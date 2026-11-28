@@ -1,7 +1,10 @@
 (ns seed
   (:require [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.foundation.introspection :as inspect]
+            [com.blockether.vis.internal.loop.transcript :as transcript]
             [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.persistance.core :as ps]
             [com.blockether.vis.internal.persistance.sqlite.core :as sql]
             [taoensso.nippy :as nippy]))
@@ -76,6 +79,27 @@
              :tool_calls (when (< i 3) (nippy/freeze [{:src "print('verification generated')"
                                                        :tool-name "py3" :stdout body :success? true}]))}))))
 
+(defn- seed-handoff! [db root]
+  (row! db :workspace {:id ws :repo_id "benchmark" :root root :created_at now})
+  (row! db :session_soul {:id sid :created_at now :claimed_at now})
+  (row! db :session_state {:id st :session_soul_id sid :workspace_id ws
+                            :title "Release ledger" :version 0 :created_at now})
+  (doseq [n (range 1 25)
+          :let [turn (ident 1 n) run (ident 2 n) created (+ now (* n 10000))
+                request (if (= n 1) "Which transfer value did the release board approve?"
+                          (str "Summarize inventory batch " n ". Keep the rows in their original order."))
+                answer (if (= n 1) "The release board approved the transfer value: VIOLET-9231-ORBIT."
+                         (str/join "\n" (for [i (range 24)]
+                                            (format "Inventory batch %d row %d: sealed container, inspection complete, no change." n i))))]]
+    (row! db :session_turn_soul {:id turn :session_state_id st :position n
+                                 :created_at created :user_request request})
+    (row! db :session_turn_state {:id run :session_turn_soul_id turn :version 0 :status "done"
+                                  :prior_outcome "complete" :iteration_count 1
+                                  :content_json (wire/json-str [(content/prose (str "bench-answer-" n) answer)])
+                                  :created_at created})
+    (row! db :session_turn_iteration {:id (ident 3 n) :session_turn_state_id run :position 1
+                                      :status "done" :code "" :created_at created :finished_at (+ created 100)})))
+
 (defn- answer [db kind]
   (let [env {:db-info db :session-id sid}
         initial (#'inspect/foundation-inspect-data env sid)
@@ -118,9 +142,20 @@
       kind (System/getenv "VIS_BENCH_KIND")
       db (ps/db-create-connection! database)]
   (try
-    (do (seed! db root kind)
+    (do (if (= kind "handoff") (seed-handoff! db root) (seed! db root kind))
         (when (System/getenv "VIS_BENCH_CHECK_SEED")
-          (when-let [proof (answer db kind)]
+          (when-let [proof (if (= kind "handoff")
+                             (let [trailer (transcript/prior-turn-trailer {:db-info db :session-id sid} nil 25 [])
+                                   early (get-in (some #(when (= "t1/closing" (first %)) %) trailer)
+                                                 [1 :turn/messages 0 :content] "")
+                                   later (str/join "\n" (for [[_ entry] trailer
+                                                               :when (> (:turn/position entry 0) 1)
+                                                               msg (:turn/messages entry)]
+                                                           (:content msg)))]
+                               {:early_has_value (str/includes? early "VIOLET-9231-ORBIT")
+                                :later_has_value (str/includes? later "VIOLET-9231-ORBIT")
+                                :later_tokens (svar/count-tokens "gpt-4o" later)})
+                             (answer db kind))]
             (println (wire/json-str (wire/->wire proof))))))
     (finally (ps/db-dispose-connection! db))))
 (shutdown-agents)

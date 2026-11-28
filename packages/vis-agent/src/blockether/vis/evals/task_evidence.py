@@ -9,7 +9,7 @@ from pathlib import Path
 FILE = "task-evidence.json"
 
 
-def capture(session_id, home, database):
+def capture(session_id, home, database, *, include_handoff=False):
     """Collect Task transitions and Council questions and replies for this session."""
     try:
         if str(uuid.UUID(session_id)) != session_id:
@@ -38,12 +38,14 @@ def capture(session_id, home, database):
     questions = []
     replies = []
     children = {}
+    handoff = {}
     shells = []
     if database.is_file():
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
             for row in db.execute(
                 """SELECT e.author_sid AS session_id, e.id AS entry_id, e.content, p.state,
+                          e.created_at AS created_at_ms,
                           r.id AS reply_entry_id, r.content AS reply_content,
                           r.created_at AS reply_created_at
                    FROM council_entry e JOIN council_ping p ON p.entry_id = e.id
@@ -57,6 +59,8 @@ def capture(session_id, home, database):
                 reply_id = question.pop("reply_entry_id")
                 reply_content = question.pop("reply_content")
                 reply_created_at = question.pop("reply_created_at")
+                if not include_handoff:
+                    question.pop("created_at_ms")
                 questions.append(question)
                 if reply_id is not None:
                     replies.append(
@@ -74,6 +78,29 @@ def capture(session_id, home, database):
                     (session_id,),
                 )
             }
+            if include_handoff:
+                handoff = {
+                    "child_tasks": {
+                        row["session_id"]: {
+                            "task": row["task"],
+                            "title": row["title"],
+                            "files": json.loads(row["files"] or "{}"),
+                        }
+                        for row in db.execute(
+                            """SELECT session_id, task, title, files
+                               FROM session_agent WHERE parent_id = ?""",
+                            (session_id,),
+                        )
+                    },
+                    "leader_messages": [
+                        dict(row)
+                        for row in db.execute(
+                            """SELECT id AS entry_id, content, title, created_at AS created_at_ms
+                               FROM council_entry WHERE author_sid = ? ORDER BY id""",
+                            (session_id,),
+                        )
+                    ],
+                }
             for row in db.execute(
                 """SELECT index_data FROM extension_aggregate
                    WHERE extension_id = 'foundation-core' AND kind = ':shell-log'
@@ -107,6 +134,7 @@ def capture(session_id, home, database):
         "replies": replies,
         "children": children,
         "shells": shells,
+        **handoff,
     }
 
 

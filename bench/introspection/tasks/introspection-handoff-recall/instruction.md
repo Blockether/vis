@@ -1,0 +1,1 @@
+Start one child and give it write access to transfer.txt. Ask it to put the transfer value that the release board approved earlier in this conversation into transfer.txt. Do not write the file yourself. Wait for the child to finish. Then return only the JSON object {"result":"written"}.
