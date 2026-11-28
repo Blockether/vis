@@ -7,6 +7,8 @@
             [com.blockether.vis.internal.config.toggles :as toggles]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.transcript :as loop-transcript]
             [com.blockether.vis.internal.extension.core :as extension]
             [com.blockether.vis.internal.python.env :as env-python]
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
@@ -102,9 +104,138 @@
                 all (:result (introspection/list-sessions env))
                 page (:result (introspection/list-sessions env {"limit" 2}))
                 next-page (:result (introspection/list-sessions
-                                     env {"limit" 2 "cursor" (str (get (peek page) "id"))}))]
+                                     env {"limit" 2 "cursor" (str (get (peek page) "id"))}))
+                invalid (try (introspection/list-sessions env {"cursor" "missing"})
+                             (catch clojure.lang.ExceptionInfo e (ex-message e)))]
             (expect (= 2 (count page)))
-            (expect (= all (into page next-page))))
+            (expect (= all (into page next-page)))
+            (expect (and (string? invalid) (str/includes? invalid "cursor"))))
+          (finally (persistance/db-dispose-connection! db))))))
+
+(def ^:private session-read-fixture
+  (json/read-json (slurp (io/resource "vis-contract/fixtures/session-read.json"))))
+
+(defdescribe session-turn-drill-down-test
+  (it "finds the saved answer and lists the steps of one turn"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Release review"})
+                tid (persistance/db-store-session-turn!
+                      db {:parent-session-id sid :user-request "Check the release." :status :running})
+                _ (h/store-iteration! db {:session-turn-id tid :code "print('check')"
+                                          :forms [{:src "print('check')" :stdout "check"}]})
+                _ (persistance/db-update-session-turn!
+                    db tid {:status :done :content [{"type" "prose" "markdown" "Approved after review."}]})
+                env {:db-info db :session-id sid}
+                index (:result (introspection/read-session env))
+                data (:result (introspection/read-session env {"turn" 1 "offset" 9 "limit" 12}))
+                turn (get data "turn")
+                whole (get (:result (introspection/read-session env {"turn" 1})) "turn")
+                expected (get session-read-fixture "turn")]
+            (expect (= (get expected "answer") (get-in index ["turns" 0 "answer_preview"])))
+            (expect (= expected (select-keys whole (keys expected))))
+            (expect (= "Check the release." (get turn "user_request")))
+            (expect (= "after review" (get turn "answer")))
+            (expect (= 22 (get turn "answer_chars")))
+            (expect (= 21 (get turn "answer_next_offset")))
+            (expect (= 1 (get-in turn ["iterations" 0 "block_count"])))
+            ;; A false selector is an error, not the index.
+            (expect (= "turn must be a positive integer."
+                       (get (:result (introspection/read-session env {"turn" false})) "error"))))
+          (finally (persistance/db-dispose-connection! db)))))
+  (it "reads a large block in one call and reports that no slice remains"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Large output"})
+                tid (persistance/db-store-session-turn!
+                      db {:parent-session-id sid :user-request "Read output" :status :running})
+                stdout (str (.repeat "x" 7005102) "last line")
+                _ (h/store-iteration! db {:session-turn-id tid :code "print(text)"
+                                          :forms [{:src "print(text)" :stdout stdout}]})
+                read-block (fn [options]
+                             (get-in (:result (introspection/read-session {:db-info db} sid options))
+                                     ["transcript" "turns" 0 "iterations" 0 "blocks" 0]))
+                scope {"view" "blocks" "turn" 1 "iteration" 1 "block" 1}
+                first-slice (read-block scope)
+                whole (read-block (assoc scope "limit" (count stdout)))
+                bindings (extension/builtin-sandbox-bindings (constantly {:session-id sid :db-info db}))]
+            (tpc/with-own [ctx bindings nil {:session-id sid}]
+              (let [result (env-python/run-python-block
+                             ctx
+                             (str "r = await read_session(view='blocks', turn=1, iteration=1, block=1, limit=7005111)\n"
+                                  "b = r['transcript']['turns'][0]['iterations'][0]['blocks'][0]\n"
+                                  "assert b['stdout_next_offset'] is None\n"
+                                  "print(len(b['stdout']), b['stdout'][-9:])"))]
+                (expect (nil? (:error result)))
+                (expect (= "7005111 last line\n" (:stdout result)))))
+            (expect (= (count stdout) (get first-slice "stdout_chars")))
+            (expect (= (count stdout) (count (get whole "stdout"))))
+            (expect (str/ends-with? (get whole "stdout") "last line"))
+            (let [expected (get session-read-fixture "stdout")]
+              (expect (= expected (select-keys whole (keys expected))))))
+          (finally (persistance/db-dispose-connection! db))))))
+
+(defdescribe replayed-stdout-address-test
+  (it "recovers the full output of the second replayed block in one read"
+      (let [body (.repeat "saved output " 10000)
+            forms [{:scope "t2/i3/f1" :svar/tool-call-id "one" :stdout "First"}
+                   {:scope "t2/i3/f2" :svar/tool-call-id "two" :stdout body}]
+            calls [{:id "one"} {:id "two"}]
+            message (with-redefs [toggles/enabled? #(= "introspection" %)]
+                      (#'loop-transcript/iteration-results-message
+                        {:forms-vec forms :tool-calls calls :llm-model "glm-5.3"}))
+            replayed (get-in message [:content 1 :content])]
+        (expect (str/includes? replayed (str "turn=2, iteration=3, block=2, limit=" (count body)))))))
+
+(defdescribe session-scoped-views-test
+  (it "shows the verdict of a child verifier in either leader view"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Release review"})
+                tid (persistance/db-store-session-turn!
+                      db {:parent-session-id sid :user-request "Check the release." :status :running})
+                child (str (h/fork-session-at-turn!
+                             db sid {:through-turn-id tid
+                                     :agent {:parent_id (str sid) :leader_id (str sid) :team_id (str tid)
+                                             :task "Check the release" :title "Check release"
+                                             :role "verify" :iteration_budget 4 :spawn_key (str tid)
+                                             :spawn_fingerprint "fixture" :checkpoint []}}))
+                _ (persistance/db-agent-update! db child {:status "completed" :outcome "failed"
+                                                          :result "The checks failed."})
+                env {:db-info db :session-id sid}
+                expected (assoc (get session-read-fixture "child") "session_id" child)
+                bindings (extension/builtin-sandbox-bindings (constantly env))]
+            (doseq [view ["index" "council"]]
+              (expect (= [expected] (get (:result (introspection/read-session env {"view" view}))
+                                         "children"))))
+            (tpc/with-own [ctx bindings nil {:session-id sid}]
+              (let [printed (env-python/run-python-block ctx "print(await read_session(view='council'))")]
+                (expect (nil? (:error printed)))
+                (expect (str/includes? (:stdout printed) "a1 verify: completed (failed)")))))
+          (finally (persistance/db-dispose-connection! db)))))
+  (it "does not return other turns or silently ignore a selector"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Release review"})
+                ids (mapv (fn [n]
+                            (let [tid (persistance/db-store-session-turn!
+                                        db {:parent-session-id sid :user-request (str "Check " n)
+                                            :status :running})]
+                              (h/store-iteration! db {:session-turn-id tid :code "print('check')"
+                                                     :forms [{:src "print('check')" :error "Check failed"}]})
+                              (persistance/db-update-session-turn! db tid {:status :done})
+                              tid))
+                          [1 2])
+                read-view (fn [view & [opts]]
+                            (:result (introspection/read-session {:db-info db} sid
+                                       (merge {"view" view "turn" 2} opts))))]
+            (expect (= [2] (mapv #(get % "position") (get-in (read-view "usage") ["usage" "turns"]))))
+            (expect (= [(str (last ids))] (mapv #(str (get % "turn_id"))
+                                           (get-in (read-view "diagnosis") ["diagnosis" "failures"]))))
+            (expect (= [2] (mapv #(get % "position") (get-in (read-view "full") ["transcript" "turns"]))))
+            (expect (str/includes? (get (read-view "events" {"iteration" 1}) "error") "iteration"))
+            (expect (not (contains? (get-in (read-view "blocks" {"iteration" 1})
+                                            ["transcript" "turns" 0]) "tokens"))))
           (finally (persistance/db-dispose-connection! db))))))
 
 (defdescribe session-event-window-test
@@ -138,7 +269,9 @@
                           "cancel_reason" "user" "detached" true "started_at" 40
                           "turn" 1 "iteration" 2}
                          (first (get data "events"))))
-              (expect (empty? (get other "events")))))
+              (expect (empty? (get other "events")))
+              (let [expected (get session-read-fixture "last_page")]
+                (expect (= expected (select-keys other (keys expected)))))))
           (finally
             (doseq [^java.io.File entry (reverse (file-seq root))] (.delete entry))
             (persistance/db-dispose-connection! db))))))
@@ -348,6 +481,43 @@
   read-session-python-boundary-test
   ;; Regression, td-ba1627: awaiting `read_session()` inside `py3`
   ;; never resolved, so the following shell call was never reached.
+  (it "prints the final answer of turn 2 without the history"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Release review"})
+                _ (persistance/db-store-session-turn!
+                    db {:parent-session-id sid :user-request "Initial review" :status :done})
+                turn (persistance/db-store-session-turn!
+                       db {:parent-session-id sid :user-request "Check the release." :status :running})
+                _ (persistance/db-update-session-turn! db turn
+                    {:status :done :content [{"type" "text" "text" "approved-after-recheck"}]})
+                env {:db-info db :session-id sid}
+                bindings (extension/builtin-sandbox-bindings (constantly env))]
+            (tpc/with-own [ctx bindings nil {:session-id sid}]
+              (let [data (env-python/run-python-block ctx (str "print(await read_session('" sid "', turn=2))"))]
+                (expect (nil? (:error data)))
+                (expect (str/includes? (:stdout data) "Answer: approved-after-recheck"))
+                (expect (< (count (:stdout data)) 1000)))))
+          (finally (persistance/db-dispose-connection! db)))))
+  (it "prints 20 answer previews without printing their full text"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! db {:channel :tui :title "Review history"})
+                text (.repeat "漢字" 100)
+                _ (dotimes [n 20]
+                    (let [turn (persistance/db-store-session-turn!
+                                 db {:parent-session-id sid :user-request (str "Request " n " " text)
+                                     :status :running})]
+                      (persistance/db-update-session-turn! db turn
+                        {:status :done :content [{"type" "prose" "markdown" (str "Answer " n " " text)}]})))
+                bindings (extension/builtin-sandbox-bindings (constantly {:db-info db :session-id sid}))]
+            (tpc/with-own [ctx bindings nil {:session-id sid}]
+              (let [data (env-python/run-python-block ctx "print(await read_session(limit=20))")
+                    stdout (:stdout data)]
+                (expect (nil? (:error data)))
+                (expect (= 20 (count (re-seq #"(?m)^t[0-9]+ .*Request .*Answer " stdout))))
+                (expect (< (alength (.getBytes ^String stdout "UTF-8")) 2500)))))
+          (finally (persistance/db-dispose-connection! db)))))
   (it "settles read_session before running the next host call"
       (let [s (persistance/db-create-connection! :memory)]
         (try (let [sid (h/store-session! s {:channel :tui :title "Await fixture"})
@@ -547,8 +717,7 @@
 
 (defdescribe
   introspection-toggle-gate-test
-  "Session introspection is NOT core policy: symbols AND prompt hang off the
-   `introspection` toggle, which is OFF by default."
+  "Session introspection defaults off, except for parent reads by a subagent."
   (it "keeps the session symbols in foundation-core behind per-symbol activation"
       (let [core-symbols (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))]
         (expect (every? core-symbols introspection/all-symbols))
@@ -557,6 +726,41 @@
           (expect (not-any? #(extension/symbol-active? % {}) introspection/all-symbols)))
         (with-redefs [toggles/enabled? (constantly true)]
           (expect (every? #(extension/symbol-active? % {}) introspection/all-symbols)))))
+  (it "lets a child read only its parent with introspection off"
+      (let [db (persistance/db-create-connection! :memory)]
+        (try
+          (let [parent (h/store-session! db {:channel :tui :title "Parent"})
+                other (h/store-session! db {:channel :tui :title "Unrelated"})
+                turn (persistance/db-store-session-turn!
+                       db {:parent-session-id parent :user-request "Check the plan." :status :done})
+                child (h/fork-session-at-turn!
+                        db parent {:through-turn-id turn
+                                   :agent {:parent_id (str parent) :leader_id (str parent) :team_id (str turn)
+                                           :task "Check" :title "Check" :role "research" :iteration_budget 4
+                                           :spawn_key (str turn) :spawn_fingerprint "fixture" :checkpoint []}})
+                ext [foundation/vis-extension]
+                enabled? toggles/enabled?]
+            (with-redefs [toggles/enabled? #(and (not= "introspection" %) (enabled? %))]
+              (tpc/with-own [ctx {} nil {:session-id child}]
+                (let [env {:db-info db :python-context ctx :extensions (atom ext)}]
+                  (loop-env/sync-extension-symbols-into! ctx (assoc env :session-id parent) ext)
+                  (expect (false? (tpc/ev ctx "'read_session' in globals()")))
+                  (loop-env/sync-extension-symbols-into! ctx (assoc env :session-id child) ext)
+                  (expect (= [true false false]
+                             (tpc/ev ctx "[name in globals() for name in ('read_session', 'get_session', 'list_sessions')]")))
+                  (expect (str/includes? (tpc/ev ctx "str(doc('read_session'))") "parent session ID"))
+                  (let [index (env-python/run-python-block
+                                ctx (format "print((await read_session('%s'))['session_id'])" parent))
+                        selected (env-python/run-python-block
+                                   ctx (format "print((await read_session(target='%s', turn=1))['turn']['user_request'])" parent))
+                        refusals (mapv #(env-python/run-python-block ctx %)
+                                       [(format "await read_session('%s')" other) "await read_session()"])]
+                    (expect (= [(str parent "\n") "Check the plan.\n"]
+                               (mapv #(or (:error %) (:stdout %)) [index selected])))
+                    (expect (every? #(= "With introspection off, read_session requires your parent session ID."
+                                        (get-in % [:error :message]))
+                                    refusals)))))))
+          (finally (persistance/db-dispose-connection! db)))))
   (it "gives a one-shot :cli run the session symbols and prompt when the toggle is on"
       ;; A clipped result tells the model to recover its own stdout with read_session().
       (with-redefs [toggles/enabled? (constantly true)]
@@ -1170,6 +1374,9 @@
       (expect (= "reply" (get iteration "assistant_prose")))
       (expect (= {"code" "print('value')"
                   "stdout" "value\n"
+                   "stdout_chars" 6
+                   "stdout_offset" 0
+                   "stdout_next_offset" nil
                   "duration_ms" 12
                   "svar_tool_call_id" "call-fixture"
                   "vis_tool_name" "py3"
@@ -1462,6 +1669,11 @@
                 (expect (= (mapv #(select-keys % ["entry_id" "author_session_id" "content"]) entries)
                            (mapv #(select-keys % ["entry_id" "author_session_id" "content"])
                                  (get-in view ["council" "entries"])))))
+              ;; The index row of a Council turn shows the attributed input.
+              (let [row (get-in (:result (introspection/read-session env {})) ["turns" 0])]
+                (expect (= "council" (get row "request_kind")))
+                (expect (str/starts-with? (:content council)
+                                          (str/replace (get row "request_preview") #"\.\.\.$" ""))))
               (expect (= council (:council current-diag)))
               (expect (not (contains? current-diag :user-request)))
               (expect (= [:council :council-message] (mapv #(or (:role %) (:kind %)) events)))

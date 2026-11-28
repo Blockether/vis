@@ -62,20 +62,243 @@ def _shell(result):
     return "\n".join(lines)
 
 
+def _one_line(value, limit):
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _quoted(value, limit):
+    """The exact text in quotes, or its start with the full length when it is long."""
+    text = str(value or "")
+    if len(text) <= limit and "\n" not in text:
+        return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return f"{_one_line(text, limit)} ({len(text)} chars)"
+
+
+def _short_preview(value, limit):
+    text = _one_line(value, limit).encode("utf-8", errors="replace")
+    if len(text) <= limit:
+        return text.decode("utf-8")
+    return text[: limit - 3].decode("utf-8", errors="ignore") + "…"
+
+
+def _child_line(child):
+    outcome = child.get("outcome")
+    status = child.get("status", "unknown")
+    state = f"{status} ({outcome})" if outcome else status
+    title = _one_line(child.get("title"), 60)
+    result = _one_line(child.get("result_headline"), 120)
+    text = (
+        f"{child.get('id')} {child.get('role', '')}: {state} {title} {result}".rstrip()
+    )
+    return f"{text} [{child['session_id']}]"
+
+
+def _council_row(entry):
+    turn = f"t{entry['turn']}, " if entry.get("turn") else ""
+    state = f" ({turn}{entry['state']})" if entry.get("state") else ""
+    return (
+        f"Council #{entry.get('entry_id')} from {entry.get('author_session_id')}{state}: "
+        + _quoted(entry.get("content"), 100)
+    )
+
+
+def _routes(steps):
+    routes = []
+    for step in steps:
+        actual = step.get("model")
+        selected = step.get("selected_model")
+        if not actual:
+            continue
+        route = (
+            f"selected {selected}, actual {actual} (fallback)"
+            if selected and selected != actual
+            else actual
+        )
+        if route not in routes:
+            routes.append(route)
+    return routes
+
+
+def _turn_detail(turn):
+    lines = [f"Turn {turn['position']}: {turn.get('outcome') or turn.get('status')}"]
+    if turn.get("user_request"):
+        lines.append("Request: " + _one_line(turn["user_request"], 100))
+    elif turn.get("request_kind") == "council":
+        council = turn.get("council") or {}
+        entries = council.get("entries") or ([council] if council else [])
+        noun = "entry" if len(entries) == 1 else "entries"
+        lines.append(f"Request: Council, {len(entries)} {noun}")
+        lines.extend("Request: " + _council_row(entry) for entry in entries[:4])
+    if turn.get("answer"):
+        lines.append("Answer: " + _one_line(turn["answer"], 480))
+        if turn.get("answer_next_offset") is not None:
+            lines.append(f"Next answer offset: {turn['answer_next_offset']}")
+    steps = turn.get("iterations", [])
+    step_lines = [
+        f"i{step['position']} {step.get('status')} ({step['block_count']} blocks)"
+        + (f": {_one_line(step['error'], 48)}" if step.get("error") else "")
+        for step in steps
+    ]
+    if step_lines:
+        lines.append("Steps: " + _one_line(", ".join(step_lines), 150))
+    routes = _routes(steps)
+    if routes:
+        lines.append("Route: " + _one_line("; ".join(routes), 150))
+    return lines
+
+
+def _tokens(tokens):
+    return (
+        f"input {tokens.get('input', 0)} (cached {tokens.get('cached', 0)}, "
+        f"uncached {tokens.get('uncached', 0)}), output {tokens.get('output', 0)}"
+    )
+
+
+def _route(route):
+    return f"{route.get('provider')}/{route.get('model')}"
+
+
+def _usage(usage):
+    totals = usage.get("totals") or {}
+    lines = [
+        f"Tokens: {_tokens(totals.get('tokens') or {})}; "
+        f"iterations {totals.get('iterations', 0)}; cost ${totals.get('cost_usd', 0):g}"
+    ]
+    routing = usage.get("routing") or {}
+    actual = ", ".join(_route(row) for row in (routing.get("actual") or [])[:3])
+    if actual:
+        lines.append(
+            f"Route: {actual}; fallbacks {routing.get('fallbacks', 0)}, "
+            f"retries {routing.get('retries', 0)}"
+        )
+    lines.extend(
+        f"Fallback: {_route(row['from'])} -> {_route(row['to'])} x{row.get('count', 1)}"
+        for row in (routing.get("transitions") or [])[:3]
+    )
+    if totals.get("tool_errors"):
+        lines.append(
+            f"Tool errors: {totals['tool_errors']} of {totals.get('tool_calls', 0)} calls"
+        )
+    turns = usage.get("turns") or []
+    if len(turns) > 1:
+        lines.extend(
+            f"t{row.get('position')}: {_tokens(row.get('tokens') or {})}"
+            for row in turns[:6]
+        )
+    return lines
+
+
+_EVENT_HIDDEN = ("seq", "type", "ts", "session_id", "turn_id", "started_at", "detached")
+
+
+def _events(result):
+    events = result.get("events") or []
+    coverage = result.get("coverage") or {}
+    state = "complete" if coverage.get("is_complete") else "incomplete"
+    lines = [f"Events: {len(events)}; journal {state}"]
+    for event in events[:12]:
+        facts = " ".join(
+            f"{key}={_one_line(value, 40)}"
+            for key, value in event.items()
+            if key not in _EVENT_HIDDEN
+            and value is not None
+            and not isinstance(value, (dict, list))
+        )
+        lines.append(_one_line(f"{event.get('seq')} {event.get('type')} {facts}", 140))
+    if len(events) > 12:
+        lines.append(f"… {len(events) - 12} more events: ['events'] on this result.")
+    return lines
+
+
+def _blocks(transcript):
+    rows = [
+        (turn, step, block)
+        for turn in transcript.get("turns") or []
+        for step in turn.get("iterations") or []
+        for block in step.get("blocks") or []
+    ]
+    lines = []
+    for turn, step, block in rows[:6]:
+        number = block.get("position", 0) + 1
+        state = "error" if block.get("error") else "ok"
+        chars = block.get("stdout_chars", len(block.get("stdout") or ""))
+        lines.append(
+            f"t{turn.get('position')}/i{step.get('position')}/b{number} "
+            f"{block.get('tool_name') or 'block'} {state}; stdout {chars} chars"
+        )
+        if block.get("error"):
+            lines.append("error: " + _one_line(block["error"], 160))
+        if block.get("stdout"):
+            if len(rows) == 1:
+                lines.append(_bounded(block["stdout"], "the block's ['stdout']", 600))
+            else:
+                lines.append("  " + _one_line(block["stdout"], 80))
+        if block.get("stdout_next_offset") is not None:
+            lines.append(f"Next stdout offset: {block['stdout_next_offset']}")
+    if len(rows) > 6:
+        lines.append(
+            f"… {len(rows) - 6} more blocks; select one with iteration=K, block=B."
+        )
+    return lines
+
+
 def _session(result):
     session = result.get("session") or {}
     ident = result.get("session_id") or session.get("id") or "?"
     view = result.get("view") or "full"
     if not session and not result.get("transcript"):
-        return f"read_session {ident}: not found or unavailable"
-    title = _bounded(session.get("title") or "untitled", "['session']['title']", 160)
-    lines = [f"read_session {ident} ({view}): {title}"]
+        return f"read_session {ident}: not found or unavailable" + (
+            "\n" + "\n".join(_details(result)) if result.get("error") else ""
+        )
+    title = _one_line(session.get("title") or "untitled", 82)
+    turn = result.get("turn")
+    scope = f"turn {turn['position']}" if turn and view == "index" else view
+    lines = [f"read_session {ident} ({scope}): {title}"]
     current = result.get("current_turn") or {}
     if current.get("status"):
         lines.append(f"Current turn: {current['status']}")
+    if turn:
+        lines.extend(_turn_detail(turn))
+    for row in result.get("turns", []):
+        status = _short_preview(row.get("outcome") or row.get("status"), 18)
+        request = _short_preview(
+            row.get("request_preview") or row.get("request_kind"), 36
+        )
+        if row.get("request_kind") == "council" and row.get("request_preview"):
+            request = f"council: {request}"
+        answer = _short_preview(row.get("answer_preview"), 42)
+        lines.append(
+            f"t{row['position']} {status}: {request}"
+            + (f" | {answer}" if answer else "")
+        )
+    if not turn:
+        lines.extend(_child_line(child) for child in result.get("children", []))
+    council = result.get("council") or {}
+    if not turn:
+        lines.extend(
+            _council_row(entry) for entry in (council.get("entries") or [])[:8]
+        )
+    if result.get("usage"):
+        lines.extend(_usage(result["usage"]))
+    if "events" in result:
+        lines.extend(_events(result))
+    if view == "blocks":
+        lines.extend(_blocks(result.get("transcript") or {}))
     diagnosis = result.get("diagnosis") or {}
-    if diagnosis.get("failure_count") or diagnosis.get("hung_turns"):
-        lines.append(f"Failures: {diagnosis.get('failure_count', 0)}")
+    if (
+        view == "diagnosis"
+        or diagnosis.get("failure_count")
+        or diagnosis.get("hung_turns")
+    ):
+        lines.append(
+            f"Failures: {diagnosis.get('failure_count', 0)}; "
+            f"hung turns: {len(diagnosis.get('hung_turns') or [])}"
+        )
+        for row in (diagnosis.get("failures") or [])[:5]:
+            place = f"i{row['iteration']} " if row.get("iteration") else ""
+            kind = f"{row['classification']}: " if row.get("classification") else ""
+            lines.append(_one_line(f"{place}{kind}{row.get('message')}", 160))
     lines.extend(_details(result))
     if result.get("next_offset") is not None:
         lines.append(f"Next offset: {result['next_offset']}")

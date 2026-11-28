@@ -241,7 +241,7 @@
   "Clip `s` to the token ceiling: keep its start and its end around the clip line.
    `marks` are the `[index character]` pairs of the file windows in `s`. A mark in the
    removed middle moves to its own line after the clip line, so no window is lost."
-  [s marks model scope call-id max-output-tokens max-preview-chars]
+  [s marks model scope call-id stdout-chars max-output-tokens max-preview-chars]
   (let [s
         (str/trimr s)
 
@@ -251,27 +251,24 @@
         tokens
         #(long (svar/count-tokens model %))
 
-        addressable?
-        (and (string? scope)
-             (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)
-             (string? call-id)
-             (<= (count call-id) 512)
-             (re-matches #"[A-Za-z0-9_|-]+" call-id))
+        [_ turn iteration block]
+        (when (string? scope)
+          (re-matches #"t([1-9]\d*)/i([1-9]\d*)(?:/f([1-9]\d*))?" scope))
 
         recovery
-        (if addressable?
-          (str "# Recover exact stdout: r = await read_session(view=\"blocks\", turn="
-                (subs scope 1 (str/index-of scope "/"))
-                ", iteration=" (subs scope (+ 2 (str/index-of scope "/"))) "); "
-               "b = next(b for t in r[\"transcript\"][\"turns\"] "
-               "for i in t[\"iterations\"] for b in i[\"blocks\"] "
-               "if b.get(\"scope\") == "
-               (pr-str scope)
-               " and b.get(\"svar_tool_call_id\") == "
-               (pr-str call-id)
-               "); print(b[\"stdout\"]) # next slice: offset=b.get(\"stdout_next_offset\")"
-               " (None at the end), limit<=65536")
-          "# To see more, slice or filter the result in the sandbox and print less.")
+        (cond block
+              (str "# Recover exact stdout: r = await read_session(view=\"blocks\", turn=" turn
+                   ", iteration=" iteration ", block=" block ", limit=" stdout-chars
+                   "); text = r[\"transcript\"][\"turns\"][0][\"iterations\"][0][\"blocks\"][0][\"stdout\"] # "
+                   "Filter text or write it to a file. Do not print it all.")
+              (and turn call-id)
+              (str "# Recover exact stdout: r = await read_session(view=\"blocks\", turn=" turn
+                   ", iteration=" iteration "); b = next(b for b in "
+                   "r[\"transcript\"][\"turns\"][0][\"iterations\"][0][\"blocks\"] "
+                   "if b.get(\"svar_tool_call_id\") == " (pr-str call-id) ") # "
+                   "Read again with block=b[\"position\"]+1 and limit=b[\"stdout_chars\"] for all text. "
+                   "Filter it or write it to a file.")
+              :else "# To see more, slice or filter the result in the sandbox and print less.")
 
         preview
         (fn [kept]
@@ -331,25 +328,25 @@
 (defn- clip-stdout
   "Clip `s` to the token ceiling, but keep its `cat` file windows whole. `cat` has its own
    size limit and names the call that continues the read."
-  [s model scope call-id max-output-tokens max-preview-chars]
+  [s model scope call-id stdout-chars max-output-tokens max-preview-chars]
   (if-let [{:keys [skeleton windows marks]} (split-windows (str/trimr s))]
     (restore-windows
       (if (<= (utf8-length skeleton) (long max-output-tokens))
         skeleton
-        (clip-text skeleton marks model scope call-id max-output-tokens max-preview-chars))
+        (clip-text skeleton marks model scope call-id stdout-chars max-output-tokens max-preview-chars))
       windows)
-    (clip-text s nil model scope call-id max-output-tokens max-preview-chars)))
+    (clip-text s nil model scope call-id stdout-chars max-output-tokens max-preview-chars)))
 
 (defn- stdout-key
   "The cache key of one clip. The text is keyed by its SHA-256, so an equal string
    reloaded from the database hits, and the key holds no source text."
-  [[s model scope call-id max-output-tokens max-preview-chars]]
-  [(util/sha256-hex s) model scope call-id max-output-tokens max-preview-chars])
+  [[s model scope call-id stdout-chars max-output-tokens max-preview-chars]]
+  [(util/sha256-hex s) model scope call-id stdout-chars max-output-tokens max-preview-chars])
 
 (def ^:private cached-stdout
   (util/bounded-memoize
-    (fn [s model scope call-id max-output-tokens max-preview-chars]
-      (let [result (clip-stdout s model scope call-id max-output-tokens max-preview-chars)]
+    (fn [s model scope call-id stdout-chars max-output-tokens max-preview-chars]
+      (let [result (clip-stdout s model scope call-id stdout-chars max-output-tokens max-preview-chars)]
         ;; Most results fit. Keep only this mark, so many fit in the weight limit.
         (if (= result (str/trimr s)) ::fits result)))
     4096
@@ -364,7 +361,7 @@
 (defn clip-to-wire
   "Project stdout for model replay, gateway wire and human display. Keep raw stdout unchanged.
    `form` supplies the serving model, iteration scope and tool-call identity.
-   Normalize live scopes from `tN/iM/fN` to `tN/iM` for saved-block recovery.
+   Use the block number from a live `tN/iK/fB` scope for saved output.
 
    Keep the file windows that `cat` printed whole, up to one full window for each result.
    Clip only the other text.
@@ -383,7 +380,7 @@
          ;; `introspection` toggle is on. Without a scope the hint says to slice instead.
          scope
          (when (and (string? (:scope form)) (toggles/enabled? "introspection"))
-           (str/replace (:scope form) #"/f[1-9]\d*$" ""))
+           (:scope form))
 
          call-id
          (:svar/tool-call-id form)
@@ -398,11 +395,14 @@
            :else (let [result (cached-stdout
                                 s
                                 (or (:llm-model form) "unknown")
-                                (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*" scope)) scope)
+                                (when (and scope (re-matches #"t[1-9]\d*/i[1-9]\d*(?:/f[1-9]\d*)?" scope)) scope)
                                 (when (and (string? call-id)
                                            (<= (count call-id) 512)
                                            (re-matches #"[A-Za-z0-9_|-]+" call-id))
                                   call-id)
+                                (when scope
+                                  (let [^String raw (or (:stdout form) s)]
+                                    (.codePointCount raw 0 (.length raw))))
                                 MAX_FORM_OUTPUT_TOKENS
                                 MAX_FORM_PREVIEW_CHARS)]
                    (if (identical? ::fits result) trimmed result))))))

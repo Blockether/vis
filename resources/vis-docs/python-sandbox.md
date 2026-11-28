@@ -187,9 +187,10 @@ rows is false. For such an empty record, `json.dump(r, file)` writes `{}`, so us
 `file.write(json.dumps(r))`. A record without a backing field iterates over its field names, as a
 dictionary does.
 
-`read_session()` also returns more data than its printed summary. The full history, folded steps
-included, is under `transcript["turns"]`, then `iterations`, then `blocks`. Each block holds
-`code`, `stdout`, and an `error` if one occurred. `list_sessions()` finds other saved sessions.
+`read_session()` prints turn previews. Use `read_session(turn=N)` for the final answer and step
+list of turn `N`. Use `view="blocks"` with `turn` and `iteration` for saved code, stdout, and
+errors, including folded steps. Use `list_sessions(search=...)` to find other sessions. For the
+arguments and result fields, see [Find and read sessions](extension-api.md#find-and-read-sessions).
 
 ## Host Tasks
 

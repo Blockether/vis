@@ -8789,6 +8789,33 @@
                                  :where [:and [:= :recipient_sid sid] [:= :entry_id id]
                                          [:= :state "pending"]]}))))
 
+(def ^:private council-task-outcome
+  "FROM clause: turn `t` of the ping recipient began with task `e` of its parent, and the host
+   outcome `r` of that turn went to this parent. A cancelled turn pings nobody."
+  (str "FROM session_turn_soul t "
+       "JOIN council_entry e ON e.id = t.council_entry_id "
+       "JOIN session_agent a ON a.session_id = council_ping.recipient_sid AND a.parent_id = e.author_sid "
+       "JOIN council_entry r ON r.author_sid = a.session_id "
+       "AND r.idempotency_key = 'agent-result:' || t.id "
+       "JOIN council_ping o ON o.entry_id = r.id AND o.recipient_sid = a.parent_id "
+       "WHERE t.council_entry_id = council_ping.entry_id"))
+
+(defn db-council-settle!
+  "Close each delegated task of child `sid` that has a host outcome: the ping of the task gets
+   the outcome of its own turn as the reply. A reply of the child stays. A repeat changes nothing."
+  [db sid]
+  (sqlite-write-tx! db
+                    (fn [tx]
+                      (execute! tx
+                                {:update :council_ping
+                                 :set {:state "replied"
+                                       :reply_entry_id [:raw (str "(SELECT max(r.id) "
+                                                                  council-task-outcome
+                                                                  ")")]}
+                                 :where [:and [:= :recipient_sid sid] [:= :reply_entry_id nil]
+                                         [:in :state ["pending" "delivered" "interrupted"]]
+                                         [:raw (str "EXISTS (SELECT 1 " council-task-outcome ")")]]}))))
+
 (defn- activity-record
   [aid row]
   {:history_id aid

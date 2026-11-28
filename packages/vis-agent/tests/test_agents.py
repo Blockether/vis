@@ -718,6 +718,24 @@ def test_task_record_display_does_not_repeat_the_answer():
     )
     assert repr(record) == str(record) == "a2 completed - Checks pass"
     assert record.answer == "Evidence from the checks.\n" * 50
+    assert record.outcome is None
+
+
+def test_verifier_record_keeps_the_outcome_separate_from_task_status():
+    record = SubagentRecord.from_wire(
+        {
+            "session_id": "child",
+            "id": "a3",
+            "status": "completed",
+            "outcome": "failed",
+            "result": "Check failed",
+            "answer": "Evidence from the failed check",
+        }
+    )
+    assert record.status == "completed"
+    assert record.outcome == "failed"
+    assert repr(record) == str(record) == "a3 verify: completed [failed] - Check failed"
+    assert record.answer == "Evidence from the failed check"
 
 
 def test_rate_limited_child_record_names_working_routes():

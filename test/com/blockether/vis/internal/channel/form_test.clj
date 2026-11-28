@@ -72,21 +72,16 @@
         (expect (str/starts-with? projected "source"))
         (expect (str/ends-with? projected "LAST"))
         (expect (str/includes? projected "r = await read_session(view=\"blocks\""))
-        (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
+        (expect (str/includes? projected "b.get(\"svar_tool_call_id\") == \"call_A\""))
         (expect (<= (svar/count-tokens "glm-5.3" projected) form/MAX_FORM_OUTPUT_TOKENS))))
-  (it "uses the persisted iteration scope for a live /fN result"
-      (let [body
-            (apply str (repeat 6000 "printed token "))
-
-            live
-            {:scope "t1/i2/f1" :svar/tool-call-id "call_A" :llm-model "glm-5.3"}
-
-            projected
-            (with-redefs [toggles/enabled? #(= "introspection" %)]
-              (form/clip-to-wire body live))]
-
-        (expect (str/includes? projected "b.get(\"scope\") == \"t1/i2\""))
-        (expect (not (str/includes? projected "b.get(\"scope\") == \"t1/i2/f1\"")))))
+  (it "can recover all saved stdout in one read from a live block scope"
+      (let [body (str (apply str (repeat 6000 "printed token ")) "😀\n")
+            live {:scope "t1/i2/f1" :svar/tool-call-id "call_A" :llm-model "glm-5.3"}
+            projected (with-redefs [toggles/enabled? #(= "introspection" %)]
+                        (form/clip-to-wire body live))
+            chars (.codePointCount ^String body 0 (.length ^String body))]
+        (expect (str/includes? projected (str "turn=1, iteration=2, block=1, limit=" chars)))
+        (expect (str/includes? projected "text = r["))))
   (it "names read_session in the recovery hint only while the session has it"
       ;; Regression: with introspection off, every clipped result told the model to call
       ;; `read_session()`, which then failed with NameError.

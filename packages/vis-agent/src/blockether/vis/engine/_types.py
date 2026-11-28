@@ -455,6 +455,9 @@ class SessionTeam(TypedDict):
     total: int
 
 
+CouncilEntryId: TypeAlias = int
+
+
 class AgentsModelPair(TypedDict):
     provider: str
     model: str
@@ -473,6 +476,8 @@ class SessionAgent(TypedDict):
     parent_id: NotRequired[str]
     team_id: NotRequired[str]
     task: NotRequired[str]
+    task_id: NotRequired[str]
+    task_entry_id: NotRequired[CouncilEntryId]
     iteration_budget: NotRequired[int]
     iterations_used: NotRequired[int]
     status: NotRequired[JSONValue]
@@ -1025,6 +1030,7 @@ class AgentsRecord(TypedDict):
     ]
     after: NotRequired[list[dict[str, JSONValue]] | None]
     result: NotRequired[str | None]
+    outcome: NotRequired[JSONValue]
     answer: NotRequired[str | None]
     question: NotRequired[str | None]
     question_entry_id: NotRequired[int | None]
@@ -1166,9 +1172,6 @@ AgentTimeline: TypeAlias = AgentsTimeline
 class SessionAlert(TypedDict):
     title: str
     body: str
-
-
-CouncilEntryId: TypeAlias = int
 
 
 class CouncilSourceRefScope(TypedDict):

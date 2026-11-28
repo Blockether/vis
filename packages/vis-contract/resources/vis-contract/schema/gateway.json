@@ -13230,6 +13230,13 @@
         "task": {
           "type": "string"
         },
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task_entry_id": {
+          "$ref": "council.json#/$defs/entry_id"
+        },
         "iteration_budget": {
           "type": "integer",
           "minimum": 1

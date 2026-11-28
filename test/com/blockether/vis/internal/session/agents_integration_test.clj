@@ -714,6 +714,49 @@
             (expect (str/includes? forms "Done False True")))
           (finally (loop-env/dispose-environment! env))))))
 
+(defdescribe verifier-verdict-in-task-result-test
+  (it "returns the verifier verdict separately from the Task status"
+      (let [env (loop-env/create-environment (router) {:db :memory})
+            db (:db-info env)
+            owner (:session-id env)
+            requests (atom 0)]
+        (try
+          (with-redefs-fn
+            {#'agents/runtime (atom {:live? (constantly false)})
+             #'agents/start-tasks
+             (fn [host _]
+               (let [turn (:id (last (ps/db-list-session-turns db owner)))
+                     child (h/fork-session-at-turn!
+                             db owner
+                             {:through-turn-id turn
+                              :agent {:parent_id (str owner) :leader_id (str owner)
+                                      :team_id (str turn) :task "Check the saved result"
+                                      :role "verify" :iteration_budget 4
+                                      :spawn_key (str turn) :spawn_fingerprint "verdict"
+                                      :checkpoint [{:role :user :content "Verify the result"}]}})
+                     row (agents/info db child)
+                     handle (agents/register-task! host row (fn [_]) nil)]
+                 (agents/report-result (assoc host :session-id child)
+                                       "Check failed" {"outcome" "failed"})
+                 (agents/finish! db child "completed")
+                 (agents/settle-task! host (agents/info db child))
+                 [handle]))
+             #'svar/ask-code!
+             (fn [_ _]
+               (if (= 1 (swap! requests inc))
+                 (code-response (str "(child,) = await council.run([{'task': 'Check', 'role': 'verify'}])\n"
+                                     "assert child.record()['outcome'] == 'failed'\n"
+                                     "r = await child\n"
+                                     "assert r['status'] == 'completed'\n"
+                                     "assert r['outcome'] == child.record().outcome == 'failed'\n"
+                                     "print(str(r))"))
+                 {:stop-reason :end :content "Read the verdict"}))}
+            #(turn/run-turn! env "Verify a result" {}))
+          (let [turn (:id (first (ps/db-list-session-turns db owner)))
+                forms (pr-str (mapcat :forms (ps/db-list-session-turn-iterations db turn)))]
+            (expect (str/includes? forms "a1 verify: completed [failed] - Check failed") forms))
+          (finally (loop-env/dispose-environment! env))))))
+
 ;; Regression: a turn with a CLI `--model` gave its subagents the router default model.
 (defdescribe turn-route-reaches-agent-operations-test
   (it "a per-turn model reaches agent operations without a session pick"

@@ -381,6 +381,7 @@
                      :answer answer-value}
                     extra-ctx)]
      (or (council/reply-error environment)
+         (agents/verifier-outcome-error environment)
          (some (fn [ext]
                  (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                          (when (= :turn.answer/validate phase)
@@ -2225,8 +2226,17 @@
              (some->> (goals/system-prompt environment)
                       (str "\n\n")))
 
+        trusted-task-id
+        (when (and (= :council request-kind) council-entry-id)
+          (let [db (:db-info environment)
+                parent (:parent_id (agents/info db (:session-id environment)))]
+            (when (and parent (= (str parent) (:author_session_id (persistance/db-council-get db council-entry-id))))
+              council-entry-id)))
+
         environment
         (cond-> environment
+          trusted-task-id
+          (assoc :agent/task-entry-id trusted-task-id)
           (seq turn-features)
           (assoc :turn/features turn-features)
 
@@ -2641,21 +2651,7 @@
      :canonical-messages canonical-messages
      :compact-trailer compact-trailer
      :current-turn-messages current-turn-messages
-     :trusted-task-id (when (and (= :council request-kind) council-entry-id)
-                        (let [db
-                              (:db-info environment)
-
-                              sid
-                              (str (:session-id environment))
-
-                              parent
-                              (:parent_id (agents/info db sid))]
-
-                          (when (and parent
-                                     (= (str parent)
-                                        (:author_session_id
-                                          (persistance/db-council-get db council-entry-id))))
-                            council-entry-id)))
+     :trusted-task-id trusted-task-id
      :emergency-summaries-atom emergency-summaries-atom
      :emit-hook! emit-hook!
      :environment environment
@@ -2747,7 +2743,8 @@
                                   sid
                                   group-id
                                   input-state
-                                  (keep (comp :council-input second) (:steps resumed))))))
+                                  (keep (comp :council-input second) (:steps resumed))
+                                  session-turn-id))))
     (merge {:iteration (:iteration resumed 0) :messages initial-messages :trace []}
            FRESH_ITER_CARRY
            {:trailer-iters (into (conj (vec prior-turns)

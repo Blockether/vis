@@ -4456,24 +4456,30 @@
                            (persistance/db-list-session-turns-meta db sid))
             content (str (or (:id child) sid) " " (or (:role child) "subagent") ": "
                          (:status child)
-                         (when-let [outcome (:outcome child)] (str " [" outcome "]"))
+                         (if (agents/missing-verifier-outcome? child)
+                           " [no outcome]"
+                           (when-let [outcome (:outcome child)] (str " [" outcome "]")))
                          (when-let [headline (not-empty (one-line (:result child)))]
                            (str " - " (util/truncate headline agents/result-max-length)))
-                         "; evidence: " sid "/" (if position (str "t" position) tid))]
-
-        ;; Runtime-owned outcome: fixed persisted owner, never an arbitrary peer.
-        ;; Cancellation records the result without restarting the stopped team.
-        (council/publish!
-          db
-          #(council/runtime db)
-          {:session-id (str sid)
-           :source "host"
-           :activation-id (str "agent-result:" tid)
-           :self-wake? true}
-          {:title agent-result-title
-           :content content
-           :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
-           :idempotency_key (str "agent-result:" tid)}))))
+                         "; evidence: " sid "/" (if position (str "t" position) tid))
+            ;; Runtime-owned outcome: fixed persisted owner, never an arbitrary peer.
+            ;; Cancellation records the result without restarting the stopped team.
+            entry (council/publish!
+                    db
+                    #(council/runtime db)
+                    {:session-id (str sid)
+                     :source "host"
+                     :activation-id (str "agent-result:" tid)
+                     :self-wake? true}
+                    {:title agent-result-title
+                     :content content
+                     :ping (if cancelled? [] (vec (distinct [(:parent_id child) (:leader_id child)])))
+                     :idempotency_key (str "agent-result:" tid)})]
+        ;; The outcome answers the delegated task: the child sends no reply of its own. A later
+        ;; outcome also closes a task that an interrupted run left open.
+        (when-not cancelled?
+          (persistance/db-council-settle! db (str sid)))
+        entry)))
 
 (defonce ^:private agent-lock
   ;; Serialize attempt registration, admission and terminal snapshots.
@@ -5737,9 +5743,11 @@
 (defn- store-resume-row!
   "Store the row that lets the next gateway process resume the running turn `tid`:
    the turn record, the `launch` inputs, `clean?` and the resume count. A clean turn
-   stopped at an iteration boundary. The row counts no crash: this process wrote it."
+   stopped at an iteration boundary. Keep its Council activation for pings not yet read.
+   The row counts no crash: this process wrote it."
   [sid tid launch clean?]
-  (let [turn (turn-record sid tid)]
+  (let [turn (turn-record sid tid)
+        activation-id (get-in (session-entry sid) [:council :activation-id])]
     (persistance/db-store-parked-turn!
       (lp/db-info)
       sid
@@ -5748,7 +5756,8 @@
                  :launch (turn-payload (update launch :engine-opts dissoc :resume :hooks))
                  :clean? (boolean clean?)
                  :resumes (long (or (::resumes turn) 0))
-                 :crashes 0}}
+                 :crashes 0
+                 :council-activation-id activation-id}}
       (journal/process-stamp))))
 
 (defn- park-turn!
@@ -7387,7 +7396,7 @@
    because only its stored row shows that it is newer. Returns true when the turn
    started."
   [db {:keys [turn-id session-id payload] :as row}]
-  (let [{:keys [turn launch clean? resumes crashes]}
+  (let [{:keys [turn launch clean? resumes crashes council-activation-id]}
         payload
 
         resumes
@@ -7427,7 +7436,14 @@
                       (volatile! nil)
 
                       now
-                      (util/now-ms)]
+                      (util/now-ms)
+
+                      restored-council
+                      (when council-activation-id
+                        {:activation-id council-activation-id
+                         :input-state (atom {:delivery {:db db
+                                                        :sid session-id
+                                                        :activation council-activation-id}})})]
 
                   (update-session! session-id
                                    (fn [entry]
@@ -7437,17 +7453,18 @@
                                        (if (:current-turn entry)
                                          entry
                                          (do (vreset! started? true)
-                                             (-> entry
-                                                 (assoc :current-turn turn-id
-                                                        :last-active now)
-                                                 (assoc-in [:turns turn-id]
-                                                           (assoc turn
-                                                             :turn_id turn-id
-                                                             :session_id (str session-id)
-                                                             :status "running"
-                                                             :cancel-token token
-                                                             ::resumes (inc resumes)))
-                                                 (update :turn-order (fnil conj []) turn-id)))))))
+                                             (cond-> (-> entry
+                                                         (assoc :current-turn turn-id :last-active now)
+                                                         (assoc-in [:turns turn-id]
+                                                                   (assoc turn
+                                                                     :turn_id turn-id
+                                                                     :session_id (str session-id)
+                                                                     :status "running"
+                                                                     :cancel-token token
+                                                                     ::resumes (inc resumes)))
+                                                         (update :turn-order (fnil conj []) turn-id))
+                                               restored-council
+                                               (assoc :council restored-council)))))))
                   (cond
                     ;; Another turn holds the slot, and it can still be on its way to its
                     ;; stored row. Try again when that turn ends (#514).

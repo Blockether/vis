@@ -874,7 +874,7 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(1)" :stdout printed})]
 
         (expect (= (form/clip-to-wire printed) (:stdout payload)))))
-  (it "block.output recovery selects the saved iteration, not the live form scope"
+  (it "block.output recovery names the saved block of the live form scope"
       (let [printed
             (apply str (repeat 6000 "printed token "))
 
@@ -890,8 +890,8 @@
                 :code "print(1)"
                 :stdout printed}))]
 
-        (expect (str/includes? (:stdout payload) "b.get(\"scope\") == \"t1/i3\""))
-        (expect (str/includes? (:stdout payload) "b.get(\"svar_tool_call_id\") == \"call_A\""))
+        (expect (str/includes? (:stdout payload)
+                               "read_session(view=\"blocks\", turn=1, iteration=3, block=1, limit=84000)"))
         (expect (<= (svar/count-tokens "glm-5.3" (:stdout payload)) form/MAX_FORM_OUTPUT_TOKENS))))
   ;; Activity has one event type for both timing classes: live revisions are
   ;; transient but materialized last-one-wins; the settled revision is durable.
@@ -9577,6 +9577,34 @@
                             [(get-in row [:payload :clean?]) (get-in row [:payload :resumes])])))
                (forget-session! sid)))
            (finally (sqlite/db-close! store)))))
+   (it "receives a Council ping that arrived before a gateway restart"
+       (let [store (sqlite/db-open! :memory)
+             sid (str (h/store-session! store {:channel :api}))
+             from (str (h/store-session! store {:channel :api}))
+             gid (str (:id (persistance/db-create-project! store {:name "Council restart"})))
+             tid (str (persistance/db-store-session-turn! store {:parent-session-id sid
+                                                                :user-request "busy"}))]
+         (try
+           (doseq [id [sid from]]
+             (persistance/db-set-session-project! store id gid))
+           (with-redefs [lp/db-info (constantly store)
+                         lp/by-id (constantly {:id sid})
+                         council/enabled? (constantly true)]
+             (#'state/update-session! sid (constantly (running-entry sid (cancellation/cancellation-token))))
+             (let [before (get (state/council-runtime store sid) sid)
+                   published (council/publish! store
+                                               #(state/council-runtime store nil)
+                                               {:session-id from :activation-id "sender" :self-wake? true :source "host"}
+                                               {:content "New facts" :ping [sid]})]
+               (expect (seq (persistance/db-council-pending store sid (:activation-id before) gid 0 20)))
+               (#'state/store-resume-row! sid tid {:request "busy" :engine-opts {}} false)
+               (forget-session! sid)
+               (with-redefs-fn {#'state/launch-turn-worker! (fn [& _] nil)}
+                 #(expect (= 1 (:resumed (state/restore-pending-turns!)))))
+               (let [{:keys [activation-id input-state]} (get (state/council-runtime store sid) sid)
+                     batch (council/prepare-input! store sid activation-id gid input-state [tid 0] 8192)]
+                 (expect (= [(:entry_id published)] (mapv :entry_id (:entries batch)))))))
+           (finally (forget-session! sid) (sqlite/db-close! store)))))
   (it "interrupts a parked turn when a newer turn of its session ran"
       ;; Session 33ee41e0: a gateway resumed turn 3 after turns 4-7 ran. The later
       ;; fold ledger hid each new step, and the turn looped 1194 times.

@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.council.host :as host]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wiring :as wiring]
+            [com.blockether.vis.internal.loop :as loop]
             [com.blockether.vis.internal.loop.environment :as loop-env]
             [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.persistance.core :as ps]
@@ -117,6 +118,9 @@
                          (mapv :entry_id (:pending_replies (:council-input (first iterations))))))
               (expect (some #(str/includes? (str (:content %)) "Council replies due:")
                             (first @prompts)))
+              (expect (not-any? #(str/includes? (str (:content %)) "[\"pending_replies\"]")
+                                (mapcat identity @prompts))
+                      "Council notices are the only due state in provider requests")
               (expect (= "replied" (get-in request-now [:replies 0 :state])))
               (expect (pos-int? reply-id))
               (expect (= [aid] (:ping (council/get-entry db bid {:entry_id reply-id}))))
@@ -137,6 +141,84 @@
                    (#'state/drop-session! bid)
                    (loop-env/dispose-environment! b)
                    (loop-env/dispose-environment! a)))))))
+
+(defdescribe
+  due-reply-restart-test
+  (it
+    "keeps one Council reply state through new input, a reply, a fold and a restart"
+    (let [router (svar/make-router [{:id :lmstudio :api-key "test"
+                                     :base-url "http://127.0.0.1:1234/v1"
+                                     :models [{:name "model" :context 200000}]}])
+          sender (loop-env/create-environment router {:db :memory})
+          db (:db-info sender)
+          recipient (loop-env/create-environment router {:db db})
+          aid (str (:session-id sender))
+          bid (str (:session-id recipient))
+          tid (str (ps/db-store-session-turn! db {:parent-session-id bid :user-request "Continue"}))
+          requests (atom [])
+          launches (atom [])
+          publish! (fn [content required?]
+                     (council/publish! db
+                                       #(council/runtime db)
+                                       {:session-id aid
+                                        :activation-id (:activation-id (get (council/runtime db) aid))
+                                        :source "sdk"}
+                                       {:content content :ping [bid] :reply_required required?}))]
+      (try
+        (doseq [[sid turn] [[aid "sender"] [bid tid]]]
+          (#'state/update-session!
+           sid
+           (constantly {:current-turn turn
+                        :turns {turn {:status "running"
+                                      :cancel-token (cancellation/cancellation-token)}}})))
+        (with-redefs [toggles/enabled? #(= "council" %)
+                      loop/db-info (constantly db)
+                      loop/by-id (constantly {:id bid})]
+          (let [entry (publish! "Binding evidence request" true)]
+            (with-redefs [svar/ask-code!
+                          (fn [_ opts]
+                            (let [n (count (swap! requests conj (:messages opts)))
+                                  code (case n
+                                         1 (do (publish! "New ordinary evidence" false) "print('reading')")
+                                         2 (str "await council.publish('No evidence.', reply_to=" (:entry_id entry) ")")
+                                         3 "print(fold_session('-t1/i2', 'Replied with no evidence.'))"
+                                         nil)]
+                              (if code
+                                {:stop-reason :tool-calls :tokens {}
+                                 :tool-calls [{:id (str "capture-" n) :name "py3" :input {:code code}}]}
+                                {:stop-reason :end :tokens {} :content "Done"})))]
+              (let [parked (iteration/iteration-loop recipient "Continue" {:session-turn-id tid
+                                                                             :hooks {:park-requested?
+                                                                                     #(= 3 (count @requests))}})]
+                (expect (= :parked (:status parked))))
+              (publish! "Evidence waiting across restart" false)
+              (#'state/store-resume-row! bid tid {:request "Continue" :engine-opts {}} true)
+              (#'state/drop-session! bid)
+              (with-redefs-fn {#'state/launch-turn-worker! (fn [_ _ _ opts]
+                                                             (swap! launches conj (:engine-opts opts)))}
+                #(expect (= 1 (:resumed (state/restore-pending-turns!)))))
+              (let [resumed (loop-env/create-environment router {:db db :session bid})]
+                (try
+                  (expect (= {:answer "Done"}
+                             (:answer (iteration/iteration-loop resumed "Continue"
+                                                                 (assoc (first @launches) :session-turn-id tid)))))
+                  (finally (loop-env/dispose-environment! resumed)))))
+            (let [[first-request new-input replied after-restart] (map #(mapv (comp str :content) %) @requests)]
+              (expect (= 4 (count @requests)))
+              (expect (= 1 (count (filter #(str/includes? % "Council replies due:") first-request))))
+              (expect (= 1 (count (filter #(str/includes? % "Council replies due:") new-input))))
+              (expect (some #(str/includes? % "New ordinary evidence") new-input))
+              (expect (some #(str/includes? % "Council replies due: none") replied))
+              (expect (some #(str/includes? % "Replied with no evidence.") after-restart))
+              (expect (not-any? #(str/includes? % "Binding evidence request") after-restart))
+              (expect (some #(str/includes? % "Evidence waiting across restart") after-restart))
+              (expect (not-any? #(re-find #"(?:\[\"pending_replies\"\]|\"pending_replies\"\s*:)" %)
+                                (mapcat #(map (comp str :content) %) @requests))))))
+        (finally
+          (#'state/drop-session! aid)
+          (#'state/drop-session! bid)
+          (loop-env/dispose-environment! recipient)
+          (loop-env/dispose-environment! sender))))))
 
 ;; A subagent question that only the person can decide: an interactive leader asks the person
 ;; and its turn ends suspended. A one-shot `:cli` leader still has to answer the question itself.

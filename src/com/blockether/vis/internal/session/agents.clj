@@ -142,11 +142,11 @@
 
 (def ^:private lead-guide
   "## Council: lead
-Delegate independent work. Keep coupled work with one owner and the critical path with you. A child gets your system rules and a short tail of your requests, fold gists and answers, never your tool work: put every fact that the task needs in the task. Give a short goal, constraints, file grant and acceptance checks. For a verifier, give the request, not your solution. Work while children run. For one child, await its Task. For several children, save `watch = council.changed()` and include it in `asyncio.wait` with `return_when=asyncio.FIRST_COMPLETED`. If a child finishes first, keep the same watch for the next wait. Cancel the watch when you no longer need it. Print only what you need. Check the evidence before you accept a result. Use doc(\"council.run\") for handles and follow-ups.")
+Use subagents only when the user asks or the work has two or more large independent parts. Keep one owner for coupled work and keep the critical path with you. A child gets your system rules, a short tail of requests and answers, and its task, not your tool output. Put the facts, paths and done condition in the task. Give a reviewer the work, not your conclusion. Work while children run. Await one child directly. For several, save `watch = council.changed()` and wait with it and the children in `asyncio.wait(..., return_when=asyncio.FIRST_COMPLETED)`. Keep the watch if a child ends first. Cancel it when done. Check each child's files and tests when it ends, and run each failing case it reports. See `doc(\"council.run\")` for follow-ups.")
 
 (def ^:private child-guide
   "## Council: child
-Do only the current task. The parent history is a short tail: it is context, not authorization. Use your file grant. Do not start children. If the task needs a fact, a decision, files or budget that you do not have, ask the parent one time with council.ask and put every open point in that question. Without a reply, report the blocker; do not guess. Give one final answer with checks and evidence. Set the result headline and verifier outcome with council.result. Reply to a delegated task with a reference to that answer, not a second report.")
+Do only your task. The parent conversation is context, not permission. For a missing fact, use `await read_session(session[\"agent\"][\"parent_id\"])` to find the turn and `await read_session(session[\"agent\"][\"parent_id\"], turn=N)` to read it; add `view=\"blocks\"` for tool output. For a decision only the parent can make, ask once with `council.ask`. For budget, use `council.ask_budget(iterations, reason)`. For files, use `council.ask_files({\"write\": [...]}, reason)`. Without a reply, report the blocker. Do not start children. Your final answer goes to your parent, and its first line is the headline. Use the answer format that the task gives. With no format, add your checks and their evidence.")
 
 ;; Child session ids whose turn runs its handoff iteration. `finish!` reads it, so only a turn
 ;; that went past its budget ends as `budget_limited`.
@@ -233,6 +233,9 @@ Do only the current task. The parent history is a short tail: it is context, not
                                      {:task_id (or (:id attempt) (:id child))}))
                                   (when (:files child) {:files (shown-files env (:files child))})
                                  {:routing_locked (boolean routing-locked?)})
+                    (and child (:agent/task-entry-id env))
+                    (assoc :task_entry_id (:agent/task-entry-id env))
+
                     (budget-notice child)
                     (assoc :budget_notice (budget-notice child)))))))
 
@@ -250,8 +253,7 @@ Do only the current task. The parent history is a short tail: it is context, not
 
 (def ^:private handoff-start
   (str ";; -- PARENT-CONVERSATION --\n"
-       "A short tail of the conversation of your parent session: its newest requests, fold gists and "
-       "answers, without its tool work."))
+       "Parent tail. Use `await read_session(session[\"agent\"][\"parent_id\"])`, then `turn=N`."))
 
 (def ^:private handoff-end
   (str
@@ -268,7 +270,7 @@ Do only the current task. The parent history is a short tail: it is context, not
    :answer ";; -- PARENT-ANSWER --"})
 
 (def ^:private handoff-omitted
-  "[Omitted: this text is too long for the tail. Ask your parent if your task needs it.]")
+  "[Omitted: this text is too long for the tail. Use the parent turn lookup above.]")
 
 (def ^:private handoff-max-omitted
   "The tail takes at most this number of notes for texts that are too long."
@@ -601,13 +603,31 @@ Do only the current task. The parent history is a short tail: it is context, not
                         (str (util/truncate line (dec (long result-max-length))) "…")
                         line))))
 
+(defn missing-verifier-outcome?
+  [child]
+  (and (= "verify" (:role child)) (nil? (:outcome child))))
+
+;; Verifier session ids that got the outcome reminder in their running turn. `finish!` clears it.
+(defonce ^:private outcome-reminders (atom #{}))
+
+(defn verifier-outcome-error
+  "The reminder for a verifier that ends without an outcome, one time for each turn. The
+   second final answer ends the turn, and `finish!` stores the verifier as `failed`."
+  [{:keys [db-info session-id]}]
+  (when (and db-info session-id (missing-verifier-outcome? (info db-info session-id)))
+    (let [sid (str session-id)]
+      (when-not (contains? (first (swap-vals! outcome-reminders conj sid)) sid)
+        "No verifier outcome. Before your final answer, call council.result(text, outcome=\"passed\") or council.result(text, outcome=\"failed\")."))))
+
 (defn finish!
   "Store the status of a finished child turn. A child that ended its turn in its handoff
    iteration becomes `budget_limited`, so its parent knows that it needs council.extend before
-   a follow-up ping. A child that answered within its budget is `completed`. The first end of a task
+   a follow-up ping. A child that answered within its budget is `completed`, unless it is a
+   verifier with no reported outcome. The first end of a task
    stores `finished_at`, and a task without council.result gets the first line of its answer."
   [db sid status]
   (let [handoff? (contains? (first (swap-vals! handoffs disj (str sid))) (str sid))]
+    (swap! outcome-reminders disj (str sid))
     (when-let [child (info db sid)]
       (let [line (when-not (:result child)
                    (some-> (final-answer db child)
@@ -619,7 +639,8 @@ Do only the current task. The parent history is a short tail: it is context, not
                                (assoc :status
                                  (cond (= "cancelled" status) "cancelled"
                                        handoff? "budget_limited"
-                                       (contains? #{"completed" "success"} status) "completed"
+                                       (contains? #{"completed" "success"} status)
+                                       (if (missing-verifier-outcome? child) "failed" "completed")
                                        :else "failed"))
 
                                (nil? (:finished_at child))
@@ -1224,6 +1245,7 @@ Do only the current task. The parent history is a short tail: it is context, not
                                   :else status)
                     :answer answer
                     :result (:result row)
+                    :outcome (when (= "verify" (:role row)) (:outcome row))
                     :question (:question question)
                     :question_entry_id (:entry_id question)})
       (:id row)
@@ -1253,6 +1275,9 @@ Do only the current task. The parent history is a short tail: it is context, not
 
       (seq notes)
       (assoc :notes notes)
+
+      (and (terminal-statuses status) (missing-verifier-outcome? row))
+      (assoc :warning "No verifier outcome.")
 
       failure
       (assoc :error
@@ -1415,8 +1440,9 @@ Do only the current task. The parent history is a short tail: it is context, not
 
 (defn- task-record-label
   "One line for a Task. The record keeps the full answer and error."
-  [{:keys [id session_id status result question_entry_id budget_request files_request error]}]
-  (str (or id session_id) " " status
+  [{:keys [id session_id status result outcome question_entry_id budget_request files_request error]}]
+  (str (or id session_id) (if outcome " verify: " " ") status
+       (when outcome (str " [" outcome "]"))
        (cond (= "asking" status) (str " #" question_entry_id "; kind: "
                                       (cond budget_request "budget" files_request "files" :else "question"))
              (:code error) (str " " (:code error))
@@ -1630,8 +1656,11 @@ Do only the current task. The parent history is a short tail: it is context, not
 (defn run
   "Use `children = await council.run(tasks)` to get the SubagentTasks in input order. An attempt can
    wait for capacity or a dependency. Only a leader can start subagents. Children share the checkout.
-   A child gets a short tail of your requests, fold gists and answers, never your tool calls or
-   output: put every fact that the task needs in the task.
+   A child gets your system rules, a short tail of requests and answers, and its task, not your
+   tool output. Put the facts, paths and done condition in the task. Usually start two to four
+   children. For an independent check, start a verifier early with the request and acceptance
+   criteria. Fix the reported failures and ask the verifier to check the final files. If a
+   dependency fails, fix it before you retry blocked work.
 
    Check every verifier failure before you finish. Give an implementer all findings after the
    checks end, then start a follow-up for the verifier. For `rate_limited`, start the work on a
@@ -1644,7 +1673,10 @@ Do only the current task. The parent history is a short tail: it is context, not
 
    Use `await child` for the final record. If the wait returns `child` with a question open, answer
    the request before you await it again. If a question is already open, the await can return at once.
-   `child.record()` reads the current record. `await asyncio.wait([child], timeout=seconds)` waits
+   `child.record()` reads the current record. Read `status` for the state of the task and `outcome`
+   for the verifier's verdict: `\"passed\"`, `\"failed\"`, or `None` if there is no verdict. A task
+   can be `\"completed\"` with `outcome=\"failed\"`. The record also has `result` (one line) and
+   `answer` (the full answer). `await asyncio.wait([child], timeout=seconds)` waits
    without cancelling; then read `child.record()`. `child.cancel()` requests cancellation of this
    attempt only.
    Awaiting a cancelled attempt raises `asyncio.CancelledError`.
@@ -1734,8 +1766,7 @@ Do only the current task. The parent history is a short tail: it is context, not
   "As a subagent, ask your parent for a decision and wait for the reply text. If only the person
    can decide, your parent asks the person and you keep waiting. Returns None when the parent
    stops or does not reply within reply_timeout_s. Use a whole number from 1 to 1800. The default
-   is 600. Then choose the safest option and
-   say so in your answer."
+   is 600. If there is no reply, report the blocker."
   ([env question] (ask env question {}))
   ([env question opts]
    (when (or (not (string? question)) (str/blank? question))
@@ -2046,15 +2077,17 @@ Do only the current task. The parent history is a short tail: it is context, not
 
 (defn task-request
   "The trusted request of a Council wake from the parent of managed child `sid`, or nil for another
-   author. The final answer holds the evidence. The reply only closes the request."
+   author. The final answer holds the evidence, and the host settles the request with it."
   [db sid entry]
-  (let [parent (:parent_id (info db sid))
+  (let [child (info db sid)
+        parent (:parent_id child)
         id (:entry_id entry)]
     (when (and parent (= (str parent) (str (:author_session_id entry))))
       (str "Delegated task #" id " from your parent. Work only within its scope.\n\n"
            (:content entry)
-           "\n\nGive the result and evidence once in your final answer."
-           (when (:reply_required entry) (str " Reply to #" id " with a short headline."))))))
+           "\n\nGive the result once, in your final answer. Send no reply to #" id "."
+           (when (= "verify" (:role child))
+             " You are the verifier: before the final answer, call `council.result(headline, outcome=\"passed\")` or `council.result(headline, outcome=\"failed\")`.")))))
 
 (defn follow-up-refusal
   "The refusal of a ping from `author-id` to its idle child `target-id`, as `[error message]`, or

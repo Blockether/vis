@@ -6101,7 +6101,7 @@ def read_session(
     turn=None,
     iteration=None,
     block=None,
-    offset=0,
+    offset=None,
     limit=None,
 ):
     """Read one session view, as in the sandbox.
@@ -6109,8 +6109,13 @@ def read_session(
     Pass a bare id, a unique prefix or a copied `vis_session_id#<uuid>` marker.
     With no target, read the current session. Select `index`, `blocks`,
     `diagnosis`, `usage`, `council`, `events` or `full`. Positions start at 1.
-    For block stdout, `offset` and `limit` count Unicode characters. Use
-    `stdout_next_offset` for the next slice or `next_offset` for the next page.
+    With the default view, pass `turn=N` to read one turn's request, final
+    answer, and iteration summaries. Use the `blocks` view to read its blocks.
+    For answers and stdout, `offset` and `limit` count Unicode characters.
+    Select one block with `turn`, `iteration`, and `block`. Set `limit` to its
+    `stdout_chars` to get the entire output. Filter the output before you print.
+    Continue with `answer_next_offset`, `stdout_next_offset`, or `next_offset`.
+    A continuation is None at the end. Unsupported selectors return an error.
     """
     return _host.read_session(
         {
@@ -6129,7 +6134,8 @@ def list_sessions(search=None, *, limit=50, cursor=None):
     """Read one page of sessions, as in the sandbox.
 
     Use `search` for the TUI and app search order. Pass the last row's `id`
-    as `cursor` to continue with the same search.
+    as `cursor` to continue with the same search. A page shorter than `limit`
+    is the last page. An unknown cursor raises an error.
     """
     return _host.list_sessions(
         {

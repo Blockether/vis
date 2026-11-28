@@ -144,6 +144,45 @@
       (expect (str/includes? out "diagnosis, transcript"))
       (expect (not (str/includes? out "r['transcript']")))
       (expect (not (str/includes? out "private history")))))
+  (it
+    "prints the facts of each view, not only its field names"
+    ;; Paid bench for #520: the model printed a view, saw field names and dumped the whole map.
+    (let [base {"op" "read_session" "session_id" "demo" "session" {"id" "demo" "title" "Fixture"}}
+          route (fn [provider model] {"provider" provider "model" model})
+          show (fn [data] (check-result (merge base data) "print(r)"))
+          usage (show {"view" "usage"
+                       "usage" {"totals" {"iterations" 3 "cost_usd" 0.0
+                                          "tokens" {"input" 1500 "cached" 300 "uncached" 1200 "output" 120}}
+                                "routing" {"actual" [(route "anthropic" "demo-mini")]
+                                           "fallbacks" 3 "retries" 0
+                                           "transitions" [{"from" (route "openai" "demo-large")
+                                                           "to" (route "anthropic" "demo-mini")
+                                                           "count" 3}]}}})
+          events (show {"view" "events"
+                        "coverage" {"is_complete" true}
+                        "events" [{"seq" 2 "type" "turn.progress" "progress" "provider-wait"
+                                   "silent_ms" 18000 "iteration" 2 "session_id" "demo" "ts" 1}]})
+          block (show {"view" "blocks"
+                       "transcript" {"turns" [{"position" 2
+                                               "iterations" [{"position" 3
+                                                              "blocks" [{"position" 0 "tool_name" "py3"
+                                                                         "stdout" "Code: GLASS-713\n"
+                                                                         "stdout_chars" 16
+                                                                         "stdout_next_offset" nil}]}]}]}})
+          turn (show {"view" "index"
+                      "turn" {"position" 2 "status" "done" "request_kind" "council"
+                              "council" {"entry_id" 11 "author_session_id" "peer" "content" "Begin."}
+                              "iterations" [{"position" 1 "status" "done" "block_count" 0
+                                             "model" "anthropic/demo-mini"
+                                             "selected_model" "openai/demo-large"}]}})]
+      (expect (str/includes? usage "Tokens: input 1500 (cached 300, uncached 1200), output 120"))
+      (expect (str/includes? usage "Fallback: openai/demo-large -> anthropic/demo-mini x3"))
+      (expect (str/includes? events "2 turn.progress progress=provider-wait silent_ms=18000 iteration=2"))
+      (expect (str/includes? block "t2/i3/b1 py3 ok; stdout 16 chars\nCode: GLASS-713"))
+      (expect (str/includes? turn "Request: Council #11 from peer: \"Begin.\""))
+      (expect (str/includes? turn "Route: selected openai/demo-large, actual anthropic/demo-mini (fallback)"))
+      (doseq [out [usage events block turn]]
+        (expect (< (count out) 400)))))
   (it "reports missing sessions and leaves unfamiliar result shapes unchanged"
       (expect (str/includes? (check-result {"op" "read_session" "session" nil "transcript" nil}
                                            "print(r)")

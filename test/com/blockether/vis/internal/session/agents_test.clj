@@ -18,6 +18,8 @@
             [com.blockether.vis.internal.persistance.sqlite.test-helpers :as h]
             [com.blockether.vis.internal.gateway.state :as gateway]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.loop.environment :as loop-env]
+            [com.blockether.vis.internal.loop.iteration :as iteration]
             [com.blockether.vis.internal.loop.router :as loop-router]
             [com.blockether.vis.internal.council.core :as council]
             [com.blockether.vis.internal.council.host :as host]
@@ -108,6 +110,119 @@
                                                   :checkpoint [{:role :user
                                                                 :content "Full current context"}]}
                                                  opts)}))))
+
+(defdescribe
+  verifier-outcome-loop-test
+  (it
+    "shows the task reference, and retries an answer without a verifier outcome"
+    (let [db (h/store)
+          router (svar/make-router [{:id :lmstudio :api-key "test"
+                                     :base-url "http://127.0.0.1:1234/v1"
+                                     :models [{:name "model" :context 200000}]}])
+          parent (str (h/store-session! db {:channel :api}))
+          child (child! db parent {:role "verify"})
+          env (loop-env/create-environment router {:db db :session child})
+          body "Compare the two saved records."
+          turn (ps/db-store-session-turn! db {:parent-session-id child :user-request body})
+          requests (atom [])
+          project (str (:id (ps/db-create-project! db {:name "Council verifier"})))]
+      (try
+        (doseq [id [parent child]]
+          (ps/db-set-session-project! db id project)
+          (#'gateway/update-session!
+           id
+           (constantly {:current-turn "fixture"
+                        :turns {"fixture" {:status "running"
+                                           :cancel-token (cancellation/cancellation-token)}}})))
+        (let [entry (council/publish! db
+                                     #(council/runtime db)
+                                     {:session-id parent :source "host"
+                                      :activation-id (:activation-id (get (council/runtime db) parent))}
+                                     {:content body :ping [child]})
+              entry-id (:entry_id entry)
+              answer (with-redefs [svar/ask-code!
+                                   (fn [_ opts]
+                                     (let [n (count (swap! requests conj (pr-str (:messages opts))))]
+                                       (if (= 2 n)
+                                         {:stop-reason :tool-calls :tokens {}
+                                          :tool-calls [{:id "verify" :name "py3"
+                                                        :input {:code (str "assert session['agent']['task_entry_id'] == " entry-id
+                                                                           "\nawait council.result('Records match.', outcome='passed')")}}]}
+                                         {:stop-reason :end :tokens {} :content "Records match."})))]
+                       (iteration/iteration-loop env body {:session-turn-id turn
+                                                            :request-kind :council
+                                                            :council-entry-id entry-id}))
+              iterations (ps/db-list-session-turn-iterations db turn)]
+          (expect (= 3 (count @requests)))
+          (expect (= 1 (count (re-seq (re-pattern body) (first @requests)))))
+          (expect (str/includes? (first @requests) "task_entry_id"))
+          (expect (document/valid-json? "gateway" "session_agent"
+                                        (agents/context (assoc env :agent/task-entry-id entry-id))))
+          (expect (re-find #"No verifier outcome" (pr-str (:forms (first iterations)))))
+          (expect (= "passed" (:outcome (agents/info db child))))
+          (expect (= {:answer "Records match."} (:answer answer))))
+        (finally
+          (#'gateway/drop-session! parent)
+          (#'gateway/drop-session! child)
+          (loop-env/dispose-environment! env)))))
+  (it
+    "a delegated task needs no reply of the child: its outcome settles the request"
+    (let [db (h/store)
+          router (svar/make-router [{:id :lmstudio :api-key "test"
+                                     :base-url "http://127.0.0.1:1234/v1"
+                                     :models [{:name "model" :context 200000}]}])
+          parent (str (h/store-session! db {:channel :api}))
+          child (child! db parent {})
+          other (child! db parent {})
+          env (loop-env/create-environment router {:db db :session child})
+          body "Write the marker file."
+          requests (atom [])
+          project (str (:id (ps/db-create-project! db {:name "Council task"})))]
+      (try
+        (doseq [id [parent child other]]
+          (ps/db-set-session-project! db id project)
+          (#'gateway/update-session!
+           id
+           (constantly {:current-turn "fixture"
+                        :turns {"fixture" {:status "running"
+                                           :cancel-token (cancellation/cancellation-token)}}})))
+        (let [entry (council/publish! db
+                                     #(council/runtime db)
+                                     {:session-id parent :source "host"
+                                      :activation-id (:activation-id (get (council/runtime db) parent))}
+                                     {:content body :ping [child other] :reply_required true})
+              entry-id (:entry_id entry)
+              turn (ps/db-store-session-turn! db {:parent-session-id child :user-request body
+                                                  :request-kind :council :council-entry-id entry-id})
+              answer (with-redefs [svar/ask-code!
+                                   (fn [_ opts]
+                                     (swap! requests conj (pr-str (:messages opts)))
+                                     {:stop-reason :end :tokens {} :content "Marker written."})]
+                       (iteration/iteration-loop env body {:session-turn-id turn
+                                                            :request-kind :council
+                                                            :council-entry-id entry-id}))
+              reply-of (fn [sid]
+                         (some #(when (= sid (:session_id %)) %)
+                               (:replies (ps/db-council-get db entry-id))))
+              reply #(reply-of child)]
+          (expect (= 1 (count @requests)) "The final answer ends the turn: the task needs no reply")
+          (expect (not (str/includes? (first @requests) "Council replies due")))
+          (expect (= {:answer "Marker written."} (:answer answer)))
+          (expect (nil? (:reply_entry_id (reply))))
+          (ps/db-agent-update! db child {:status "completed" :result "Marker written."})
+          (let [outcome (#'gateway/report-agent-outcome! db child turn (agents/info db child))]
+            (expect (some? (:entry_id outcome)))
+            (expect (= ["replied" (:entry_id outcome)] ((juxt :state :reply_entry_id) (reply))))
+            ;; Only the task of this child closes, and a repeat ends in the same state.
+            (ps/db-council-settle! db other)
+            (#'gateway/report-agent-outcome! db child turn (agents/info db child))
+            (expect (= ["replied" (:entry_id outcome)] ((juxt :state :reply_entry_id) (reply))))
+            (expect (nil? (:reply_entry_id (reply-of other))))
+            (expect (not= "replied" (:state (reply-of other))))))
+        (finally
+          (#'gateway/drop-session! parent)
+          (#'gateway/drop-session! child)
+          (loop-env/dispose-environment! env))))))
 
 (defn- start!
   "Store the first model iteration of the current task of `child` at epoch ms `at`."
@@ -2529,6 +2644,21 @@
             (apply str (repeat longest "x"))]
 
         (expect (= title (:title (agents/info db (child! db leader {:title title})))))))
+  (it "does not complete a verifier that never gives an outcome"
+      (let [db (h/store)
+            leader (str (h/store-session! db {:channel :api}))
+            child (child! db leader {:role "verify"})
+            env {:db-info db :session-id child}]
+        ;; One reminder for each turn: the second final answer ends the turn.
+        (expect (some? (agents/verifier-outcome-error env)))
+        (expect (nil? (agents/verifier-outcome-error env)))
+        (agents/finish! db child "completed")
+        (expect (some? (agents/verifier-outcome-error env)))
+        (agents/finish! db child "completed")
+        (let [record (agents/task-record env (agents/info db child))]
+          (expect (= "failed" (:status record)))
+          (expect (= "No verifier outcome." (:warning record)))
+          (expect (document/valid? "agents" "record" record)))))
   (it
     "stores council.result and else the first line of the answer, and a resume clears it"
     (let [db

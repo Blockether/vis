@@ -1801,36 +1801,40 @@ raise `RuntimeError`.
 
 ## Find and read sessions
 
-`vis.list_sessions(search=…)` finds a conversation, and `vis.read_session(id)` reads it. Both
-return the string-keyed data and the result types of the sandbox tools with the same names. A
-session read has `op="read_session"` and prints a summary. Its full data stays available by key.
-A missing field names the available keys.
+Use `vis.list_sessions(search=...)` to find a saved session. Use `vis.read_session(id, turn=N)`
+to read the final answer of turn `N`.
 
 ```python
 import blockether.vis.extension as vis
 
 rows = vis.list_sessions(search="release")
-data = vis.read_session(rows[0]["id"]) if rows else vis.read_session()
-last = data["transcript"]["turns"][-1]
-request, status = last["user_request"], last["status"]
+if rows:
+    data = vis.read_session(rows[0]["id"], turn=2)
+    print(data["turn"]["answer"])
 ```
 
-`vis.list_sessions()` lists every session, newest first. With `search`, it runs the session
-search of the TUI and the Companion app. Matches in the title come first, then the request, the
-reply, and the thinking. Keep that order. Each row has `id`, `title`, `turn_count`,
-`created_at`, and `modified_at`. A match adds `rank`, the `is_in_*` flags, and optional
-snippets.
+`vis.list_sessions()` returns a page of rows, newest first. With `search`, it uses the TUI and
+Companion app search order. Each row has `id`, `title`, `turn_count`, `created_at`, and
+`modified_at`. A match adds `rank`, the `is_in_*` flags, and optional snippets.
 
-`vis.read_session()` without an argument reads the session that runs your extension. An argument
-is a bare id, an unambiguous prefix, or the `vis_session_id#<uuid>` marker that a person copies
-from the TUI or the Companion app. The result has these parts:
+Use `limit` to set the page size. A page with fewer than `limit` rows ends the search. To read the
+next page, pass the last row's `id` as `cursor` with the same search. An unknown cursor raises an
+error.
 
-- The dict has `session`, `current_turn`, `failures`, `diagnosis`, `session_forks`,
-  `turn_retries`, `usage`, and `transcript`.
-- Each turn has `position`, `user_request`, `status`, `content`, and `iterations`.
-- Each iteration has `blocks` with `code`, `stdout`, and `error`.
-- In a fork, `session.forked_from` has the source `session_id`, the last copied `turn_id`, and
-  the current `outcome` of that turn.
+`vis.read_session()` reads the session that runs your extension. The target can be an ID, a unique
+prefix, or a `vis_session_id#<uuid>` marker. The default view shows six turn previews. With `turn`, it
+returns the request, final `answer`, and iteration summaries in `turn`. To continue a long answer,
+use `answer_next_offset` as `offset`. It is `None` after the last slice.
+
+Use `view="blocks"` with `turn`, `iteration`, and `block` to read one block. Set `limit` to its
+`stdout_chars` if you need all its output. Store the result in a variable, then filter the output
+or write it to a file. The block is in `transcript["turns"][0]["iterations"][0]["blocks"][0]`.
+
+Use `view="council"` for Council entries and child results. Use `view="events"` for journal events
+and retained sequence coverage. Use `view="diagnosis"` for failures and `view="usage"` for costs
+and routes. Use `view="full"` only when you need the transcript and diagnostics together.
+In a fork, `session.forked_from` has the source `session_id`, the last copied `turn_id`, and
+its current `outcome`.
 
 The `introspection` setting controls only the model's session tools. It does not apply here,
 because an extension is trusted code. Outside a Vis process, both functions raise an error.

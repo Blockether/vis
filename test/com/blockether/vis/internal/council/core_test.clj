@@ -748,9 +748,10 @@
             (= (:content (first entries))
                (:content
                  (council 'get-entry db (first ids) {:entry_id (:entry_id (first entries))}))))
-          (let [before @cursor]
-            (expect (nil? (council 'prepare-input! db sid activation gid cursor ["turn" 3] 0)))
-            (expect (= before @cursor)))))))
+          (let [clipped (council 'prepare-input! db sid activation gid cursor ["turn" 3] 0)]
+            (expect (= (inc (:after next-batch)) (:entry_id (first (:entries clipped)))))
+            (expect (:truncated (first (:entries clipped))))
+            (expect (:has_more clipped)))))))
 
 (defdescribe
   rollback-test
@@ -1114,8 +1115,6 @@
                        :entry_id
                        (:entries
                          (council 'prepare-input! db a a-generation gid (atom {}) ["a" 1] 8192)))))
-          (expect (nil? (council 'prepare-input! db b b-generation gid cursor ["b" 0] 1)))
-          (expect (nil? (:cursors @cursor)))
           (let [batch
                 (council 'prepare-input! db b b-generation gid cursor ["b" 1] 8192)
 
@@ -1304,7 +1303,7 @@
                                  (expect (= "😀" (:content (publish w {:content "😀"}))))))))
 
 (defdescribe injected-header-counts-toward-budget-test
-             (it "fits the full model message without passing a row that does not fit"
+             (it "fits the full model message when possible and clips when the budget is too small"
                  (with-council
                    (let [{:keys [db fleet ids gid] :as w}
                          (world)
@@ -1321,9 +1320,10 @@
                          entry
                          (publish w {:content (apply str (repeat 1024 "x")) :ping [sid]})]
 
-                     (expect (nil?
-                               (council 'prepare-input! db sid activation gid state ["t" 1] 32)))
-                     (expect (nil? (:cursors @state)))
+                     (let [clipped (council 'prepare-input! db sid activation gid (atom {}) ["t" 1] 32)]
+                       (expect (= [(:entry_id entry)] (mapv :entry_id (:entries clipped))))
+                       (expect (:truncated (first (:entries clipped))))
+                       (expect (false? (:has_more clipped)) "No other entry remains"))
                      (let [batch
                            (council 'prepare-input! db sid activation gid state ["t" 2] 512)
 
@@ -2013,6 +2013,10 @@
 
           (dotimes [_ 20]
             (publish w {:content (apply str (repeat 1024 "x")) :ping [sid]}))
+          (let [batch (council 'prepare-input! db sid activation gid (atom {}) ["tiny" 1] 100)]
+            (expect (document/valid? "council" "input_batch" batch))
+            (expect (= [true] (mapv :truncated (:entries batch))))
+            (expect (:has_more batch)))
           (doseq [budget [512 2048 8192 65536]]
             (let [batch (council 'prepare-input! db sid activation gid (atom {}) ["t" 1] budget)
                   message (council 'input-message batch)]
@@ -2363,8 +2367,8 @@
         (expect (not (str/includes? output (:content task))))
         (expect (str/includes? output (:content peer)))
         (expect (str/includes? output (:author_session_id task)))
-        (expect (= [(:entry_id task)]
-                   (mapv :entry_id (council 'pending-replies db b gid state))))))))
+        (expect (= [] (mapv :entry_id (council 'pending-replies db b gid state)))
+                "The host settles the trusted task: no reply is due")))))
 
 (defdescribe
   council-delivery-recovery-test
@@ -2419,7 +2423,11 @@
               (assoc w :actor {:session-id b :activation-id "new" :source "host"})]
 
           (swap! fleet assoc-in [b :activation-id] "new")
-          (council 'restore-input! db b gid resumed [initial])
+          (council 'restore-input! db b gid resumed [initial] "turn")
+          ;; The resumed history still shows the notice: the same set is not sent again.
+          (let [visible (atom {})]
+            (council 'restore-input! db b gid visible [initial] "turn")
+            (expect (nil? (prepare visible "new" 4 {:visible-due-ids ids}))))
           (let [notice (prepare resumed "new" 4 {:visible-due-ids nil})]
             (expect (= ids (:due_reply_ids notice)))
             (expect (= ids (mapv :entry_id (council 'pending-replies db b gid resumed))))
@@ -2429,7 +2437,7 @@
           (expect (empty? (council 'pending-replies db b gid resumed)))
           (expect (= [] (:due_reply_ids (prepare resumed "new" 6 {:visible-due-ids ids}))))))))
   (it
-    "keeps a true continuation and does not advance the cursor past a deferred row"
+    "delivers a clipped row and continues at the next row"
     (with-council
       (let [{:keys [db gid ids fleet] :as w}
             (world)
@@ -2452,6 +2460,9 @@
             peer
             (publish w {:content (apply str (repeat 1024 "x")) :ping [b]})
 
+            next-peer
+            (publish w {:content "More facts" :ping [b]})
+
             pending
             (council 'prepare-input!
                      db
@@ -2466,11 +2477,13 @@
             following
             (council 'prepare-input! db b activation gid state ["turn" 2] 8192)]
 
-        (expect (= (:entry_id request) (:after first-page) (:after pending)))
+        (expect (= (:entry_id request) (:after first-page)))
+        (expect (= (:entry_id peer) (:after pending)))
         (expect (true? (:has_more pending)))
-        (expect (empty? (:entries pending)))
+        (expect (= [(:entry_id peer)] (mapv :entry_id (:entries pending))))
+        (expect (true? (:truncated (first (:entries pending)))))
         (expect (= [(:entry_id request)] (:due_reply_ids pending)))
-        (expect (= [(:entry_id peer)] (mapv :entry_id (:entries following))))
+        (expect (= [(:entry_id next-peer)] (mapv :entry_id (:entries following))))
         (expect (false? (:has_more following)))))))
 
 (defdescribe

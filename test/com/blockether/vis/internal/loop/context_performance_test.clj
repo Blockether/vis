@@ -213,6 +213,7 @@
                               (:llm-model f)
                               (:scope f)
                               (:svar/tool-call-id f)
+                              (.codePointCount ^String body 0 (.length ^String body))
                               ceiling
                               65536)
                     actual (form/clip-to-wire text f)]
@@ -276,8 +277,9 @@
         (with-redefs [svar/count-tokens (fn [_ text]
                                           (swap! calls inc)
                                           (count text))]
-          (let [expected-a (#'form/clip-stdout a model "t23/i102" "call_collision" 8192 65536)
-                expected-b (#'form/clip-stdout b model "t23/i102" "call_collision" 8192 65536)
+          (let [chars #(.codePointCount ^String % 0 (.length ^String %))
+                expected-a (#'form/clip-stdout a model "t23/i102" "call_collision" (chars a) 8192 65536)
+                expected-b (#'form/clip-stdout b model "t23/i102" "call_collision" (chars b) 8192 65536)
                 actual-a (form/clip-to-wire a record)
                 actual-b (form/clip-to-wire b record)
                 after-misses @calls]

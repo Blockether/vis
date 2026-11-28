@@ -66,7 +66,8 @@ class SubagentRecord:
     ``provider_failed``. Every record has the same keys
     for each status; a key without a value is ``None``. A running child has values in
     ``notes``, ``messages``, ``step_secs``, ``elapsed_secs`` and ``alerts``: its current
-    progress. A child that ended without an answer has its last ``notes``.
+    progress. A child that ended without an answer has its last ``notes``. The verifier
+    verdict is ``outcome``: ``passed``, ``failed``, or ``None`` if there is no verdict.
     """
 
     session_id: str
@@ -92,9 +93,14 @@ class SubagentRecord:
     id: str | None = None
     after: list[str] | None = None
     result: str | None = None
+    outcome: str | None = None
 
     def __repr__(self) -> str:
         label = f"{self.id or self.session_id} {self.status}"
+        if self.outcome is not None:
+            label = (
+                f"{self.id or self.session_id} verify: {self.status} [{self.outcome}]"
+            )
         if self.status == "asking":
             kind = (
                 "budget"

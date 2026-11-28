@@ -172,7 +172,9 @@
   ([text ^long limit]
    (when (some? text)
      (let [string-value (str text)]
-       (if (> (count string-value) limit) (str (subs string-value 0 limit) "...") string-value)))))
+       (if (> (count string-value) limit)
+         (str (util/truncate string-value limit) "...")
+         string-value)))))
 
 (defn- error-text
   [error]
@@ -646,24 +648,14 @@
          (catch Throwable _ []))
     []))
 
-(defn- foundation-failures
-  "Provider/schema and code/tool failures, normalized into one
-   chronological vector. No arg = current turn. Pass a session id
-   to scan every turn in that session. To scan EVERY session
-   in the DB use the DB-wide helper instead. Returns `[]`
-   (never nil) when there is nothing to report or the env is missing
-   handles."
-  ([env] (or (:failures (turn-snapshot env)) []))
-  ([env session-id]
-   (if (and (:db-info env) session-id)
-     (try (vec (mapcat (fn [turn]
-                         (let [iterations (iteration-rows (:db-info env) (:id turn))]
-                           (mapv #(into (assoc % :turn-id (:id turn))
-                                        (transcript/request-fields turn (:user-request turn)))
-                                 (failures-from-iterations iterations))))
-                       (persistance/db-list-session-turns (:db-info env) session-id)))
-          (catch Throwable _ []))
-     [])))
+(defn- failures-for-turns
+  [env turns]
+  (vec (mapcat (fn [turn]
+                 (let [iterations (iteration-rows (:db-info env) (:id turn))]
+                   (mapv #(into (assoc % :turn-id (:id turn))
+                                (transcript/request-fields turn (:user-request turn)))
+                         (failures-from-iterations iterations))))
+               turns)))
 
 (defn- classification-counts
   [failures]
@@ -789,7 +781,7 @@
    iteration for [[STALE_RUNNING_TURN_MS]]. A Python block that still runs is
    work, such as a 30-minute shell wait: its turn qualifies only after the eval
    watchdog ceiling plus that time. The caller's own live turn is skipped."
-  [env session-id turns]
+  [env session-id turns position]
   (let [reports
         (group-by :turn-id (gateway-diagnostics/session-reports session-id))
 
@@ -840,7 +832,7 @@
 
                     (turn-error-message turn)
                     (assoc :error (turn-error-message turn)))))))
-          turns)))
+          (if position (filter #(= position (:position %)) turns) turns))))
 
 (defn- foundation-diagnose
   "Compact current-turn diagnosis built from failure data. Returns a
@@ -877,19 +869,16 @@
        :failures failures
        :next-actions (next-actions failures clusters))))
   ([env session-id]
-   (let [failures
-         (vec (foundation-failures env session-id))
-
-         clusters
-         (repetition-clusters failures)
-
-         hung
-         (if (and (:db-info env) session-id)
-           (try (hung-turns env
-                            session-id
-                            (persistance/db-list-session-turns (:db-info env) session-id))
-                (catch Throwable _ []))
-           [])]
+   (let [turns (when (and (:db-info env) session-id)
+                 (session-turn-rows (:db-info env) session-id))]
+     (foundation-diagnose env session-id turns nil)))
+  ([env session-id turns position]
+   (let [selected (if position (filterv #(= position (:position %)) turns) turns)
+         failures (failures-for-turns env selected)
+         clusters (repetition-clusters failures)
+         hung (if (and (:db-info env) session-id)
+                (hung-turns env session-id turns position)
+                [])]
 
      {:session-id session-id
       :failure-count (count failures)
@@ -1208,8 +1197,10 @@
      (foundation-usage-data env
                             target-id
                             (safe-call #(transcript/transcript (:db-info env) target-id) nil))))
-  ([env target-id data]
-   (let [empty-routing (merge (usage-routing []) (manual-model-switches (:db-info env) target-id))]
+  ([env target-id data] (foundation-usage-data env target-id data nil))
+  ([env target-id data position]
+   (let [switches (when-not position (manual-model-switches (:db-info env) target-id))
+         empty-routing (merge (usage-routing []) switches)]
      (if-not data
        {:schema-version 1
         :scope :session-usage
@@ -1237,8 +1228,7 @@
                          (:turns data))
              iterations (vec (mapcat :iterations turns))
              {:keys [tool-errors tool-errors-truncated?]} (usage-tool-errors iterations)
-             routing (merge (usage-routing iterations)
-                            (manual-model-switches (:db-info env) target-id))]
+             routing (merge (usage-routing iterations) switches)]
 
          {:schema-version 1
           :scope :session-usage
@@ -1275,23 +1265,31 @@
 
 (defn- page-offset [opts] (bounded-number (get opts "offset") 0 0 Integer/MAX_VALUE))
 
+(defn- text-slice
+  [^String text ^long offset ^long limit]
+  (let [size (long (.codePointCount text 0 (.length text)))
+        start (min offset size)
+        end (min size (+ start limit))]
+    {:text (subs text (.offsetByCodePoints text 0 (int start))
+                 (.offsetByCodePoints text 0 (int end)))
+     :offset start :chars size :next-offset (when (< end size) end)}))
+
 (defn- stdout-slice
-  [block ^long offset ^long limit]
-  (if-let [^String stdout (:stdout block)]
-    (let [size (long (.codePointCount stdout 0 (.length stdout)))
-          start (min offset size)
-          end (min size (+ start limit))]
-      (cond-> (assoc block :stdout (subs stdout
-                                        (.offsetByCodePoints stdout 0 (int start))
-                                        (.offsetByCodePoints stdout 0 (int end))))
-        (or (pos? start) (< end size)) (assoc :stdout-offset start :stdout-chars size)
-        (< end size) (assoc :stdout-next-offset end)))
+  [block offset limit]
+  (if-let [stdout (:stdout block)]
+    (let [{:keys [text offset chars next-offset]} (text-slice stdout offset limit)]
+      (assoc block :stdout text :stdout-next-offset next-offset
+                   :stdout-offset offset :stdout-chars chars))
     block))
 
 (defn- model-iteration
   "Keep the executed code once, with its timing and call data."
   [opts iteration]
   (let [forms (vec (:forms iteration))
+        exact-block? (and (= "blocks" (get opts "view"))
+                          (every? #(get opts %) ["turn" "iteration" "block"]))
+        offset (page-offset opts)
+        limit (page-limit opts 4096 (if exact-block? Integer/MAX_VALUE 65536))
         blocks (into []
                      (comp (map-indexed
                              (fn [idx block]
@@ -1299,7 +1297,7 @@
                                       (dissoc block :op :activity))))
                            (filter #(or (nil? (get opts "block"))
                                         (= (get opts "block") (inc (long (:position %))))))
-                           (map #(stdout-slice % (page-offset opts) (page-limit opts 4096 65536))))
+                           (map #(stdout-slice % offset limit)))
                      (:blocks iteration))]
     (cond-> (dissoc iteration :forms :blocks :request-health)
       (seq (:blocks iteration)) (dissoc :code)
@@ -1313,39 +1311,93 @@
 (defn- model-transcript
   [opts {:keys [turns]}]
   {:turns (mapv (fn [turn]
-                  (update turn :iterations
-                          #(into [] (comp (filter (partial at-position? (get opts "iteration")))
-                                          (map (partial model-iteration opts))) %)))
+                  (cond-> (update turn :iterations
+                                   #(into [] (comp (filter (partial at-position? (get opts "iteration")))
+                                                   (map (partial model-iteration opts))) %))
+                    (get opts "iteration") (dissoc :tokens :cost-usd :failure-count
+                                                    :provider :model)))
                 turns)})
+
+(defn- saved-answer [turn]
+  (let [blocks (map (fn [block]
+                      (if (= "text" (get block "type"))
+                        {"type" "prose" "markdown" (get block "text")}
+                        block))
+                    (:content turn))
+        answer (content/text-projection blocks)]
+    (when-not (str/blank? answer) answer)))
 
 (defn- index-turn
   [metadata turn]
-  (cond-> {:id (:id turn)
-           :position (:position turn)
-           :status (:status turn)
-           :outcome (turn-outcome turn)
-           :iteration-count (count (get metadata (str (:id turn))))}
-    (or (= :council (:request-kind turn)) (:council turn)) (assoc :request-kind :council)
-    (not (or (= :council (:request-kind turn)) (:council turn)))
-    (assoc :request-preview (preview (:user-request turn) 160))
-    (:answer turn) (assoc :answer-preview (preview (:answer turn) 160))))
+  (let [answer (saved-answer turn)
+        council? (or (= :council (:request-kind turn)) (:council turn))]
+    (cond-> {:id (:id turn)
+             :position (:position turn)
+             :status (:status turn)
+             :outcome (turn-outcome turn)
+             :iteration-count (count (get metadata (str (:id turn))))}
+      council? (assoc :request-kind :council)
+      (not council?) (assoc :request-preview (preview (:user-request turn) 160))
+      ;; A Council turn shows its attributed input, never the Council instruction.
+      (and council? (get-in turn [:council :content]))
+      (assoc :request-preview (preview (get-in turn [:council :content]) 160))
+      answer (assoc :answer-preview (preview answer 160)))))
+
+(defn- turn-detail
+  [db opts turn]
+  (let [tid (:id turn)
+        rows (get (persistance/db-list-session-turns-iterations db [tid] {:request-health? false})
+                  (str tid))
+        answer (saved-answer turn)
+        slice (when answer (text-slice answer (page-offset opts) (page-limit opts 4096 65536)))]
+    (merge (select-keys turn [:id :position :status])
+           (present-request-fields turn (:user-request turn))
+           {:outcome (turn-outcome turn)
+            :answer (:text slice)
+            :answer-chars (or (:chars slice) 0)
+            :answer-next-offset (:next-offset slice)
+            :iterations (mapv (fn [iteration]
+                                (let [error (or (error-text (:error iteration))
+                                                (some (comp error-text :error)
+                                                      (:forms iteration)))
+                                      actual (llm-label (:llm-actual-provider iteration)
+                                                        (:llm-actual-model iteration))
+                                      selected (llm-label (:llm-selected-provider iteration)
+                                                          (:llm-selected-model iteration))]
+                                  (cond-> (assoc (select-keys iteration [:position :status])
+                                            :block-count (count (:forms iteration)))
+                                    actual (assoc :model actual)
+                                    (and selected (not= selected actual)) (assoc :selected-model selected)
+                                    error (assoc :error (preview error 160)))))
+                              rows)})))
 
 (defn- session-read-index
   [env target-id opts turns]
-  (let [db (:db-info env)
-        selected (filterv (partial at-position? (get opts "turn")) turns)
-        offset (page-offset opts)
-        limit (page-limit opts 10 50)
-        page (into [] (comp (drop offset) (take limit)) (rseq selected))
-        metadata (safe-call #(persistance/db-list-session-turns-iterations-meta db (mapv :id page)) {})
-        latest (peek (vec turns))]
-    (cond-> {:turns (mapv (partial index-turn metadata) page)
-             :current-turn (when latest
-                             (cond-> (assoc (select-keys latest [:id :position :status])
-                                       :cost (turn-cost-summary latest))
-                               (same-uuid? target-id (current-session-id env))
-                               (assoc :iteration (iteration-pointer env))))}
-      (< (+ offset limit) (count selected)) (assoc :next-offset (+ offset limit)))))
+  (if-let [position (get opts "turn")]
+    (if-let [turn (first (filter (partial at-position? position) turns))]
+      {:turn (turn-detail (:db-info env) opts turn)}
+      {:error (str "Turn " position " does not exist.")})
+    (let [offset (page-offset opts)
+          limit (page-limit opts 6 50)
+          page (into [] (comp (drop offset) (take limit)) (rseq (vec turns)))
+          metadata (safe-call #(persistance/db-list-session-turns-iterations-meta
+                                 (:db-info env) (mapv :id page)) {})
+          latest (peek (vec turns))]
+      {:turns (mapv (partial index-turn metadata) page)
+       :current-turn (when latest
+                       (cond-> (assoc (select-keys latest [:id :position :status])
+                                 :cost (turn-cost-summary latest))
+                         (same-uuid? target-id (current-session-id env))
+                         (assoc :iteration (iteration-pointer env))))
+       :next-offset (when (< (+ offset limit) (count turns)) (+ offset limit))})))
+
+(defn- session-children [db target-id]
+  (when target-id
+    (mapv (fn [child]
+            (cond-> (select-keys child [:id :session_id :role :title :status :outcome])
+              (:result child) (assoc :result-headline
+                                     (util/truncate (first (str/split-lines (:result child))) 120))))
+          (safe-call #(persistance/db-agent-list db target-id) []))))
 
 (defn- lean-current-turn
   [env target-id turns]
@@ -1415,11 +1467,11 @@
                                                           :encoding "UTF-8")]
                              (scan-session-events (line-seq reader) target-id tid turn offset limit)) nil))
         {:keys [first-seq last-seq is-complete matching events]} scan]
-    (cond-> {:events (or events [])
-             :coverage {:first-retained-seq first-seq
-                        :last-retained-seq last-seq
-                        :is-complete (boolean (and first-seq is-complete))}}
-      (< (+ offset limit) (or matching 0)) (assoc :next-offset (+ offset limit)))))
+    {:events (or events [])
+     :coverage {:first-retained-seq first-seq
+                :last-retained-seq last-seq
+                :is-complete (boolean (and first-seq is-complete))}
+     :next-offset (when (< (+ offset limit) (or matching 0)) (+ offset limit))}))
 
 (defn- attributed-entries [batch]
   (or (seq (:entries batch)) (when batch [batch])))
@@ -1466,8 +1518,35 @@
         page (take limit refs)
         ids (into #{} (map (fn [[_ _ row]] (or (:entry-id row) (:entry_id row)))) page)
         rows (into {} (map #(vector % (safe-call (fn [] (persistance/db-council-get db %)) nil))) ids)]
-    (cond-> {:council {:entries (mapv (partial council-read-entry target-id rows) page)}}
-      (> (count refs) limit) (assoc :next-offset (+ (page-offset opts) limit)))))
+    {:council {:entries (mapv (partial council-read-entry target-id rows) page)}
+     :next-offset (when (> (count refs) limit) (+ (page-offset opts) limit))}))
+
+(def ^:private view-selectors
+  {"index" ["turn" "offset" "limit"]
+   "blocks" ["turn" "iteration" "block" "offset" "limit"]
+   "diagnosis" ["turn"]
+   "usage" ["turn"]
+   "council" ["turn" "iteration" "offset" "limit"]
+   "events" ["turn" "offset" "limit"]
+   "full" ["turn" "offset" "limit"]})
+
+(defn- selector-error [view opts]
+  (if-let [allowed (get view-selectors view)]
+    (let [provided (into #{} (keep (fn [[k v]] (when (some? v) k)))
+                         (dissoc opts "view" "target" "session_id" "id"))
+          bad-keys (remove (set allowed) provided)
+          bad-position (some (fn [key]
+                               (let [value (get opts key)]
+                                 (when (and (some? value) (not (and (integer? value) (pos? value))))
+                                   key)))
+                             ["turn" "iteration" "block" "limit"])
+          offset (get opts "offset")]
+      (cond (seq bad-keys) (str "View " view " does not accept " (str/join ", " (sort bad-keys))
+                                ". Use " (str/join ", " allowed) ".")
+            bad-position (str bad-position " must be a positive integer.")
+            (and (some? offset) (not (and (integer? offset) (not (neg? offset)))))
+            "offset must be a non-negative integer."))
+    "Unknown session view. See doc(read_session)."))
 
 (defn- foundation-inspect-data
   "Build only the requested model-facing view. Human exports are independent."
@@ -1478,36 +1557,52 @@
          target-id (when (and db wanted) (safe-call #(transcript/resolve-session-ref db wanted) nil))
          session (when target-id (safe-call #(persistance/db-get-session db target-id) nil))
          view (or (get opts "view") "index")
-         turns (when (and target-id (or (contains? #{"index" "blocks" "full" "council"} view)
-                                        (and (= "events" view) (get opts "turn"))))
+         position (get opts "turn")
+         error (selector-error view opts)
+         turns (when (and target-id (not error)
+                          (or position (contains? #{"index" "blocks" "full" "council"} view)))
                  (session-turn-rows db target-id))
+         selected (when position (filterv (partial at-position? position) turns))
          turn-count (if turns (count turns)
                         (or (:turn-count (when session (safe-call #(persistance/db-session-turn-stats db target-id) nil))) 0))
          result {:schema-version 3
                  :scope :session
                  :view view
                  :session-id (or target-id wanted)
-                 :session (when session (session-summary db session turn-count))}]
+                 :session (when session (session-summary db session turn-count))}
+         children (when (and (not error) (or (= "council" view) (= "index" view)))
+                    (session-children db target-id))]
      (merge result
-            (case view
-              "index" (session-read-index env target-id opts turns)
-              "blocks" {:transcript (model-transcript opts
-                                                      {:turns (mapv (partial transcript/build-model-turn db (get opts "iteration"))
-                                                                    (filter (partial at-position? (get opts "turn")) turns))})}
-              "diagnosis" {:diagnosis (safe-call #(foundation-diagnose env target-id) {})}
-              "usage" {:usage (safe-call #(foundation-usage-data env (or target-id wanted)
-                                                         (when target-id (transcript/transcript db target-id)))
-                                         {})}
-              "events" (session-read-events target-id opts turns)
-              "council" (session-read-council db target-id opts turns)
-              "full" (let [data (safe-call #(transcript/transcript db target-id) nil)]
-                       {:current-turn (lean-current-turn env target-id turns)
-                        :diagnosis (safe-call #(foundation-diagnose env target-id) {})
-                        :session-forks (safe-call #(foundation-session-forks env target-id) [])
-                        :turn-retries (safe-call #(retries-by-turn env turns) {})
-                        :usage (safe-call #(foundation-usage-data env target-id data) {})
-                        :transcript (model-transcript opts data)})
-              {:error "Unknown session view. See doc(read_session)."})))))
+            (when (or (seq children) (= "council" view)) {:children (or children [])})
+            (cond
+              error {:error error}
+              (and target-id position (empty? selected)) {:error (str "Turn " position " does not exist.")}
+              :else
+              (let [opts (assoc opts "view" view)
+                    history (fn [] (if position
+                                     {:session (:session result)
+                                      :turns (mapv (partial transcript/build-model-turn db nil) selected)}
+                                     (safe-call #(transcript/transcript db target-id) nil)))
+                    diagnose (fn [] (safe-call #(if position
+                                                   (foundation-diagnose env target-id turns position)
+                                                   (foundation-diagnose env target-id)) {}))
+                    usage (fn [data] (safe-call #(foundation-usage-data env (or target-id wanted) data position) {}))]
+                (case view
+                  "index" (session-read-index env target-id opts turns)
+                  "blocks" {:transcript (model-transcript opts
+                                                          {:turns (mapv (partial transcript/build-model-turn db (get opts "iteration"))
+                                                                        (or selected turns))})}
+                  "diagnosis" {:diagnosis (diagnose)}
+                  "usage" {:usage (usage (when target-id (history)))}
+                  "events" (session-read-events target-id opts turns)
+                  "council" (session-read-council db target-id opts turns)
+                  "full" (let [data (history)]
+                           (cond-> {:diagnosis (diagnose)
+                                    :turn-retries (safe-call #(retries-by-turn env (or selected turns)) {})
+                                    :usage (usage data)
+                                    :transcript (model-transcript opts data)}
+                             (not position) (assoc :current-turn (lean-current-turn env target-id turns)
+                                                   :session-forks (safe-call #(foundation-session-forks env target-id) [])))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Strings-only boundary egress. read_session / get_session / list_sessions
@@ -1595,10 +1690,11 @@
   ([env search opts]
    (let [rows (foundation-sessions-data env search)
          cursor (get opts "cursor")
-         remaining (if cursor
-                     (rest (drop-while #(not (same-uuid? (:id %) cursor)) rows))
-                     rows)]
-     (session-envelope :list-sessions (into [] (take (page-limit opts 50 200)) remaining)))))
+         at-cursor (when cursor (seq (drop-while #(not (same-uuid? (:id %) cursor)) rows)))]
+     (when (and cursor (not at-cursor))
+       (throw (ex-info "Unknown session cursor. Use the last row ID with the same search." {})))
+     (session-envelope :list-sessions
+                       (into [] (take (page-limit opts 50 200)) (if cursor (rest at-cursor) rows))))))
 
 ;; Removed extra workflow surfaces.
 
@@ -1657,20 +1753,26 @@
      :params [{:name "target"} {:name "view" :note "index, blocks, diagnosis, usage, council, events or full"}
               {:name "turn"} {:name "iteration"} {:name "block"} {:name "offset"} {:name "limit"}]
      :description
-     (str "Read one session. Pass a bare id, a unique prefix or a copied `vis_session_id#<uuid>` marker. "
-          "With no target, read the current session. Select `view`: `index` (default), `blocks`, "
-          "`diagnosis`, `usage`, `council`, `events` or `full`. "
-          "Use `turn=2, iteration=5, block=1` for `t2/i5/f1`. Positions start at 1.")
+     (str "Read one session. With `introspection` off, pass your parent session ID from "
+           "`session[\"agent\"][\"parent_id\"]`. With it on, pass an ID, unique prefix, or copied "
+           "`vis_session_id#<uuid>` marker, or omit the target to read the current session. "
+           "Positions start at 1.")
      :result
-     (str "String-keyed map with `session`, `session_id`, `view` and view data. `index` pages turn "
-          "previews newest first. `blocks` reads `transcript.turns[].iterations[].blocks[]`; use "
-          "`offset` and `limit` for stdout character slices (4096 by default, 65536 at most), and "
-          "continue at `stdout_next_offset`. The last slice and the last page have no next offset "
-          "key. `diagnosis` includes the failures; `usage` tool rows overlap. "
-          "`council` pages attributed entries. `events` pages typed journal rows with first and last "
-          "retained sequence numbers; false `is_complete` means missing events are possible. "
-          "Use `next_offset` to continue index, Council and event pages. `full` reads lean history, "
-          "diagnosis, usage, forks and retries. This does not restore folded steps.")}))
+     (str "A map with `session`, `session_id`, `view`, and the selected data. "
+          "`index` lists six turn previews by default, newest first. Use `turn=N` for one `turn` with its request, "
+          "`answer`, `answer_chars`, `answer_next_offset`, and iteration summaries. "
+          "`blocks` reads `transcript.turns[].iterations[].blocks[]`. Select one block with "
+          "`turn=N, iteration=K, block=B`. Use `limit=stdout_chars` to read all stdout into a "
+          "variable, then filter it or write it to a file. Do not print large output. "
+          "Answer and stdout slices use `offset` and `limit` in characters (4096 by default). "
+          "`answer_next_offset` and `stdout_next_offset` are None on the last slice. "
+          "`council` gives entries and child results. The index also shows child results. "
+          "`events` gives typed journal rows and retained sequence coverage. "
+          "Use `offset` and `limit` for index, Council, and event pages. `next_offset` is None "
+          "on the last page. All views accept `turn`. Only `blocks` and `council` accept `iteration`. "
+          "Only `blocks` accepts `block`. `diagnosis` gives failures. `usage` tool rows overlap. "
+          "`full` gives history, diagnosis, usage, forks, and retries. It uses stdout slice limits. "
+          "A session read does not restore folded steps.")}))
 
 (def get-session-symbol
   (extension/symbol
@@ -1707,20 +1809,34 @@
      :description
      (str "Read one page of sessions, newest first, or use `search` to keep the TUI and app search order. "
           "`limit` defaults to 50 (maximum 200). Pass the last row's `id` as `cursor` to continue "
-          "with the same search. Read one row with `get_session(id)`.")
+          "with the same search. A page with fewer than `limit` rows is the last page. "
+          "An unknown cursor returns an error.")
      :result
      (str "String-keyed rows with `id`, `channel`, `title`, `goal_status`, `turn_count`, "
           "`created_at` and `modified_at`. A starred session has `favorite_rank`. "
           "A search match has `rank`, `is_in_*` flags and optional `request_snippet` and `reply_snippet`.")}))
 
-;; Session introspection is part of foundation-core, but its callable symbols and
-;; prompt guidance remain behind the default-off `introspection` toggle. A one-shot `:cli`
-;; run gets them too: a clipped result points to the blocks view.
 (defn introspection-enabled? [_env] (toggles/enabled? "introspection"))
 
+(defn- parent-session-id [{:keys [db-info session-id]}]
+  (when (and db-info session-id)
+    (:parent_id (persistance/db-agent-info db-info session-id))))
+
+(defn- read-session-active? [env]
+  (or (introspection-enabled? env) (some? (parent-session-id env))))
+
+(defn- sandbox-read-session [env & args]
+  (when-not (introspection-enabled? env)
+    (when-let [parent-id (parent-session-id env)]
+      (when-not (same-uuid? parent-id (target-arg (first args)))
+        (throw (ex-info "With introspection off, read_session requires your parent session ID." {})))))
+  (apply read-session env args))
+
 (def all-symbols
-  (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
-        [read-session-symbol get-session-symbol list-sessions-symbol]))
+  [(assoc read-session-symbol :ext.symbol/active-fn read-session-active?
+                              :ext.symbol/fn sandbox-read-session)
+   (assoc get-session-symbol :ext.symbol/active-fn introspection-enabled?)
+   (assoc list-sessions-symbol :ext.symbol/active-fn introspection-enabled?)])
 
 (toggles/register-toggle! {:id "introspection"
                            :label "Session introspection"
@@ -1738,10 +1854,10 @@
   (str
     "## Session introspection\n"
     "- Read session history only when the answer changes with what a past session says: session diagnostics, evidence from a referenced conversation, or context another session holds. A pointing word (\"that drug\", \"the file we fixed\") is a reference, not a reason. If the answer is the same either way, answer from your own knowledge. A session or turn start, and `/reload`, keep the conversation intact: continue from it.\n"
-    "- For a missing fact, read the relevant session view and turn or step. Use `view=\"events\"` for delivery, retry, Task or provider-wait evidence. Gateway logs are not in a session read.\n"
+    "- For a missing fact, start with `print(await read_session(id, turn=N))`. It shows the request and its Council entries, the final answer, the steps, and the selected and actual model. A text in quotes is exact and complete. Read a field by key only when the print omits it. Use `view=\"events\"` only for delivery, retry, Task or provider-wait evidence. Gateway logs are not in a session read.\n"
     "- This session's conversation is already in front of you. Use `view=\"usage\"` or `view=\"diagnosis\"` for data the conversation cannot hold. Usage tool rows overlap: do not sum them.\n"
     "- A read does not restore a fold. To recover one fact that a gist omits, first name the fact and its `tN/iK` scope. Then use `view=\"blocks\"` with `turn=N, iteration=K` for code, stdout or errors. Reuse the result unless you need newer evidence.\n"
-    "- Other sessions: `await list_sessions(search=\"…\")` ranks like the TUI and app search. Then use `get_session(id)` for one row and `read_session(id)` for its content. One search round settles it. A new spelling of a miss is not new evidence: with no useful match, end the lookup and answer from your own knowledge.\n"
+    "- Find a session with `await list_sessions(search=\"…\")`. Read turn previews with `read_session(id)`. For one block, add `view=\"blocks\", turn=N, iteration=K, block=B`. Use one search round.\n"
     "- The snippets `request_snippet` and `reply_snippet` are optional. Read them with `row.get(\"request_snippet\")` and `row.get(\"reply_snippet\")`; these return None for an absent field.\n"
     "- A session id copied from the TUI or the companion app has the form `vis_session_id#<uuid>`, which marks a Vis session. Pass it unchanged, or the bare id, to `read_session` or `get_session`.\n"
     "- Filter in `py3`; print the fields the question needs.\n"))

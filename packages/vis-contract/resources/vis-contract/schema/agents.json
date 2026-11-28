@@ -688,6 +688,17 @@
           "description": "The one-line result of the task.",
           "type": ["string", "null"]
         },
+        "outcome": {
+          "description": "The verifier's verdict, or null if there is no verifier verdict.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/result/properties/outcome"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "answer": {
           "type": [
             "string",

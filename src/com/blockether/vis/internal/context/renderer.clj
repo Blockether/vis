@@ -120,6 +120,10 @@
                 (concat static-context-keys (keys (extension-context view))))]
 
     (cond-> m
+      ;; Council sends the due set with the entries. Keep the full records in the live sandbox only.
+      (contains? m "council")
+      (update "council" dissoc "pending_replies")
+
       (get-in m ["env" "host" "clock"])
       (update-in ["env" "host"] dissoc "clock"))))
 
@@ -232,7 +236,13 @@
         (get view "session_goal_objective")
 
         apps
-        (get view "session_apps")]
+        (get view "session_apps")
+
+        task-entry-id
+        (get-in view ["session_agent" "task_entry_id"])
+
+        old-task-entry-id
+        (get-in baseline ["agent" "task_entry_id"])]
 
     {:text (str "session[\"turn\"] = "
                 (env/ctx->python-line turn)
@@ -244,9 +254,18 @@
                 (cond goal-objective (str "\nsession[\"goal_objective\"] = "
                                           (env/ctx->python-line goal-objective))
                       (contains? baseline "goal_objective") "\ndel session[\"goal_objective\"]")
+                (when (not= task-entry-id old-task-entry-id)
+                  (if task-entry-id
+                    (str "\nsession[\"agent\"][\"task_entry_id\"] = " task-entry-id)
+                    "\ndel session[\"agent\"][\"task_entry_id\"]"))
                 (cond apps (str "\nsession[\"apps\"] = " (env/ctx->python-line apps))
                       (contains? baseline "apps") "\ndel session[\"apps\"]"))
      :baseline (cond-> baseline
+                 (not= task-entry-id old-task-entry-id)
+                 (update "agent" #(if task-entry-id
+                                    (assoc % "task_entry_id" task-entry-id)
+                                    (dissoc % "task_entry_id")))
+
                  goal-status
                  (assoc "goal_status" goal-status)
 

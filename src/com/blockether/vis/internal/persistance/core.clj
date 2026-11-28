@@ -324,7 +324,9 @@
     "The newest nonblank assistant prose in the latest state of one turn, or nil, in one read.")
   (db-turn-published-after [db-info session-turn-id position]
     "True when an iteration after `position` in the latest state of one turn published a Council
-     message, in one read."))
+     message, in one read.")
+  (db-council-settle! [db-info sid]
+    "Close each delegated task of child `sid` that has a host outcome, with that outcome as its reply."))
 
 (defprotocol SnapshotStore
   "Session snapshot operations of a persistence backend, with the `Store` dispatch. They

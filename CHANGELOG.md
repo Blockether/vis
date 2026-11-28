@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Session introspection (#520): `read_session(id, turn=N)` gives one turn: the full request, the final answer and one row for each step with its model. A long answer continues with `answer_next_offset`. Before, the call gave the list of turns again, and the agent needed `view="full"` to read a final answer.
+- Session introspection (#520): `print` of a `read_session` result shows the facts of its view: the request and its Council entries, the final answer, the steps, the selected and the actual model, the token counts, the events or the block output. A Council entry that fits is in quotes, and a clipped one shows its full length. Before, most views printed only their field names, so the agent printed the raw data.
+- Session introspection (#520): each row of the turn list has the start of the final answer (`answer_preview`). A turn that Council started shows the start of its Council entry. The turn list and `view="council"` show each subagent with its result.
+- Session introspection (#520): one block read gives all its output with `limit=stdout_chars`. Before, a read gave at most 65,536 characters. The clip line of a long output names the turn, the step and the block to read.
+- Session introspection (#520): `read_session` refuses a selector that the view does not use, and a `turn` that is not a positive integer. `list_sessions` refuses an unknown `cursor`. `answer_next_offset`, `stdout_next_offset` and `next_offset` are `None` on the last slice.
+- Subagents (#520): a subagent that lacks a fact reads the session of its parent with `read_session(session["agent"]["parent_id"])`, then with `turn=N`. This works when the `introspection` setting is off, for the parent session only.
+- Subagents (#520): the host closes a delegated task with the final answer of the subagent. The subagent sends no Council reply. Before, Vis refused the end of the turn until the subagent sent a reply, and a subagent used 5 steps for a task that needs 2.
+- Subagents (#520): the record of a subagent has `outcome`, and its printed line shows it. A verifier that ends without `council.result(text, outcome=...)` gets one reminder. If it ends again without an outcome, its record is `failed` with a warning.
+- Council (#520): a reply that is due shows in one place, the Council notice. It stays there after a fold and after a restart. Before, the session block repeated it.
+
 ## [v0.6.0] - 2026-11-28
 
 ### Added

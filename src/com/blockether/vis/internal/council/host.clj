@@ -69,7 +69,8 @@
    first. Acceptance is not task completion.
 
    Council is asynchronous message passing. Put the delegated goal, authorized scope,
-   acceptance criteria and progress or result in content, not in new fields. Explicit IDs wake an
+   acceptance criteria and progress or result in content, not in new fields. Use Markdown: one
+   point per line, `-` or `1.` for lists, and backticks for code, paths and commands. Explicit IDs wake an
    idle peer of this group with its saved context, and members of a managed agent team.
    `ping=\"all\"` selects active peers only. A peer that is already running reads the ping inside
    its turn only with `reply_required=True`.
