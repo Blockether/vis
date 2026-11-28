@@ -23,7 +23,7 @@
         com.blockether/svar {:mvn/version "0.7.252"}
         ;; The embedded CPython the sandbox runs; the per-platform interpreter comes from that
         ;; repository's release archive. A fresh checkout needs `clojure -X:deps prep`.
-        com.blockether/vis-python-runtime {:git/sha "ed3c4fae96d12c25f26bfdbf21e830382c95d350"
+        com.blockether/vis-python-runtime {:git/sha "72ef4a917f8f05f89a65e2eaeae73d5fdaa2e022"
                                            :git/url
                                            "https://github.com/Blockether/vis-python-runtime.git"}
         com.cnuernber/charred {:mvn/version "1.042"}

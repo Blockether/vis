@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-11-27.
+> Generated 2026-11-28.
 
 Vis is a coding agent that runs Python, uses tools to inspect and change
 projects, and stores sessions locally. The `vis-agent` wrapper starts a JVM
@@ -146,11 +146,11 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.08.04` | EPL-1.0 | 733 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
-| `com.blockether/fff` | `0.12.21` | MIT | 12 KB | Blockether (in-house) |
+| `com.blockether/fff` | `0.12.23` | MIT | 12 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.17` | MIT | 24 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.2.4` | MIT | 70 KB | Blockether (in-house) |
 | `com.blockether/svar` | `0.7.252` | Apache-2.0 | 1.0 MB | Blockether (in-house) |
-| `com.blockether/vis-python-runtime` | `git:109b8f088c5398fb2671f422751f9aa95cfc8550` | MIT | source checkout | Blockether (in-house) |
+| `com.blockether/vis-python-runtime` | `git:72ef4a917f8f05f89a65e2eaeae73d5fdaa2e022` | MIT | source checkout | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.042` | MIT | 49 KB | 3rd-party |
 | `com.fasterxml.jackson.core/jackson-core` | `2.22.4` | Apache-2.0 | 585 KB | 3rd-party |
 | `com.fasterxml.jackson.dataformat/jackson-dataformat-cbor` | `2.22.4` | Apache-2.0 | 72 KB | 3rd-party |
