@@ -11,6 +11,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     _ scene: UIScene, willConnectTo session: UISceneSession,
     options connectionOptions: UIScene.ConnectionOptions
   ) {
+    // A fast turn of the phone is a shake, and a shake shows the "Undo Typing" alert
+    // for the composer. The alert only interrupts.
+    UIApplication.shared.applicationSupportsShakeToEdit = false
     SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
   }
 
