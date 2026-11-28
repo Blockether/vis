@@ -258,6 +258,8 @@ managed team of subagents keeps its own rules:
 - A child with no iterations left stays idle. The leader must give it more iterations before
   starting a follow-up.
 - A stopped child can take a follow-up only during an active turn of its leader.
+- When the leader cancels a child, an open question, budget request, or file request of that
+  child needs no reply.
 - A follow-up starts a new Task in the same child session. The leader can give the new Task
   different file access. That access applies to the new Task only. Without it, the child gets
   its original spawn grant. An await that starts while the child has an open question returns at

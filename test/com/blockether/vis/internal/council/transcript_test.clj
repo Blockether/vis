@@ -383,6 +383,19 @@
             (expect (= ["completed" []] [(:status (agents/info db sid)) (task/tasks owner)]))
             (finally (doseq [{:keys [id]} (task/tasks owner)] (task/discard! owner id))))))))
 
+(defdescribe cancelled-child-question-test
+  ;; #520: after `cancel`, the leader could not end its turn before it answered the cancelled child.
+  (it "drops the required reply to a child that its leader cancelled"
+      (with-child-question
+        (fn [db sid owner question-id _]
+          (let [gid (council/default-group db owner)
+                input-state (atom {})
+                due #(mapv :entry_id (council/pending-replies db owner gid input-state))]
+            (council/prepare-input! db owner "leader" gid input-state ["turn" 0] 8192)
+            (expect (= [question-id] (due)) "The question of a running child is due")
+            (ps/db-agent-update! db sid {:status "cancelled"})
+            (expect (= [] (due))))))))
+
 (defdescribe child-cancel-request-reply-test
   (it "does not wake the child while its Task cancel callback is still pending"
       (with-child-question

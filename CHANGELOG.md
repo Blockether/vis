@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Subagents (#520): the host closes a delegated task with the final answer of the subagent. The subagent sends no Council reply. Before, Vis refused the end of the turn until the subagent sent a reply, and a subagent used 5 steps for a task that needs 2.
 - Subagents (#520): the record of a subagent has `outcome`, and its printed line shows it. A verifier that ends without `council.result(text, outcome=...)` gets one reminder. If it ends again without an outcome, its record is `failed` with a warning.
 - Subagents (#520): a file that a write grant names is no longer in `session["workspace"]["filesystem_roots"]` of the subagent. The grant stays in `session["access"]["filesystem"]["write_rules"]`. Before, the list showed the file as a working directory, and a subagent used one step on a path that does not exist.
+- Subagents (#520): a leader that cancels a subagent no longer has to answer the open question, budget request or file request of that subagent. Before, Vis refused the end of the turn until the leader replied to the cancelled subagent.
 - Council (#520): `doc("council.publish")` says to omit `ping` for no ping. Before, the page said "none", and an agent sent `ping="none"`, which Council refuses.
 - Evals (#520): the task verifiers find a file write when a conditional expression selects the path.
 - Council (#520): a reply that is due shows in one place, the Council notice. It stays there after a fold and after a restart. Before, the session block repeated it.

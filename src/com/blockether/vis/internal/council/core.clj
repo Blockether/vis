@@ -535,9 +535,15 @@
         (comp (map :entry_id) (remove #(some :reply_entry_id (:replies (ps/db-council-get db %)))))
         (agents/open-questions db sid)))
 
+(defn- withdrawn?
+  "True when a cancelled child wrote `request`. Its wait ended, and a reply does not restart it."
+  [db request]
+  (agents/attempt-cancelled? (agents/info db (:author_session_id request))))
+
 (defn pending-replies
   "Delivered obligations only. Reading the log or editing Python session metadata cannot clear them.
-   An open child question or a delivered request in a resumed turn can have an interrupted ping."
+   An open child question or a delivered request in a resumed turn can have an interrupted ping.
+   The request of a cancelled child is not an obligation."
   [db sid gid input-state]
   (let [state
         @input-state
@@ -555,13 +561,14 @@
         (get-in state [:interrupted gid])]
 
     (mapv pending
-          (sort (filter #(or (contains? unanswered %)
-                             (contains? open %)
-                             (and (contains? interrupted %)
-                                  (some (fn [reply]
-                                          (and (= sid (:session_id reply))
-                                               (= "interrupted" (:state reply))))
-                                        (:replies (ps/db-council-get db %)))))
+          (sort (filter #(and (or (contains? unanswered %)
+                                  (contains? open %)
+                                  (and (contains? interrupted %)
+                                       (some (fn [reply]
+                                               (and (= sid (:session_id reply))
+                                                    (= "interrupted" (:state reply))))
+                                             (:replies (ps/db-council-get db %)))))
+                              (not (withdrawn? db (pending %))))
                         (keys pending))))))
 
 (defn- carry-child-questions
