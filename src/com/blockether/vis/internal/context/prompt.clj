@@ -185,20 +185,12 @@
    text-only model) so the model doesn't hunt for an attachment that isn't
    there.
 
-   `descriptions` is the vision fallback's `{label {:text … :model …}}`: what a
-   SIGHTED model reported about an image this model cannot see. A described row
-   carries that report inline, so a blind target degrades to second-hand text
-   instead of a dead end.
+   `descriptions` is the vision fallback's `{label {:text … :model …}}`: a
+   sighted model's report on an image this model cannot see. It rides under its
+   row, marked second-hand.
 
-   Directives, at most one of the blind pair:
-   - the \"you can SEE these\" / anti-PIL directive ONLY when at least one
-     image is actually attached (a vision model — reading it with PIL is
-     wasteful),
-   - the \"another model looked for you\" directive when the active model is
-     blind and something came back described, and
-   - the \"you canNOT see these, DO reach for PIL\" directive for blind images
-     nothing described. There the file is on disk and real; PIL/imaging libs
-     are the model's ONLY way to inspect its content, so we tell it to."
+   Directives: an anti-PIL line when images are attached; for a blind model, a
+   second-hand line for described images and a use-PIL line for the rest."
   [attached skipped descriptions]
   (when (or (seq attached) (seq skipped))
     (let [described-for
@@ -221,16 +213,16 @@
         "attached-images"
         (str
           (when (seq attached)
-            "You can SEE these images — they ride this message as image blocks. Look at them\n   directly. Do NOT open them with PIL or other imaging libraries to \"read\" their\n   content — that yields only pixel size/mode, never meaning. Reach for PIL ONLY to\n   TRANSFORM an image (resize/crop/convert), never to inspect one you can already see.\n\n")
+            "You see these images directly. Use PIL only to transform them, not to read them.\n\n")
           (when (and (empty? attached) (seq described))
             (str
-              "The active model has NO vision, so the image(s) below are NOT attached. A\n   vision-capable model ("
+              "You have no vision. "
               (str/join ", " describers)
-              ") looked at each one and its report is quoted\n   under the row. That report is second-hand: it is what another model saw, not what\n   you saw, so never claim detail it does not mention. Open the file with PIL only for\n   pixel-exact work (measuring, cropping, comparing).\n\n"))
+              " described the images below. Each report is second-hand: claim nothing it does\n   not say. Use PIL only for pixel-exact work.\n\n"))
           (when (and (empty? attached) (seq undescribed))
             (if (seq described)
-              "A row below with NO description is one nothing has looked at. Those files are real\n   and on disk, so to inspect their CONTENT open them with PIL / an imaging library.\n\n"
-              "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n"))
+              "To inspect a row with no description, open its file with PIL.\n\n"
+              "You have no vision and cannot see the images below. To inspect one, open its file\n   with PIL.\n\n"))
           (str/join "\n"
                     (concat (map-indexed (fn [i {:keys [media-type size-label] :as image}]
                                            (str "- image "
@@ -249,16 +241,11 @@
                                           (attachments/image-label row)
                                           " — NOT attached: "
                                           reason
-                                          ;; A RECORDING arrives with its own words already in
-                                          ;; hand: no wire carries audio, and the local speech
-                                          ;; engine transcribed it when the human staged it.
-                                          ;; Quoted here, the model reads what was said instead
-                                          ;; of being told a file exists — and when there are no
-                                          ;; words, it is told THAT rather than nothing.
+                                          ;; No wire carries audio: quote the local transcript.
                                           (recording-transcript transcription transcription-status)
                                           (when text
                                             (str "\n  " model
-                                                 " looked at it and reported: " text)))))
+                                                 " reported: " text)))))
                                  skipped))))))))
 
 (defn assemble-initial-messages
